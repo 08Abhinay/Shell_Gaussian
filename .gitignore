@@ -48,6 +48,10 @@ gaussian-splatting/submodules/**/*.egg-info/
 *.log
 *.out
 *.aux
+
+# Temporary GitHub CLI files
+gh.tar.gz
+gh_2.88.1_linux_amd64/
 texput.log
 *.synctex.gz
 theory2.pdf
