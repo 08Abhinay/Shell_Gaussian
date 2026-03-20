@@ -1,0 +1,64 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.claude/
+
+# Python caches and tooling
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local datasets and generated training artifacts
+datasets/
+gaussian-splatting/SIBR_viewers/
+gaussian-splatting/output/
+gaussian-splatting/tensorboard_3d/
+gaussian-splatting/screenshots/
+gaussian-splatting/gaussian_splatting_env/
+
+# Compiled extensions and package build output
+build/
+dist/
+*.egg-info/
+*.so
+*.o
+*.a
+
+# Submodule/build artifacts
+gaussian-splatting/SIBR_viewers/build/
+gaussian-splatting/submodules/**/build/
+gaussian-splatting/submodules/**/dist/
+gaussian-splatting/submodules/**/*.egg-info/
+
+# Logs and temporary files
+*.tmp
+*.swp
+*.swo
+*.log
+*.out
+*.aux
+texput.log
+*.synctex.gz
+theory2.pdf
+
+# Images and media
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.tif
+*.tiff
+*.webp
+*.svg
