@@ -62,27 +62,30 @@ class Scene:
             with open(os.path.join(self.model_path, "cameras.json"), 'w') as file:
                 json.dump(json_cams, file)
 
+        train_cam_infos = list(scene_info.train_cameras)
+        test_cam_infos = list(scene_info.test_cameras)
+
         if shuffle:
-            random.shuffle(scene_info.train_cameras)  # Multi-res consistent random shuffling
-            random.shuffle(scene_info.test_cameras)  # Multi-res consistent random shuffling
+            random.shuffle(train_cam_infos)  # Multi-res consistent random shuffling
+            random.shuffle(test_cam_infos)  # Multi-res consistent random shuffling
 
         if args.max_train_cameras > 0:
-            original_train_count = len(scene_info.train_cameras)
-            scene_info.train_cameras = scene_info.train_cameras[:args.max_train_cameras]
-            print("Limiting training cameras to {} of {} for this run".format(len(scene_info.train_cameras), original_train_count))
+            original_train_count = len(train_cam_infos)
+            train_cam_infos = train_cam_infos[:args.max_train_cameras]
+            print("Limiting training cameras to {} of {} for this run".format(len(train_cam_infos), original_train_count))
 
         if args.max_test_cameras > 0:
-            original_test_count = len(scene_info.test_cameras)
-            scene_info.test_cameras = scene_info.test_cameras[:args.max_test_cameras]
-            print("Limiting test cameras to {} of {} for this run".format(len(scene_info.test_cameras), original_test_count))
+            original_test_count = len(test_cam_infos)
+            test_cam_infos = test_cam_infos[:args.max_test_cameras]
+            print("Limiting test cameras to {} of {} for this run".format(len(test_cam_infos), original_test_count))
 
         self.cameras_extent = scene_info.nerf_normalization["radius"]
 
         for resolution_scale in resolution_scales:
             print("Loading Training Cameras")
-            self.train_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.train_cameras, resolution_scale, args, scene_info.is_nerf_synthetic, False)
+            self.train_cameras[resolution_scale] = cameraList_from_camInfos(train_cam_infos, resolution_scale, args, scene_info.is_nerf_synthetic, False)
             print("Loading Test Cameras")
-            self.test_cameras[resolution_scale] = cameraList_from_camInfos(scene_info.test_cameras, resolution_scale, args, scene_info.is_nerf_synthetic, True)
+            self.test_cameras[resolution_scale] = cameraList_from_camInfos(test_cam_infos, resolution_scale, args, scene_info.is_nerf_synthetic, True)
 
         if self.loaded_iter:
             self.gaussians.load_ply(os.path.join(self.model_path,
@@ -90,7 +93,7 @@ class Scene:
                                                            "iteration_" + str(self.loaded_iter),
                                                            "point_cloud.ply"), args.train_test_exp)
         else:
-            self.gaussians.create_from_pcd(scene_info.point_cloud, scene_info.train_cameras, self.cameras_extent)
+            self.gaussians.create_from_pcd(scene_info.point_cloud, train_cam_infos, self.cameras_extent)
 
     def save(self, iteration):
         point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))
