@@ -29,9 +29,10 @@ GShell/GMeshDiffusion/lib/
 GShell/wandb/
 GShell/outputs/
 
-# NeuS2 — ignore conda env and CMake build output only
+# NeuS2 — ignore conda env, CMake build output, and vendored dependencies
 NeuS2/neus2_env/
 NeuS2/build/
+NeuS2/dependencies/
 
 # Local datasets and generated training artifacts
 datasets/
