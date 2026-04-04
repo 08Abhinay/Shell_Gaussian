@@ -19,10 +19,19 @@ __pycache__/
 venv/
 env/
 
-# Local sibling repos and machine-specific helper scripts
-/GShell/
-/NeuS2/
+# Machine-specific helper scripts
 /scripts/
+
+# GShell — ignore conda env, large data, and build artifacts only
+GShell/gshell_env/
+GShell/data/
+GShell/GMeshDiffusion/lib/
+GShell/wandb/
+GShell/outputs/
+
+# NeuS2 — ignore conda env and CMake build output only
+NeuS2/neus2_env/
+NeuS2/build/
 
 # Local datasets and generated training artifacts
 datasets/
