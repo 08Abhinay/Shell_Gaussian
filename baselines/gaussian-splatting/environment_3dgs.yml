@@ -1,0 +1,28 @@
+name: 3DGS_env
+prefix: /data/abelde/projects/active/Shell_Gaussian/baselines/gaussian-splatting/3DGS_env
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pytorch::pytorch=2.1.2
+  - pytorch::torchvision=0.16.2
+  - pytorch::torchaudio=2.1.2
+  - pytorch::pytorch-cuda=12.1
+  - conda-forge::imagemagick
+  - conda-forge::ffmpeg
+  - numpy=1.26.4
+  - scipy
+  - matplotlib
+  - plyfile
+  - tqdm
+  - ipykernel
+  - jupyter_core
+  - mkl=2022.1.0
+  - pip:
+    - pillow
+    - opencv-python
+    - joblib

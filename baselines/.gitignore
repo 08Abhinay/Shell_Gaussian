@@ -83,3 +83,6 @@ theory2.pdf
 *.tiff
 *.webp
 *.svg
+
+
+*_env/
