@@ -1,0 +1,14 @@
+{
+  "min_seg_consistency": 0.5,
+  "fg_area_tiny": 0.01,
+  "fg_area_huge": 0.95,
+  "min_registration_rate": 0.7,
+  "max_mean_reproj_error": 2.0,
+  "min_sparse_points": 500,
+  "max_cam_radius_cv": 0.25,
+  "min_pca_ratio_12": 0.1,
+  "max_pca_ratio_13": 0.15,
+  "min_orbit_coverage": 0.5,
+  "max_orbit_gap_deg": 120.0,
+  "max_orbit_thickness_ratio": 0.15
+}

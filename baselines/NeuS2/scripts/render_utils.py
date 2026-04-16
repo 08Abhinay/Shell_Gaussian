@@ -3,7 +3,7 @@ import json
 import os
 from tqdm import tqdm
 
-from projects.active.Shell_Gaussian.baselines.NeuS2.scripts.common import *
+from common import *
 import pyngp as ngp # noqa
 from os.path import join
 
@@ -421,4 +421,4 @@ def render_img_training_view(args, testbed, log_ptr, image_dir, frame_time_id = 
 
     return load_image(image), load_image(ref_image), normal_img
 
-from projects.active.Shell_Gaussian.baselines.NeuS2.scripts.pytorch3d_utils import *
+from pytorch3d_utils import *

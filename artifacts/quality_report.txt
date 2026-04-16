@@ -1,0 +1,36 @@
+=================================================================
+  PREPROCESSING QUALITY REPORT  (turntable dataset)
+=================================================================
+
+  Dataset:       /data/abelde/datasets/raw/golden_set
+  Capture type:  horizontal turntable orbit
+  Total shoes:   20
+  Pass:           18  (90%)
+  Borderline:      2  (10%)
+  Reject:          0  (0%)
+
+-----------------------------------------------------------------
+  MOST COMMON FAILURE MODES
+-----------------------------------------------------------------
+    mean_reproj_error                           1 shoes
+    frac_multiblob                              1 shoes
+
+-----------------------------------------------------------------
+  INTERPRETATION (turntable-specific)
+-----------------------------------------------------------------
+  Good shoe  = planar camera ring, stable radius,
+               complete in-plane coverage, clean masks.
+  Suspicious = broken/incomplete orbit, line-like collapse,
+               thick orbit, poor COLMAP registration.
+  NOT defects: missing top/bottom views, near-zero pca_13,
+               low naive elevation diversity.
+
+-----------------------------------------------------------------
+  RECOMMENDED ACTIONS
+-----------------------------------------------------------------
+  2. Review borderline shoes (2):
+       - Air-Jordan-1-Retro-High-Og-White-Cement-Gs
+       - Ugg-Bailey-Bow-Ii-Boot-Ribbon-Red-Kids
+     These may be acceptable depending on your quality bar.
+
+=================================================================

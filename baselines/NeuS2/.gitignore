@@ -6,7 +6,6 @@
 /results
 /tmp
 /venv
-/neus2_env/
 /video
 /*.json
 *.msgpack

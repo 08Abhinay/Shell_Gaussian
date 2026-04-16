@@ -17,8 +17,8 @@ import numpy as np
 import sys
 import time
 
-from projects.active.Shell_Gaussian.baselines.NeuS2.scripts.common import *
-from projects.active.Shell_Gaussian.baselines.NeuS2.scripts.render_utils import *
+from common import *
+from render_utils import *
 
 from shutil import copyfile
 from tqdm import tqdm
