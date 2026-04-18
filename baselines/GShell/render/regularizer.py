@@ -10,8 +10,8 @@
 import torch
 import nvdiffrast.torch as dr
 
-from projects.active.Shell_Gaussian.baselines.GShell.render.render import util
-from ....GShell.render import mesh
+from . import util
+from . import mesh
 
 def luma(x):
     return ((x[..., 0:1] + x[..., 1:2] + x[..., 2:3]) / 3).repeat(1, 1, 1, 3)

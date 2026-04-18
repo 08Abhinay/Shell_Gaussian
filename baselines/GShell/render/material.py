@@ -10,9 +10,9 @@ import os
 import numpy as np
 import torch
 
-from ....GShell.render import util
-from ....GShell.render import texture
-from ....GShell.render import mlptexture
+from . import util
+from . import texture
+from . import mlptexture
 
 ######################################################################################
 # .mtl material format loading / storing

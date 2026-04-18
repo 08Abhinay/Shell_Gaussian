@@ -14,10 +14,10 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from projects.active.Shell_Gaussian.baselines.GShell.render import mesh
-from projects.active.Shell_Gaussian.baselines.GShell.render import render
-import projects.active.Shell_Gaussian.baselines.GShell.render.optixutils as ou
-from projects.active.Shell_Gaussian.baselines.GShell.render import regularizer
+from render import mesh
+from render import render
+from render import optixutils as ou
+from render import regularizer
 
 from .gshell_tets import GShell_Tets
 

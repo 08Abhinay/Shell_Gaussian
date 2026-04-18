@@ -11,7 +11,7 @@ import numpy as np
 import torch
 import nvdiffrast.torch as dr
 
-from ....GShell.render import util
+from . import util
 
 ######################################################################################
 # Smooth pooling / mip computation with linear gradient upscaling

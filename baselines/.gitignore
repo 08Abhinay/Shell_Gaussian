@@ -4,6 +4,7 @@ Thumbs.db
 .vscode/
 .idea/
 .claude/
+*.code-workspace
 
 # Python caches and tooling
 __pycache__/
@@ -22,15 +23,17 @@ env/
 # Machine-specific helper scripts
 /scripts/
 
-# GShell — ignore conda env, large data, and build artifacts only
+# GShell — ignore conda env, large data, and generated artifacts only
 GShell/gshell_env/
 GShell/data/
 GShell/GMeshDiffusion/lib/
 GShell/wandb/
+GShell/output/
 GShell/outputs/
 
-# NeuS2 — ignore conda env, CMake build output, and vendored dependencies
+# NeuS2 — ignore conda env, generated output, CMake build output, and vendored dependencies
 NeuS2/neus2_env/
+NeuS2/output/
 NeuS2/build/
 NeuS2/dependencies/
 

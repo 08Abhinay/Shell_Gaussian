@@ -13,7 +13,7 @@ import glob
 import torch
 import numpy as np
 
-from projects.active.Shell_Gaussian.baselines.GShell.render import util
+from render import util
 
 from .dataset import Dataset
 

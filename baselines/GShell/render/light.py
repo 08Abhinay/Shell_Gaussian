@@ -11,8 +11,8 @@ import numpy as np
 import torch
 import nvdiffrast.torch as dr
 
-from ....GShell.render import util
-from ....GShell.render import renderutils as ru
+from . import util
+from . import renderutils as ru
 
 ######################################################################################
 # Monte-carlo sampled environment light with PDF / CDF computation

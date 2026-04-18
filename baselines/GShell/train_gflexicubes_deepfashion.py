@@ -13,30 +13,33 @@ import time
 import argparse
 import json
 
+# Ensure GShell package root is on sys.path for local imports
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 import numpy as np
 import torch
 import nvdiffrast.torch as dr
 import xatlas
 
 # Import data readers / generators
-from projects.active.Shell_Gaussian.baselines.GShell.dataset.dataset_deepfashion import DatasetDeepFashion
-from projects.active.Shell_Gaussian.baselines.GShell.dataset.dataset_deepfashion_testset import DatasetDeepFashionTestset
+from dataset.dataset_deepfashion import DatasetDeepFashion
+from dataset.dataset_deepfashion_testset import DatasetDeepFashionTestset
 
 # Import topology / geometry trainers
-from projects.active.Shell_Gaussian.baselines.GShell.geometry.gshell_flexicubes_geometry import GShellFlexiCubesGeometry
+from geometry.gshell_flexicubes_geometry import GShellFlexiCubesGeometry
 
-import projects.active.Shell_Gaussian.baselines.GShell.render.renderutils as ru
-from projects.active.Shell_Gaussian.baselines.GShell.render import obj
-from projects.active.Shell_Gaussian.baselines.GShell.render import material
-from projects.active.Shell_Gaussian.baselines.GShell.render import util
-from projects.active.Shell_Gaussian.baselines.GShell.render import mesh
-from projects.active.Shell_Gaussian.baselines.GShell.render import texture
-from projects.active.Shell_Gaussian.baselines.GShell.render import mlptexture
-from projects.active.Shell_Gaussian.baselines.GShell.render import light
-from projects.active.Shell_Gaussian.baselines.GShell.render import render
+from render import renderutils as ru
+from render import obj
+from render import material
+from render import util
+from render import mesh
+from render import texture
+from render import mlptexture
+from render import light
+from render import render
 
 
-from projects.active.Shell_Gaussian.baselines.GShell.denoiser.denoiser import BilateralDenoiser
+from denoiser.denoiser import BilateralDenoiser
 
 
 RADIUS = 3.0

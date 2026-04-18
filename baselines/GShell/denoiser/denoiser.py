@@ -4,9 +4,9 @@ import torch
 import numpy as np
 import math
 
-from projects.active.Shell_Gaussian.baselines.GShell.render import util
+from render import util
 if "TWOSIDED_TEXTURE" not in os.environ or os.environ["TWOSIDED_TEXTURE"] == "True":
-	from projects.active.Shell_Gaussian.baselines.GShell.render import optixutils as ou
+	from render import optixutils as ou
 else:
 	from render import optixutils_single_sided as ou
 

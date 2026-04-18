@@ -12,14 +12,14 @@ import numpy as np
 import torch
 import nvdiffrast.torch as dr
 
-from ....GShell.render import util
-from ....GShell.render import renderutils as ru
+from . import util
+from . import renderutils as ru
 try:
-    from ....GShell.render import optixutils as ou
+    from . import optixutils as ou
 except Exception:
     ou = None
     print("Warning: optixutils not available (OptiX SDK not found). Denoising will be disabled.")
-from ....GShell.render import light
+from . import light
 
 rnd_seed = 0
 

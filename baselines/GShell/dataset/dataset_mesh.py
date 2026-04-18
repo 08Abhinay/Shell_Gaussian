@@ -10,10 +10,10 @@
 import numpy as np
 import torch
 
-from projects.active.Shell_Gaussian.baselines.GShell.render import util
-from projects.active.Shell_Gaussian.baselines.GShell.render import mesh
-from projects.active.Shell_Gaussian.baselines.GShell.render import render
-from projects.active.Shell_Gaussian.baselines.GShell.render import light
+from render import util
+from render import mesh
+from render import render
+from render import light
 
 from .dataset import Dataset
 

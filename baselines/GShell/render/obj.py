@@ -10,9 +10,9 @@
 import os
 import torch
 
-from ....GShell.render import texture
-from ....GShell.render import mesh
-from ....GShell.render import material
+from . import texture
+from . import mesh
+from . import material
 
 ######################################################################################
 # Utility functions

@@ -14,7 +14,7 @@ import json
 import torch
 import numpy as np
 
-from projects.active.Shell_Gaussian.baselines.GShell.render import util
+from render import util
 
 from .dataset import Dataset
 
@@ -24,9 +24,12 @@ from .dataset import Dataset
 
 def _load_img(path):
     img = util.load_image_raw(path)
+    if img.ndim == 2:
+        img = img[..., np.newaxis]  # (H, W) -> (H, W, 1)
     if img.dtype != np.float32: # LDR image
         img = torch.tensor(img / 255, dtype=torch.float32)
-        img[..., 0:3] = util.srgb_to_rgb(img[..., 0:3])
+        if img.shape[-1] >= 3:
+            img[..., 0:3] = util.srgb_to_rgb(img[..., 0:3])
     else:
         img = torch.tensor(img, dtype=torch.float32)
     return img
@@ -83,6 +86,16 @@ class DatasetNERF(Dataset):
             img, mv, mvp, campos = self.preloaded_data[itr % self.n_images]
         else:
             img, mv, mvp, campos = self._parse_frame(self.cfg, itr % self.n_images)
+
+        # Resize image to training resolution if needed
+        if img.shape[1] != iter_res[0] or img.shape[2] != iter_res[1]:
+            img = torch.nn.functional.interpolate(
+                img.permute(0, 3, 1, 2),  # NHWC -> NCHW
+                size=(iter_res[0], iter_res[1]),
+                mode='bilinear',
+                align_corners=False,
+                antialias=True,
+            ).permute(0, 2, 3, 1)  # NCHW -> NHWC
 
         return {
             'mv' : mv,

@@ -11,8 +11,8 @@ import os
 import numpy as np
 import torch
 
-from ....GShell.render import obj
-from ....GShell.render import util
+from . import obj
+from . import util
 
 ######################################################################################
 # Base mesh class

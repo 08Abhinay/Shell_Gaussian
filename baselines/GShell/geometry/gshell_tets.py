@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-from projects.active.Shell_Gaussian.baselines.GShell.render import util
+from render import util
 
 ######################################################################################
 # Simple smooth vertex normal computation
