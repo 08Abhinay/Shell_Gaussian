@@ -22,28 +22,30 @@ env/
 
 # Machine-specific helper scripts
 /scripts/
+baselines/scripts/
 
 # GShell — ignore conda env, large data, and generated artifacts only
-GShell/gshell_env/
-GShell/data/
-GShell/GMeshDiffusion/lib/
-GShell/wandb/
-GShell/output/
-GShell/outputs/
+baselines/GShell/gshell_env/
+baselines/GShell/data/
+baselines/GShell/GMeshDiffusion/lib/
+baselines/GShell/wandb/
+baselines/GShell/output/
+baselines/GShell/outputs/
 
 # NeuS2 — ignore conda env, generated output, CMake build output, and vendored dependencies
-NeuS2/neus2_env/
-NeuS2/output/
-NeuS2/build/
-NeuS2/dependencies/
+baselines/NeuS2/neus2_env/
+baselines/NeuS2/output/
+baselines/NeuS2/build/
+baselines/NeuS2/dependencies/
 
 # Local datasets and generated training artifacts
 datasets/
-gaussian-splatting/SIBR_viewers/
-gaussian-splatting/output/
-gaussian-splatting/tensorboard_3d/
-gaussian-splatting/screenshots/
-gaussian-splatting/gaussian_splatting_env/
+baselines/datasets/
+baselines/gaussian-splatting/SIBR_viewers/
+baselines/gaussian-splatting/output/
+baselines/gaussian-splatting/tensorboard_3d/
+baselines/gaussian-splatting/screenshots/
+baselines/gaussian-splatting/gaussian_splatting_env/
 
 # Compiled extensions and package build output
 build/
@@ -54,13 +56,14 @@ dist/
 *.a
 
 # Submodule/build artifacts
-gaussian-splatting/SIBR_viewers/build/
-gaussian-splatting/submodules/**/build/
-gaussian-splatting/submodules/**/dist/
-gaussian-splatting/submodules/**/*.egg-info/
+baselines/gaussian-splatting/SIBR_viewers/build/
+baselines/gaussian-splatting/submodules/**/build/
+baselines/gaussian-splatting/submodules/**/dist/
+baselines/gaussian-splatting/submodules/**/*.egg-info/
 
 # Logs and temporary files
 /slurm_logs/
+baselines/slurm_logs/
 *.tmp
 *.swp
 *.swo
@@ -86,6 +89,5 @@ theory2.pdf
 *.tiff
 *.webp
 *.svg
-
 
 *_env/
