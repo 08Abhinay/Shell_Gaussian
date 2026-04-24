@@ -232,7 +232,7 @@ class GShellTetsGeometry(torch.nn.Module):
         opt_mesh_dict = self.getMesh(opt_material)
         opt_mesh = opt_mesh_dict['imesh']
         opt_mesh_watertight = opt_mesh_dict['imesh_watertight'] if 'imesh_watertight' in opt_mesh_dict else None
-        if opt_mesh.v_pos.size(0) != 0:
+        if opt_mesh.v_pos.size(0) != 0 and opt_mesh.t_pos_idx.size(0) != 0:
             sampled_pts = kaolin.ops.mesh.sample_points(opt_mesh.v_pos[None,...], opt_mesh.t_pos_idx, 50000)[0][0]
             opt_mesh_dict['sampled_pts'] = sampled_pts
         else:

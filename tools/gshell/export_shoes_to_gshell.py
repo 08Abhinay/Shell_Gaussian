@@ -149,6 +149,32 @@ def focal_to_fovx(focal: float, width: int) -> float:
     return 2.0 * math.atan(width / (2.0 * focal))
 
 
+def rotate_x_matrix(angle: float) -> np.ndarray:
+    """Match GShell render.util.rotate_x without importing the CUDA stack."""
+    s, c = math.sin(angle), math.cos(angle)
+    mat = np.eye(4, dtype=np.float64)
+    mat[1, 1] = c
+    mat[1, 2] = s
+    mat[2, 1] = -s
+    mat[2, 2] = c
+    return mat
+
+
+OPENCV_TO_OPENGL_CAMERA = np.diag([1.0, -1.0, -1.0, 1.0])
+GSHELL_DATASET_ROTATION = rotate_x_matrix(-math.pi / 2.0)
+
+
+def colmap_c2w_to_gshell_transform(c2w: np.ndarray) -> np.ndarray:
+    """Convert normalized COLMAP c2w into the transform consumed by GShell.
+
+    COLMAP camera poses use the OpenCV camera convention. GShell's DatasetNERF
+    loader then computes `mv = inv(transform_matrix) @ rotate_x(-pi/2)`.
+    Export a matrix that makes that loader-side modelview equivalent to using
+    the COLMAP pose after the standard OpenCV-to-OpenGL camera-axis flip.
+    """
+    return GSHELL_DATASET_ROTATION @ c2w @ OPENCV_TO_OPENGL_CAMERA
+
+
 # ---------------------------------------------------------------------------
 # Normalization: center scene in [-1, 1] box for GShell
 # ---------------------------------------------------------------------------
@@ -177,7 +203,11 @@ def normalize_c2w(c2w: np.ndarray, center: np.ndarray, scale: float) -> np.ndarr
 # Main export
 # ---------------------------------------------------------------------------
 
-def export_shoe(shoe_dir: Path, output_dir: Path) -> None:
+def export_shoe(
+    shoe_dir: Path,
+    output_dir: Path,
+    normalization_source: str = "points+cameras",
+) -> None:
     images_dir = shoe_dir / "images"
     masks_dir = shoe_dir / "masks"
     colmap_dir = shoe_dir / "colmap"
@@ -195,7 +225,13 @@ def export_shoe(shoe_dir: Path, output_dir: Path) -> None:
     c2ws = [colmap_image_to_c2w(entry) for entry in entries]
 
     # Compute normalization
-    if scene_points.shape[0] > 0:
+    if normalization_source == "cameras":
+        cam_centers = np.array([c[:3, 3] for c in c2ws])
+        center = cam_centers.mean(axis=0)
+        radius = float(np.linalg.norm(cam_centers - center, axis=1).max())
+        if radius <= 0:
+            radius = 1.0
+    elif scene_points.shape[0] > 0:
         center, radius = compute_normalization(scene_points, c2ws)
     else:
         cam_centers = np.array([c[:3, 3] for c in c2ws])
@@ -217,8 +253,10 @@ def export_shoe(shoe_dir: Path, output_dir: Path) -> None:
         focal = get_focal(camera)
         fovx = focal_to_fovx(focal, camera.width)
 
-        # Normalize the c2w
+        # Normalize the c2w and convert it to the convention expected by
+        # baselines/GShell/dataset/dataset_nerf_colmap.py.
         norm_c2w = normalize_c2w(c2w, center, radius)
+        gshell_c2w = colmap_c2w_to_gshell_transform(norm_c2w)
 
         # Symlink image
         src_image = images_dir / entry.name
@@ -237,7 +275,7 @@ def export_shoe(shoe_dir: Path, output_dir: Path) -> None:
         frames.append({
             "camera_angle_x": fovx,
             "file_path": f"image/{entry.name}",
-            "transform_matrix": norm_c2w.tolist(),
+            "transform_matrix": gshell_c2w.tolist(),
         })
 
     transforms = {"frames": frames}
@@ -269,10 +307,20 @@ def main() -> None:
         default=None,
         help="Specific shoe names to export. If not provided, exports all.",
     )
+    parser.add_argument(
+        "--camera-only-shoes",
+        nargs="*",
+        default=None,
+        help=(
+            "Specific shoe names that should ignore COLMAP sparse points and "
+            "normalize from camera centers only."
+        ),
+    )
     args = parser.parse_args()
 
     input_dir = Path(args.input_dir)
     output_dir = Path(args.output_dir)
+    camera_only_shoes = set(args.camera_only_shoes or [])
 
     if args.shoes:
         shoe_names = args.shoes
@@ -289,7 +337,14 @@ def main() -> None:
         out_path = output_dir / name
         out_path.mkdir(parents=True, exist_ok=True)
         try:
-            export_shoe(shoe_path, out_path)
+            normalization_source = (
+                "cameras" if name in camera_only_shoes else "points+cameras"
+            )
+            export_shoe(
+                shoe_path,
+                out_path,
+                normalization_source=normalization_source,
+            )
         except Exception as e:
             print(f"  ERROR exporting {name}: {e}")
 

@@ -283,12 +283,18 @@ def optimize_mesh(
     #  Setup torch optimizer
     # ==============================================================================================
 
-    learning_rate = FLAGS.learning_rate[pass_idx] if isinstance(FLAGS.learning_rate, list) or isinstance(FLAGS.learning_rate, tuple) else FLAGS.learning_rate
-    learning_rate_pos = learning_rate[0] if isinstance(learning_rate, list) or isinstance(learning_rate, tuple) else learning_rate
-    learning_rate_mat = learning_rate[1] if isinstance(learning_rate, list) or isinstance(learning_rate, tuple) else learning_rate
-    # learning_rate_lgt = learning_rate[2] if isinstance(learning_rate, list) or isinstance(learning_rate, tuple) else learning_rate * 3.0
-    learning_rate_lgt = learning_rate[2] if isinstance(learning_rate, list) or isinstance(learning_rate, tuple) else learning_rate * 6.0
-    # learning_rate_lgt = learning_rate[2] if isinstance(learning_rate, list) or isinstance(learning_rate, tuple) else learning_rate * 0.5
+    def resolve_learning_rates(value):
+        if isinstance(value, (list, tuple)):
+            if len(value) > 0 and isinstance(value[0], (list, tuple)):
+                value = value[pass_idx]
+            learning_rate_pos = float(value[0])
+            learning_rate_mat = float(value[1]) if len(value) > 1 else learning_rate_pos
+            learning_rate_lgt = float(value[2]) if len(value) > 2 else learning_rate_pos * 6.0
+            return learning_rate_pos, learning_rate_mat, learning_rate_lgt
+        value = float(value)
+        return value, value, value * 6.0
+
+    learning_rate_pos, learning_rate_mat, learning_rate_lgt = resolve_learning_rates(FLAGS.learning_rate)
 
     def lr_schedule(iter, fraction):
         if iter < warmup_iter:
@@ -336,6 +342,38 @@ def optimize_mesh(
     depth_loss_vec = []
     reg_loss_vec = []
     iter_dur_vec = []
+    last_valid_geometry_state = None
+    last_valid_iteration = None
+    empty_mesh_recoveries = 0
+
+    def clone_geometry_state():
+        return {k: v.detach().clone() for k, v in geometry.state_dict().items()}
+
+    def mesh_is_empty(mesh_obj):
+        return mesh_obj.v_pos.shape[0] == 0 or mesh_obj.t_pos_idx.shape[0] == 0
+
+    def scale_scheduler_lrs(optimizer_obj, scheduler_obj, scale):
+        for group in optimizer_obj.param_groups:
+            group['lr'] *= scale
+        if hasattr(scheduler_obj, 'base_lrs'):
+            scheduler_obj.base_lrs = [lr * scale for lr in scheduler_obj.base_lrs]
+
+    def restore_last_valid_geometry(it, reason):
+        nonlocal empty_mesh_recoveries
+        if not optimize_geometry or last_valid_geometry_state is None:
+            print(f"[iter={it}] Empty mesh during {reason}; no previous valid geometry to restore")
+            return False
+
+        geometry.load_state_dict(last_valid_geometry_state)
+        geometry.clamp_deform()
+        optimizer_mesh.state.clear()
+        scale_scheduler_lrs(optimizer_mesh, scheduler_mesh, 0.25)
+        empty_mesh_recoveries += 1
+        print(
+            f"[iter={it}] Empty mesh during {reason}; restored geometry from "
+            f"iter={last_valid_iteration} and reduced geometry lr by 4x"
+        )
+        return True
 
     dataloader_train    = torch.utils.data.DataLoader(dataset_train, batch_size=FLAGS.batch, collate_fn=dataset_train.collate, shuffle=True)
     if visualize:
@@ -367,17 +405,23 @@ def optimize_mesh(
                 save_image = FLAGS.save_interval and (it % FLAGS.save_interval == 0)
                 if display_image or save_image:
                     save_mesh = True
-                    if save_mesh:
-                        os.makedirs(os.path.join(save_path, pass_name), exist_ok=True)
-                        obj.write_obj(os.path.join(save_path, pass_name), geometry.getMesh(opt_material)['imesh'], save_material=False)
-                    result_image, result_dict = validate_itr(glctx, prepare_batch(next(v_it), FLAGS.background), geometry, opt_material, lgt, FLAGS, denoiser=denoiser)
-            
-                    np_result_image = result_image.detach().cpu().numpy()
-                    if display_image:
-                        util.display_image(np_result_image, title='%d / %d' % (it, FLAGS.iter))
-                    if save_image:
-                        util.save_image(os.path.join(save_path, ('img_%s_%06d.png' % (pass_name, img_cnt))), np_result_image)
-                        img_cnt = img_cnt + 1
+                    try:
+                        preview_mesh = geometry.getMesh(opt_material)['imesh']
+                        if mesh_is_empty(preview_mesh):
+                            raise render.EmptyMeshError("Mesh has no vertices/faces during preview")
+                        if save_mesh:
+                            os.makedirs(os.path.join(save_path, pass_name), exist_ok=True)
+                            obj.write_obj(os.path.join(save_path, pass_name), preview_mesh, save_material=False)
+                        result_image, result_dict = validate_itr(glctx, prepare_batch(next(v_it), FLAGS.background), geometry, opt_material, lgt, FLAGS, denoiser=denoiser)
+
+                        np_result_image = result_image.detach().cpu().numpy()
+                        if display_image:
+                            util.display_image(np_result_image, title='%d / %d' % (it, FLAGS.iter))
+                        if save_image:
+                            util.save_image(os.path.join(save_path, ('img_%s_%06d.png' % (pass_name, img_cnt))), np_result_image)
+                            img_cnt = img_cnt + 1
+                    except render.EmptyMeshError:
+                        restore_last_valid_geometry(it, "preview/save")
 
         iter_start_time = time.time()
 
@@ -404,9 +448,18 @@ def optimize_mesh(
             lgt.update_pdf()
             
 
-        img_loss, depth_loss, reg_loss = geometry.tick(
-            glctx, target, lgt, opt_material, image_loss_fn, it, 
-            denoiser=denoiser)
+        try:
+            img_loss, depth_loss, reg_loss = geometry.tick(
+                glctx, target, lgt, opt_material, image_loss_fn, it, 
+                denoiser=denoiser)
+        except render.EmptyMeshError:
+            optimizer.zero_grad()
+            if optimize_geometry:
+                optimizer_mesh.zero_grad()
+                restore_last_valid_geometry(it, "training")
+            if optimize_light:
+                optimizer_light.zero_grad()
+            continue
 
         # ==============================================================================================
         #  Final loss
@@ -435,10 +488,14 @@ def optimize_mesh(
             else:
                 torch.nn.utils.clip_grad_norm_(params, FLAGS.clip_max_norm)
 
+        geometry_state_before_step = clone_geometry_state() if optimize_geometry else None
+
         optimizer.step()
         scheduler.step()
 
         if optimize_geometry:
+            last_valid_geometry_state = geometry_state_before_step
+            last_valid_iteration = it
             optimizer_mesh.step()
             scheduler_mesh.step()
 
@@ -485,6 +542,16 @@ def optimize_mesh(
 
         if it == FLAGS.iter:
             break
+
+    if optimize_geometry:
+        with torch.no_grad():
+            final_mesh = geometry.getMesh(opt_material)['imesh']
+            if mesh_is_empty(final_mesh):
+                if last_valid_geometry_state is None:
+                    raise render.EmptyMeshError("Final mesh is empty and no valid geometry was observed during training")
+                geometry.load_state_dict(last_valid_geometry_state)
+                geometry.clamp_deform()
+                print(f"Final mesh was empty; restored geometry from iter={last_valid_iteration}")
 
     return geometry, opt_material
 
@@ -575,7 +642,7 @@ if __name__ == "__main__":
     FLAGS.sdf_mlp_pretrain_steps      = 10000
     FLAGS.use_mesh_msdf_reg           = True
     FLAGS.sphere_init                 = False
-    FLAGS.sphere_init_norm            = 2.0
+    FLAGS.sphere_init_norm            = 0.5
     FLAGS.pretrained_sdf_mlp_path     = f'./data/pretrained_mlp_{FLAGS.gshell_grid}_polycam.pt'
     FLAGS.n_hidden                    = 6
     FLAGS.d_hidden                    = 256

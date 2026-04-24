@@ -12,6 +12,9 @@ import numpy as np
 import torch
 import nvdiffrast.torch as dr
 
+class EmptyMeshError(RuntimeError):
+    pass
+
 from . import util
 from . import renderutils as ru
 try:
@@ -368,6 +371,9 @@ def render_mesh(
     # assert mesh.t_pos_idx.shape[0] > 0, "Got empty training triangle mesh (unrecoverable discontinuity)"
     # assert background is None or (background.shape[1] == resolution[0] and background.shape[2] == resolution[1])
 
+    if mesh.v_pos.shape[0] == 0 or mesh.t_pos_idx.shape[0] == 0:
+        raise EmptyMeshError("Mesh has no vertices/faces — skipping iteration")
+
     full_res = [resolution[0]*spp, resolution[1]*spp]
 
     # Convert numpy arrays to torch tensors
@@ -385,6 +391,8 @@ def render_mesh(
         if visible_triangles[0] == 0:
             visible_triangles = visible_triangles[1:]
         visible_triangles = visible_triangles - 1
+        if visible_triangles.numel() == 0:
+            raise EmptyMeshError("Mesh has no visible triangles — skipping iteration")
         layers = [
             (render_layer(
                 FLAGS, v_pos_clip,
