@@ -127,6 +127,24 @@ def psnr_to_mse(psnr):
   """Compute MSE given a PSNR (we assume the maximum pixel value is 1)."""
   return np.exp(-0.1 * np.log(10.) * psnr)
 
+def compute_ssim(opt, ref):
+  """Compute SSIM between two HWC tensors on GPU. Returns scalar float."""
+  from pytorch_msssim import ssim as _ssim
+  opt_nchw = opt.unsqueeze(0).permute(0, 3, 1, 2)
+  ref_nchw = ref.unsqueeze(0).permute(0, 3, 1, 2)
+  return _ssim(opt_nchw, ref_nchw, data_range=1.0, size_average=True).item()
+
+_lpips_model = None
+def compute_lpips(opt, ref):
+  """Compute LPIPS (VGG) between two HWC tensors on GPU. Returns scalar float."""
+  import lpips
+  global _lpips_model
+  if _lpips_model is None:
+    _lpips_model = lpips.LPIPS(net='vgg').to(opt.device)
+  opt_nchw = opt.unsqueeze(0).permute(0, 3, 1, 2) * 2 - 1
+  ref_nchw = ref.unsqueeze(0).permute(0, 3, 1, 2) * 2 - 1
+  return _lpips_model(opt_nchw, ref_nchw).item()
+
 #----------------------------------------------------------------------------
 # Displacement texture lookup
 #----------------------------------------------------------------------------

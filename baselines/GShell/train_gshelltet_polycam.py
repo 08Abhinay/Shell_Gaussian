@@ -216,12 +216,14 @@ def validate(glctx, geometry, opt_material, lgt, dataset_validate, out_dir, FLAG
     # ==============================================================================================
     mse_values = []
     psnr_values = []
+    ssim_values = []
+    lpips_values = []
 
     dataloader_validate = torch.utils.data.DataLoader(dataset_validate, batch_size=1, collate_fn=dataset_validate.collate)
 
     os.makedirs(out_dir, exist_ok=True)
     with open(os.path.join(out_dir, 'metrics.txt'), 'w') as fout:
-        fout.write('ID, MSE, PSNR\n')
+        fout.write('ID, MSE, PSNR, SSIM, LPIPS\n')
 
         print("Running validation")
         for it, target in enumerate(tqdm.tqdm(dataloader_validate)):
@@ -232,15 +234,19 @@ def validate(glctx, geometry, opt_material, lgt, dataset_validate, out_dir, FLAG
             result_image, result_dict = validate_itr(glctx, target, geometry, opt_material, lgt, FLAGS, denoiser=denoiser)
 
             # Compute metrics
-            opt = torch.clamp(result_dict['opt'], 0.0, 1.0) 
+            opt = torch.clamp(result_dict['opt'], 0.0, 1.0)
             ref = torch.clamp(result_dict['ref'], 0.0, 1.0)
 
             mse = torch.nn.functional.mse_loss(opt, ref, size_average=None, reduce=None, reduction='mean').item()
             mse_values.append(float(mse))
             psnr = util.mse_to_psnr(mse)
             psnr_values.append(float(psnr))
+            ssim_val = util.compute_ssim(opt, ref)
+            ssim_values.append(float(ssim_val))
+            lpips_val = util.compute_lpips(opt, ref)
+            lpips_values.append(float(lpips_val))
 
-            line = "%d, %1.8f, %1.8f\n" % (it, mse, psnr)
+            line = "%d, %1.8f, %1.8f, %1.8f, %1.8f\n" % (it, mse, psnr, ssim_val, lpips_val)
             fout.write(str(line))
 
             if save_viz:
@@ -250,10 +256,12 @@ def validate(glctx, geometry, opt_material, lgt, dataset_validate, out_dir, FLAG
 
         avg_mse = np.mean(np.array(mse_values))
         avg_psnr = np.mean(np.array(psnr_values))
-        line = "AVERAGES: %1.4f, %2.3f\n" % (avg_mse, avg_psnr)
+        avg_ssim = np.mean(np.array(ssim_values))
+        avg_lpips = np.mean(np.array(lpips_values))
+        line = "AVERAGES: %1.4f, %2.3f, %1.4f, %1.4f\n" % (avg_mse, avg_psnr, avg_ssim, avg_lpips)
         fout.write(str(line))
-        print("MSE,      PSNR")
-        print("%1.8f, %2.3f" % (avg_mse, avg_psnr))
+        print("MSE,      PSNR,     SSIM,     LPIPS")
+        print("%1.8f, %2.3f, %1.8f, %1.8f" % (avg_mse, avg_psnr, avg_ssim, avg_lpips))
     return avg_psnr
 
 ###############################################################################
