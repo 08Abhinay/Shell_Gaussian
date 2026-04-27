@@ -38,6 +38,20 @@ baselines/NeuS2/output/
 baselines/NeuS2/build/
 baselines/NeuS2/dependencies/
 
+# SuGaR — vendored source is tracked; local envs, outputs, and build artifacts are not
+baselines/SuGaR/SuGaR_env/
+baselines/SuGaR/output/
+baselines/SuGaR/sugar_viewer/node_modules/
+baselines/SuGaR/sugar_viewer/dist/
+baselines/SuGaR/gaussian_splatting/SIBR_viewers/
+baselines/SuGaR/gaussian_splatting/output/
+baselines/SuGaR/gaussian_splatting/submodules/**/build/
+baselines/SuGaR/gaussian_splatting/submodules/**/dist/
+baselines/SuGaR/gaussian_splatting/submodules/**/*.egg-info/
+baselines/SuGaR/gaussian_splatting/submodules/diff-gaussian-rasterization/third_party/glm/doc/
+baselines/SuGaR/gaussian_splatting/submodules/diff-gaussian-rasterization/third_party/glm/test/
+baselines/SuGaR/gaussian_splatting/submodules/diff-gaussian-rasterization/third_party/glm/util/
+
 # Local datasets and generated training artifacts
 datasets/
 baselines/datasets/
@@ -89,5 +103,6 @@ theory2.pdf
 *.tiff
 *.webp
 *.svg
+!baselines/SuGaR/media/**
 
 *_env/
