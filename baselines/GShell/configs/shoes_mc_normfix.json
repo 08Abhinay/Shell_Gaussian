@@ -3,7 +3,7 @@
     "iter": 5000,
     "save_interval": 1000,
     "texture_res": [1024, 1024],
-    "train_res": [512, 768],
+    "train_res": [1800, 2400],
     "batch": 2,
     "learning_rate": [0.0025, 0.005],
     "ks_min": [0, 0.001, 0.0],

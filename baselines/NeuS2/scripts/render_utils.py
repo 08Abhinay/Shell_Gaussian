@@ -8,6 +8,27 @@ import pyngp as ngp # noqa
 from os.path import join
 
 renderer_resolution = 1024
+_lpips_model = None
+_lpips_device = None
+
+
+def compute_lpips(img_rgb, ref_rgb):
+    global _lpips_model, _lpips_device
+
+    import torch
+    import lpips
+
+    if _lpips_model is None:
+        _lpips_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        _lpips_model = lpips.LPIPS(net="alex").to(_lpips_device).eval()
+
+    def to_lpips_tensor(img):
+        tensor = torch.from_numpy(np.ascontiguousarray(img)).to(_lpips_device)
+        tensor = tensor.permute(2, 0, 1).unsqueeze(0).float()
+        return tensor * 2.0 - 1.0
+
+    with torch.inference_mode():
+        return float(_lpips_model(to_lpips_tensor(img_rgb), to_lpips_tensor(ref_rgb)).item())
 
 def load_ref_images(args, transform_path):
     with open(transform_path) as f:
@@ -265,6 +286,7 @@ def render_img_training_view(args, testbed, log_ptr, image_dir, frame_time_id = 
     totmse = 0
     totpsnr = 0
     totssim = 0
+    totlpips = 0
     totcount = 0
     minpsnr = 1000
     maxpsnr = 0
@@ -348,8 +370,10 @@ def render_img_training_view(args, testbed, log_ptr, image_dir, frame_time_id = 
     R = np.clip(linear_to_srgb(ref_image[...,:3]), 0.0, 1.0)
     mse = float(compute_error("MSE", A, R))
     ssim = float(compute_error("SSIM", A, R))
+    lpips_value = compute_lpips(A, R)
     totssim += ssim
     totmse += mse
+    totlpips += lpips_value
     psnr = mse2psnr(mse)
     totpsnr += psnr
     minpsnr = psnr if psnr<minpsnr else minpsnr
@@ -359,7 +383,8 @@ def render_img_training_view(args, testbed, log_ptr, image_dir, frame_time_id = 
     psnr_avgmse = mse2psnr(totmse/(totcount or 1))
     psnr = totpsnr/(totcount or 1)
     ssim = totssim/(totcount or 1)
-    print(f"camera_view:{camera_view}, frame_time:{frame_time_id}: PSNR={psnr} SSIM={ssim}", file=log_ptr)
+    lpips_avg = totlpips/(totcount or 1)
+    print(f"camera_view:{camera_view}, frame_time:{frame_time_id}: PSNR={psnr} SSIM={ssim} LPIPS={lpips_avg}", file=log_ptr)
     log_ptr.flush() # write immediately to file
 
     normal_img = None
