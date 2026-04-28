@@ -35,6 +35,7 @@ fi
 
 SHOE_ARG="$1"
 GPU_ID="${2:-${SUGAR_GPU:-0}}"
+PYTORCH_GPU_ID=0
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SUGAR_ROOT="${SUGAR_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
@@ -148,6 +149,7 @@ echo "Shoe: ${SHOE_NAME}"
 echo "Scene: ${SCENE_PATH}"
 echo "Run dir: ${RUN_DIR}"
 echo "GPU: ${GPU_ID}"
+echo "PyTorch GPU inside CUDA_VISIBLE_DEVICES: ${PYTORCH_GPU_ID}"
 echo "3DGS output: ${GS_OUTPUT_DIR}"
 echo "Regularization: ${REGULARIZATION}"
 echo "Mesh vertices: ${MESH_VERTICES}"
@@ -210,7 +212,7 @@ else
         -n "${NORMAL_FACTOR}" \
         --eval "${EVAL_SPLIT}" \
         --white_background "${WHITE_BACKGROUND}" \
-        --gpu "${GPU_ID}"
+        --gpu "${PYTORCH_GPU_ID}"
 fi
 
 if [[ ! -f "${COARSE_MODEL}" ]]; then
@@ -233,7 +235,7 @@ else
         -o "${COARSE_MESH_DIR}" \
         --project_mesh_on_surface_points True \
         --eval "${EVAL_SPLIT}" \
-        --gpu "${GPU_ID}"
+        --gpu "${PYTORCH_GPU_ID}"
 fi
 
 if [[ ! -f "${COARSE_MESH}" ]]; then
@@ -261,7 +263,7 @@ else
         -f "${REFINEMENT_END_ITER}" \
         --eval "${EVAL_SPLIT}" \
         --white_background "${WHITE_BACKGROUND}" \
-        --gpu "${GPU_ID}" \
+        --gpu "${PYTORCH_GPU_ID}" \
         --export_ply True
 fi
 
@@ -283,7 +285,7 @@ else
         -n "${GAUSSIANS_PER_TRIANGLE}" \
         --square_size "${SQUARE_SIZE}" \
         --eval "${EVAL_SPLIT}" \
-        -g "${GPU_ID}"
+        -g "${PYTORCH_GPU_ID}"
 fi
 
 if [[ ! -f "${REFINED_OBJ}" ]]; then
