@@ -17,6 +17,10 @@ if __name__ == "__main__":
     parser.add_argument('-m', '--refined_model_path',
                         type=str, 
                         help='(Required) Path to the refine model checkpoint.')  # --OK
+    parser.add_argument('--coarse_mesh_path',
+                        type=str,
+                        default=None,
+                        help='Optional path to the coarse mesh used to bind the refined SuGaR model.')
     parser.add_argument('-o', '--mesh_output_dir',
                         type=str, 
                         default=None, 

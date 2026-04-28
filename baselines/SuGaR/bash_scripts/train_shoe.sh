@@ -281,6 +281,7 @@ else
         -c "${GS_OUTPUT_DIR}/" \
         -i "${GS_ITERATIONS}" \
         -m "${REFINED_MODEL}" \
+        --coarse_mesh_path "${COARSE_MESH}" \
         -o "${REFINED_MESH_DIR}" \
         -n "${GAUSSIANS_PER_TRIANGLE}" \
         --square_size "${SQUARE_SIZE}" \

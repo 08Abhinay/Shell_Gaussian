@@ -49,8 +49,11 @@ def extract_mesh_and_texture_from_refined_sugar(args):
     mesh_save_path = os.path.join(mesh_output_dir, mesh_save_path)
     
     scene_name = source_path.split('/')[-2] if len(source_path.split('/')[-1]) == 0 else source_path.split('/')[-1]
-    sugar_mesh_path = os.path.join('./output/coarse_mesh/', scene_name, 
-                                refined_model_path.split('/')[-2].split('_normalconsistency')[0].replace('sugarfine', 'sugarmesh') + '.ply')
+    if args.coarse_mesh_path is not None:
+        sugar_mesh_path = args.coarse_mesh_path
+    else:
+        sugar_mesh_path = os.path.join('./output/coarse_mesh/', scene_name, 
+                                    refined_model_path.split('/')[-2].split('_normalconsistency')[0].replace('sugarfine', 'sugarmesh') + '.ply')
     
     if args.square_size is None:
         if n_gaussians_per_surface_triangle == 1:
@@ -105,7 +108,11 @@ def extract_mesh_and_texture_from_refined_sugar(args):
     CONSOLE.print(len(nerfmodel.gaussians._xyz) / 1e6, "M gaussians detected.")
     
     # --- Loading coarse mesh ---
+    if not os.path.isfile(sugar_mesh_path):
+        raise FileNotFoundError(f"Coarse mesh not found: {sugar_mesh_path}")
     o3d_mesh = o3d.io.read_triangle_mesh(sugar_mesh_path)
+    if len(o3d_mesh.triangles) == 0:
+        raise ValueError(f"Coarse mesh has no triangles: {sugar_mesh_path}")
     
     # --- Loading refined SuGaR model ---
     checkpoint = torch.load(refined_model_path, map_location=nerfmodel.device)
