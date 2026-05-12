@@ -265,13 +265,13 @@ class GShell_Tets:
             # find all vertices
             all_edges = tet_fx4[valid_tets][:,self.base_tet_edges].reshape(-1,2)
             all_edges = self.sort_edges(all_edges)
-            unique_edges, idx_map = torch.unique(all_edges, dim=0, return_inverse=True)  
+            unique_edges, idx_map = torch.unique(all_edges, dim=0, return_inverse=True)  # Here idx size is 43K for the current usecase and has IDs for all edges and not only for unique ones. 
 
             unique_edges = unique_edges.long()
-            mask_edges = occ_n[unique_edges.reshape(-1)].reshape(-1,2).sum(-1) == 1
-            mapping = torch.ones((unique_edges.shape[0]), dtype=torch.long, device="cuda") * -1
-            mapping[mask_edges] = torch.arange(mask_edges.sum(), dtype=torch.long, device="cuda")
-            idx_map = mapping[idx_map] # map edges to verts
+            mask_edges = occ_n[unique_edges.reshape(-1)].reshape(-1,2).sum(-1) == 1 # Here this will have False or a True. Meaning a surface crossing
+            mapping = torch.ones((unique_edges.shape[0]), dtype=torch.long, device="cuda") * -1 # Creates a mapping of all -1s for all the unique edges. 
+            mapping[mask_edges] = torch.arange(mask_edges.sum(), dtype=torch.long, device="cuda") # Mask edges are boolean values. So for the ones that are true, there will be a unique index arranged. 
+            idx_map = mapping[idx_map] # map edges to verts, 
 
             interp_v = unique_edges[mask_edges]
         edges_to_interp = pos_nx3[interp_v.reshape(-1)].reshape(-1,2,3)
@@ -291,16 +291,16 @@ class GShell_Tets:
 
 
         # (M, 6), M: num of pre-filtered tets, storing indices (besides -1) from 0 to num_mask_edges
-        idx_map = idx_map.reshape(-1,6)
+        idx_map = idx_map.reshape(-1,6) # Shape is [7275,6] all valid tets with IDs which have crossing
 
         v_id = torch.pow(2, torch.arange(4, dtype=torch.long, device="cuda"))
         tetindex = (occ_fx4[valid_tets] * v_id.unsqueeze(0)).sum(-1)
         # triangle count
-        num_triangles = self.num_triangles_table[tetindex]
+        num_triangles = self.num_triangles_table[tetindex] # The shape is 7275. Here, this tells us how many triangles we will get from each tet. So for example, if the value is 2, it means we will get 2 triangles from that tet. If the value is 1, it means we will get 1 triangle from that tet. If the value is 0, it means we will get 0 triangles from that tet.
 
         # Get global face index (static, does not depend on topology), before mSDF processing
         num_tets = tet_fx4.shape[0]
-        tet_gidx = torch.arange(num_tets, dtype=torch.long, device="cuda")[valid_tets]
+        tet_gidx = torch.arange(num_tets, dtype=torch.long, device="cuda")[valid_tets] # Has IDs for all valid tets. For all tets, arrange might have given the IDs starting from 0. For valid, tets, it is starting somewhere from 53k. Inspect the data. 
         face_gidx_pre = torch.cat((
             tet_gidx[num_triangles == 1]*2,
             torch.stack((tet_gidx[num_triangles == 2]*2, tet_gidx[num_triangles == 2]*2 + 1), dim=-1).view(-1)

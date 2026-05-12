@@ -745,11 +745,19 @@ if __name__ == "__main__":
         light.save_env_map(os.path.join(FLAGS.out_dir, "mesh/probe.hdr"), lgt)
 
         # Create textured mesh from result
-        base_mesh = geometry.getMesh(mat)['imesh']
+        mesh_result = geometry.getMesh(mat)
+        base_mesh = mesh_result['imesh']
 
         # Dump mesh for debugging.
         os.makedirs(os.path.join(FLAGS.out_dir, "mesh"), exist_ok=True)
         obj.write_obj(os.path.join(FLAGS.out_dir, "mesh/"), base_mesh, save_material=False)
+        if FLAGS.visualize_watertight and 'imesh_watertight' in mesh_result:
+            os.makedirs(os.path.join(FLAGS.out_dir, "mesh_watertight"), exist_ok=True)
+            obj.write_obj(
+                os.path.join(FLAGS.out_dir, "mesh_watertight/"),
+                mesh_result['imesh_watertight'],
+                save_material=False
+            )
 
         # Free temporaries / cached memory
         torch.cuda.empty_cache()
