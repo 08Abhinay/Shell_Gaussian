@@ -1,0 +1,23 @@
+{
+    "random_textures": true,
+    "iter": 50,
+    "save_interval": 50,
+    "texture_res": [512, 512],
+    "train_res": [400, 600],
+    "batch": 1,
+    "learning_rate": [0.03, 0.005],
+    "ks_min": [0, 0.001, 0.0],
+    "ks_max": [0, 1.0, 1.0],
+    "envlight": "data/irrmaps/aerodynamics_workshop_2k.hdr",
+    "lock_pos": false,
+    "display": [{"latlong": true}],
+    "background": "white",
+    "denoiser": "bilateral",
+    "n_samples": 4,
+    "env_scale": 2.0,
+    "gshell_grid": 64,
+    "validate": false,
+    "laplace_scale": 6000,
+    "boxscale": [1, 1, 1],
+    "aabb": [-1, -1, -1, 1, 1, 1]
+}
