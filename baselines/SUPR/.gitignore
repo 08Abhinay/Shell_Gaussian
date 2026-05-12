@@ -1,0 +1,10 @@
+**/supr.egg-info
+**/dist
+**/build
+**/demo/convert
+
+# Generated notebook/debug outputs. Keep the canonical neutral foot export.
+output/*
+!output/debug_playground/
+output/debug_playground/*
+!output/debug_playground/supr_male_right_foot_neutral.obj
