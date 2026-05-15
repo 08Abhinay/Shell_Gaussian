@@ -76,7 +76,8 @@ def main() -> None:
         load_triangle_mesh,
         make_hybrid_mesh,
         region_summary,
-        select_faces_by_centroid_z,
+        select_faces_below_axis,
+        select_faces_below_signed_axis,
         write_colored_ply,
         write_obj_mesh,
     )
@@ -89,13 +90,19 @@ def main() -> None:
     parser.add_argument("--foot-sdf", type=Path, default=defaults["foot_sdf"])
     parser.add_argument("--out-dir", type=Path, default=defaults["out_dir"])
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--length-ratio", type=float, default=0.88)
+    parser.add_argument("--length-ratio", type=float, default=0.78)
     parser.add_argument("--scale-multiplier", type=float, default=1.0)
-    parser.add_argument("--plantar-clearance", type=float, default=0.008)
+    parser.add_argument("--plantar-clearance", type=float, default=0.032)
     parser.add_argument("--plantar-band", type=float, default=0.012)
     parser.add_argument("--surface-band", type=float, default=0.005)
     parser.add_argument("--clearance", type=float, default=0.005)
     parser.add_argument("--ankle-radius", type=float, default=0.025)
+    parser.add_argument(
+        "--no-align-ankle-to-opening",
+        action="store_true",
+        help="Disable horizontal ankle-loop alignment to the detected shoe opening.",
+    )
+    parser.add_argument("--no-auto-yaw", action="store_true", help="Disable PCA yaw alignment to the shoe long axis.")
     parser.add_argument("--yaw-degrees", type=float, default=0.0)
     parser.add_argument("--pitch-degrees", type=float, default=0.0)
     parser.add_argument("--roll-degrees", type=float, default=0.0)
@@ -130,6 +137,8 @@ def main() -> None:
         surface_band=args.surface_band,
         clearance=args.clearance,
         ankle_radius=args.ankle_radius,
+        align_ankle_to_opening=not args.no_align_ankle_to_opening,
+        auto_yaw=not args.no_auto_yaw,
         yaw_degrees=args.yaw_degrees,
         pitch_degrees=args.pitch_degrees,
         roll_degrees=args.roll_degrees,
@@ -138,6 +147,7 @@ def main() -> None:
     alignment = build_alignment_from_meshes(
         foot_mesh=foot_mesh,
         shoe_mesh=watertight_mesh,
+        opening_mesh=shell_mesh,
         config=config,
     )
 
@@ -160,9 +170,12 @@ def main() -> None:
         ankle_loop_shoe=ankle_loop_shoe,
     )
 
-    retain_mask = select_faces_by_centroid_z(
+    retain_mask = select_faces_below_signed_axis(
         watertight_mesh,
-        z_max=alignment.plantar_z + config.plantar_band,
+        axis=config.shoe_up_axis,
+        axis_direction=config.shoe_up_sign,
+        plantar_value=alignment.plantar_z,
+        band=config.plantar_band,
     )
     hybrid_mesh = make_hybrid_mesh(shell_mesh, watertight_mesh, retain_mask)
 

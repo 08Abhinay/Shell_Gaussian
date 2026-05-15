@@ -11,6 +11,7 @@ points.
 
 from __future__ import annotations
 
+from collections import defaultdict, deque
 from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
@@ -22,14 +23,9 @@ import torch
 from .foot_sdf import FootSDFGrid, find_boundary_loops
 
 
-SUPR_TO_SHOE_AXIS_REMAP = np.asarray(
-    [
-        [0.0, 0.0, 1.0],
-        [1.0, 0.0, 0.0],
-        [0.0, 1.0, 0.0],
-    ],
-    dtype=np.float32,
-)
+RAW_SUPR_WIDTH_AXIS = 0
+RAW_SUPR_HEIGHT_AXIS = 1
+RAW_SUPR_LENGTH_AXIS = 2
 
 
 @dataclass(frozen=True)
@@ -44,13 +40,25 @@ class MeshData:
 class FootAlignmentConfig:
     """User-facing knobs for placing the foot inside a shoe mesh."""
 
-    length_ratio: float = 0.88
+    length_ratio: float = 0.78
     scale_multiplier: float = 1.0
-    plantar_clearance: float = 0.008
+    plantar_clearance: float = 0.032
     plantar_band: float = 0.012
     surface_band: float = 0.005
     clearance: float = 0.005
     ankle_radius: float = 0.025
+    shoe_length_axis: int = 0
+    shoe_up_axis: int = 1
+    shoe_width_axis: int = 2
+    shoe_length_sign: float = 1.0
+    shoe_up_sign: float = -1.0
+    shoe_width_sign: float = 1.0
+    align_ankle_to_opening: bool = True
+    opening_min_vertices: int = 20
+    opening_min_width_ratio: float = 0.25
+    opening_max_length_ratio: float = 0.58
+    opening_min_height_position: float = 0.20
+    auto_yaw: bool = True
     yaw_degrees: float = 0.0
     pitch_degrees: float = 0.0
     roll_degrees: float = 0.0
@@ -65,9 +73,14 @@ class FootAlignment:
     shoe_to_foot: np.ndarray
     scale: float
     plantar_z: float
+    auto_yaw_degrees: float
     config: FootAlignmentConfig
     foot_anchor_remapped: Tuple[float, float, float]
     shoe_anchor: Tuple[float, float, float]
+    ankle_center_shoe: Optional[Tuple[float, float, float]] = None
+    opening_center: Optional[Tuple[float, float, float]] = None
+    opening_component_index: Optional[int] = None
+    opening_component_size: Optional[Tuple[float, float, float]] = None
 
     def transform_foot_to_shoe(self, points: np.ndarray) -> np.ndarray:
         return transform_points(points, self.foot_to_shoe)
@@ -81,9 +94,20 @@ class FootAlignment:
             "shoe_to_foot": self.shoe_to_foot.astype(float).tolist(),
             "scale": float(self.scale),
             "plantar_z": float(self.plantar_z),
+            "auto_yaw_degrees": float(self.auto_yaw_degrees),
             "config": asdict(self.config),
             "foot_anchor_remapped": list(map(float, self.foot_anchor_remapped)),
             "shoe_anchor": list(map(float, self.shoe_anchor)),
+            "ankle_center_shoe": None
+            if self.ankle_center_shoe is None
+            else list(map(float, self.ankle_center_shoe)),
+            "opening_center": None
+            if self.opening_center is None
+            else list(map(float, self.opening_center)),
+            "opening_component_index": self.opening_component_index,
+            "opening_component_size": None
+            if self.opening_component_size is None
+            else list(map(float, self.opening_component_size)),
         }
 
     @classmethod
@@ -95,9 +119,20 @@ class FootAlignment:
             shoe_to_foot=np.asarray(payload["shoe_to_foot"], dtype=np.float32),
             scale=float(payload["scale"]),
             plantar_z=float(payload["plantar_z"]),
+            auto_yaw_degrees=float(payload.get("auto_yaw_degrees", 0.0)),
             config=config,
             foot_anchor_remapped=tuple(payload["foot_anchor_remapped"]),
             shoe_anchor=tuple(payload["shoe_anchor"]),
+            ankle_center_shoe=None
+            if payload.get("ankle_center_shoe") is None
+            else tuple(payload["ankle_center_shoe"]),
+            opening_center=None
+            if payload.get("opening_center") is None
+            else tuple(payload["opening_center"]),
+            opening_component_index=payload.get("opening_component_index"),
+            opening_component_size=None
+            if payload.get("opening_component_size") is None
+            else tuple(payload["opening_component_size"]),
         )
 
     @classmethod
@@ -218,6 +253,165 @@ def mesh_bounds(vertices: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarra
     return bounds_min, bounds_max, size, center
 
 
+def axis_sign(sign: float) -> float:
+    """Return a clean +1/-1 axis sign."""
+
+    return 1.0 if float(sign) >= 0.0 else -1.0
+
+
+def signed_axis_values(points: np.ndarray, axis: int, sign: float) -> np.ndarray:
+    return axis_sign(sign) * np.asarray(points, dtype=np.float32)[..., axis]
+
+
+def bottom_coordinate(bounds_min: np.ndarray, bounds_max: np.ndarray, axis: int, up_sign: float, clearance: float = 0.0) -> float:
+    """Coordinate of the sole-side support plane along a signed up axis."""
+
+    if axis_sign(up_sign) > 0.0:
+        return float(bounds_min[axis] + clearance)
+    return float(bounds_max[axis] - clearance)
+
+
+def plantar_coordinate(points: np.ndarray, axis: int, up_sign: float) -> float:
+    """Return the sole-side coordinate for points along a signed up axis."""
+
+    values = np.asarray(points, dtype=np.float32)[:, axis]
+    if axis_sign(up_sign) > 0.0:
+        return float(values.min())
+    return float(values.max())
+
+
+def fit_plane_normal(points: np.ndarray) -> np.ndarray:
+    """Least-squares plane normal for a boundary component."""
+
+    points = np.asarray(points, dtype=np.float32)
+    centered = points - points.mean(axis=0, keepdims=True)
+    covariance = np.cov(centered.T)
+    _, eigenvectors = np.linalg.eigh(covariance)
+    normal = eigenvectors[:, 0].astype(np.float32)
+    dominant_axis = int(np.argmax(np.abs(normal)))
+    if normal[dominant_axis] < 0.0:
+        normal = -normal
+    return normal
+
+
+def find_boundary_components(mesh: MeshData) -> Tuple[list[np.ndarray], list[np.ndarray]]:
+    """Return tolerant boundary vertex components and edge lists.
+
+    Reconstructed shoe meshes often have non-manifold boundary vertices. For
+    opening detection we only need connected boundary components, not perfectly
+    ordered loops.
+    """
+
+    edge_counts: Dict[Tuple[int, int], int] = defaultdict(int)
+    for face in np.asarray(mesh.faces, dtype=np.int64):
+        for start, end in [(face[0], face[1]), (face[1], face[2]), (face[2], face[0])]:
+            a, b = int(start), int(end)
+            if a > b:
+                a, b = b, a
+            edge_counts[(a, b)] += 1
+
+    adjacency: Dict[int, list[int]] = defaultdict(list)
+    for (a, b), count in edge_counts.items():
+        if count == 1:
+            adjacency[a].append(b)
+            adjacency[b].append(a)
+
+    seen: set[int] = set()
+    components: list[np.ndarray] = []
+    edge_components: list[np.ndarray] = []
+    for start in adjacency:
+        if start in seen:
+            continue
+        queue: deque[int] = deque([start])
+        seen.add(start)
+        vertices = []
+        edges = []
+        while queue:
+            vertex = queue.popleft()
+            vertices.append(vertex)
+            for neighbor in adjacency[vertex]:
+                edges.append((vertex, neighbor))
+                if neighbor not in seen:
+                    seen.add(neighbor)
+                    queue.append(neighbor)
+        unique_edges = np.unique(np.sort(np.asarray(edges, dtype=np.int64), axis=1), axis=0)
+        components.append(np.asarray(vertices, dtype=np.int64))
+        edge_components.append(unique_edges)
+
+    return components, edge_components
+
+
+def detect_shoe_opening_boundary(
+    mesh: MeshData,
+    config: Optional[FootAlignmentConfig] = None,
+) -> Optional[Dict[str, object]]:
+    """Pick the most collar-like boundary component from a noisy shoe shell.
+
+    The raw GShell shoe shell can have a very large boundary where the sole is
+    missing. That boundary is useful evidence that the reconstruction is open,
+    but it is not the ankle/collar opening. We score components in a signed
+    anatomical height coordinate and skip broad sole-side components.
+    """
+
+    cfg = config or FootAlignmentConfig()
+    components, edge_components = find_boundary_components(mesh)
+    if not components:
+        return None
+
+    shoe_min, shoe_max, shoe_size, _ = mesh_bounds(mesh.vertices)
+    length_extent = max(float(shoe_size[cfg.shoe_length_axis]), 1e-8)
+    width_extent = max(float(shoe_size[cfg.shoe_width_axis]), 1e-8)
+    up_extent = max(float(shoe_size[cfg.shoe_up_axis]), 1e-8)
+    signed_up_all = signed_axis_values(mesh.vertices, cfg.shoe_up_axis, cfg.shoe_up_sign)
+    signed_up_min = float(signed_up_all.min())
+    signed_up_extent = max(float(signed_up_all.max() - signed_up_min), 1e-8)
+
+    best: Optional[Dict[str, object]] = None
+    for index, component in enumerate(components):
+        vertices = mesh.vertices[component]
+        bounds_min, bounds_max, size, center = mesh_bounds(vertices)
+        width_ratio = float(size[cfg.shoe_width_axis] / width_extent)
+        if component.shape[0] < cfg.opening_min_vertices or width_ratio < cfg.opening_min_width_ratio:
+            continue
+
+        length_ratio = float(size[cfg.shoe_length_axis] / length_extent)
+        up_ratio = float(size[cfg.shoe_up_axis] / up_extent)
+        signed_center_up = float(axis_sign(cfg.shoe_up_sign) * center[cfg.shoe_up_axis])
+        height_position = float((signed_center_up - signed_up_min) / signed_up_extent)
+        sole_like = (
+            length_ratio > cfg.opening_max_length_ratio
+            and height_position < cfg.opening_min_height_position
+        )
+        if sole_like:
+            continue
+
+        normal = fit_plane_normal(vertices)
+        score = width_ratio + 0.55 * up_ratio + 0.45 * height_position - 0.65 * length_ratio
+        candidate: Dict[str, object] = {
+            "score": score,
+            "index": index,
+            "vertices": component,
+            "edges": edge_components[index],
+            "center": center,
+            "size": size,
+            "bounds_min": bounds_min,
+            "bounds_max": bounds_max,
+            "width_ratio": width_ratio,
+            "length_ratio": length_ratio,
+            "up_ratio": up_ratio,
+            "height_position": height_position,
+            "normal": normal,
+            "dominant_normal_axis": int(np.argmax(np.abs(normal))),
+            "sole_like": sole_like,
+            "shoe_bounds_min": shoe_min,
+            "shoe_bounds_max": shoe_max,
+        }
+        if best is None or score > float(best["score"]):
+            best = candidate
+
+    return best
+
+
 def transform_points(points: np.ndarray, matrix: np.ndarray) -> np.ndarray:
     points = np.asarray(points, dtype=np.float32)
     matrix = np.asarray(matrix, dtype=np.float32)
@@ -229,8 +423,55 @@ def transform_points(points: np.ndarray, matrix: np.ndarray) -> np.ndarray:
     return transformed[:, :3].reshape(original_shape)
 
 
-def remap_supr_to_shoe_axes(points: np.ndarray) -> np.ndarray:
-    return np.asarray(points, dtype=np.float32) @ SUPR_TO_SHOE_AXIS_REMAP.T
+def make_supr_to_shoe_axis_remap(
+    shoe_length_axis: int = 0,
+    shoe_up_axis: int = 1,
+    shoe_width_axis: int = 2,
+    shoe_length_sign: float = 1.0,
+    shoe_up_sign: float = -1.0,
+    shoe_width_sign: float = 1.0,
+) -> np.ndarray:
+    """Build an axis remap from raw SUPR coords to GShell shoe coords.
+
+    Raw SUPR-Foot coordinates are interpreted as:
+        x = foot width, y = foot height, z = foot length.
+
+    The current shoe diagnostics interpret this GShell shoe as:
+        x = shoe length, y = shoe height/opening-to-sole axis, z = shoe width.
+
+    For the raw shell mesh used in the debug notebook, the missing sole/base is
+    on the positive y side, so anatomical foot-up maps to negative shoe y.
+    """
+
+    axes = [shoe_length_axis, shoe_up_axis, shoe_width_axis]
+    if sorted(axes) != [0, 1, 2]:
+        raise ValueError("shoe_length_axis, shoe_up_axis, and shoe_width_axis must be a permutation of 0,1,2")
+
+    remap = np.zeros((3, 3), dtype=np.float32)
+    remap[shoe_length_axis, RAW_SUPR_LENGTH_AXIS] = axis_sign(shoe_length_sign)
+    remap[shoe_up_axis, RAW_SUPR_HEIGHT_AXIS] = axis_sign(shoe_up_sign)
+    remap[shoe_width_axis, RAW_SUPR_WIDTH_AXIS] = axis_sign(shoe_width_sign)
+    return remap
+
+
+def remap_supr_to_shoe_axes(
+    points: np.ndarray,
+    shoe_length_axis: int = 0,
+    shoe_up_axis: int = 1,
+    shoe_width_axis: int = 2,
+    shoe_length_sign: float = 1.0,
+    shoe_up_sign: float = -1.0,
+    shoe_width_sign: float = 1.0,
+) -> np.ndarray:
+    remap = make_supr_to_shoe_axis_remap(
+        shoe_length_axis,
+        shoe_up_axis,
+        shoe_width_axis,
+        shoe_length_sign,
+        shoe_up_sign,
+        shoe_width_sign,
+    )
+    return np.asarray(points, dtype=np.float32) @ remap.T
 
 
 def _translation_matrix(offset: np.ndarray) -> np.ndarray:
@@ -247,77 +488,204 @@ def _scale_matrix(scale: float) -> np.ndarray:
     return matrix
 
 
-def _axis_remap_matrix() -> np.ndarray:
+def _axis_remap_matrix(config: FootAlignmentConfig) -> np.ndarray:
     matrix = np.eye(4, dtype=np.float32)
-    matrix[:3, :3] = SUPR_TO_SHOE_AXIS_REMAP
+    matrix[:3, :3] = make_supr_to_shoe_axis_remap(
+        config.shoe_length_axis,
+        config.shoe_up_axis,
+        config.shoe_width_axis,
+        config.shoe_length_sign,
+        config.shoe_up_sign,
+        config.shoe_width_sign,
+    )
     return matrix
 
 
-def _rotation_matrix(yaw_degrees: float, pitch_degrees: float, roll_degrees: float) -> np.ndarray:
-    yaw = np.deg2rad(yaw_degrees)
-    pitch = np.deg2rad(pitch_degrees)
-    roll = np.deg2rad(roll_degrees)
-
-    cz, sz = np.cos(yaw), np.sin(yaw)
-    cy, sy = np.cos(pitch), np.sin(pitch)
-    cx, sx = np.cos(roll), np.sin(roll)
-
-    rz = np.asarray([[cz, -sz, 0.0], [sz, cz, 0.0], [0.0, 0.0, 1.0]], dtype=np.float32)
-    ry = np.asarray([[cy, 0.0, sy], [0.0, 1.0, 0.0], [-sy, 0.0, cy]], dtype=np.float32)
-    rx = np.asarray([[1.0, 0.0, 0.0], [0.0, cx, -sx], [0.0, sx, cx]], dtype=np.float32)
+def _axis_angle_rotation_matrix(axis: int, degrees: float) -> np.ndarray:
+    angle = np.deg2rad(degrees)
+    cos_value = np.cos(angle)
+    sin_value = np.sin(angle)
 
     matrix = np.eye(4, dtype=np.float32)
-    matrix[:3, :3] = rz @ ry @ rx
+    if axis == 0:
+        matrix[:3, :3] = np.asarray(
+            [
+                [1.0, 0.0, 0.0],
+                [0.0, cos_value, -sin_value],
+                [0.0, sin_value, cos_value],
+            ],
+            dtype=np.float32,
+        )
+    elif axis == 1:
+        matrix[:3, :3] = np.asarray(
+            [
+                [cos_value, 0.0, sin_value],
+                [0.0, 1.0, 0.0],
+                [-sin_value, 0.0, cos_value],
+            ],
+            dtype=np.float32,
+        )
+    elif axis == 2:
+        matrix[:3, :3] = np.asarray(
+            [
+                [cos_value, -sin_value, 0.0],
+                [sin_value, cos_value, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+    else:
+        raise ValueError("axis must be 0, 1, or 2")
     return matrix
+
+
+def _rotation_matrix(
+    yaw_degrees: float,
+    pitch_degrees: float,
+    roll_degrees: float,
+    config: FootAlignmentConfig,
+) -> np.ndarray:
+    return (
+        _axis_angle_rotation_matrix(config.shoe_up_axis, yaw_degrees)
+        @ _axis_angle_rotation_matrix(config.shoe_width_axis, pitch_degrees)
+        @ _axis_angle_rotation_matrix(config.shoe_length_axis, roll_degrees)
+    )
+
+
+def principal_yaw_degrees(
+    vertices: np.ndarray,
+    length_axis: int = 0,
+    width_axis: int = 1,
+) -> float:
+    """Estimate the horizontal long-axis angle of a mesh in degrees."""
+
+    horizontal = np.asarray(vertices, dtype=np.float32)[:, [length_axis, width_axis]]
+    centered = horizontal - horizontal.mean(axis=0, keepdims=True)
+    covariance = np.cov(centered.T)
+    eigenvalues, eigenvectors = np.linalg.eigh(covariance)
+    axis = eigenvectors[:, int(np.argmax(eigenvalues))]
+    if axis[0] < 0.0:
+        axis = -axis
+    return float(np.rad2deg(np.arctan2(axis[1], axis[0])))
+
+
+def principal_xy_yaw_degrees(vertices: np.ndarray) -> float:
+    """Backward-compatible X-Y-plane yaw helper."""
+
+    return principal_yaw_degrees(vertices, length_axis=0, width_axis=1)
 
 
 def build_alignment_from_meshes(
     foot_mesh: MeshData,
     shoe_mesh: MeshData,
+    opening_mesh: Optional[MeshData] = None,
     config: Optional[FootAlignmentConfig] = None,
 ) -> FootAlignment:
-    """Create an initial SUPR-foot-to-GShell-shoe alignment from bounding boxes."""
+    """Create an initial SUPR-foot-to-GShell-shoe alignment."""
 
     cfg = config or FootAlignmentConfig()
-    foot_remapped = remap_supr_to_shoe_axes(foot_mesh.vertices)
+    foot_remapped = remap_supr_to_shoe_axes(
+        foot_mesh.vertices,
+        cfg.shoe_length_axis,
+        cfg.shoe_up_axis,
+        cfg.shoe_width_axis,
+        cfg.shoe_length_sign,
+        cfg.shoe_up_sign,
+        cfg.shoe_width_sign,
+    )
     foot_min, foot_max, foot_size, foot_center = mesh_bounds(foot_remapped)
     shoe_min, shoe_max, shoe_size, shoe_center = mesh_bounds(shoe_mesh.vertices)
 
-    if foot_size[0] <= 0.0:
+    if foot_size[cfg.shoe_length_axis] <= 0.0:
         raise ValueError("Foot length extent is zero after axis remap")
-    scale = float(cfg.length_ratio * cfg.scale_multiplier * shoe_size[0] / foot_size[0])
-
-    foot_anchor = np.asarray([foot_center[0], foot_center[1], foot_min[2]], dtype=np.float32)
-    shoe_anchor = np.asarray(
-        [
-            shoe_center[0],
-            shoe_center[1],
-            shoe_min[2] + cfg.plantar_clearance,
-        ],
-        dtype=np.float32,
+    scale = float(
+        cfg.length_ratio
+        * cfg.scale_multiplier
+        * shoe_size[cfg.shoe_length_axis]
+        / foot_size[cfg.shoe_length_axis]
     )
-    shoe_anchor = shoe_anchor + np.asarray(cfg.translation_offset, dtype=np.float32)
+
+    foot_anchor = foot_center.astype(np.float32)
+    foot_anchor[cfg.shoe_up_axis] = plantar_coordinate(
+        foot_remapped,
+        cfg.shoe_up_axis,
+        cfg.shoe_up_sign,
+    )
+    shoe_anchor = shoe_center.astype(np.float32)
+    shoe_anchor[cfg.shoe_up_axis] = bottom_coordinate(
+        shoe_min,
+        shoe_max,
+        cfg.shoe_up_axis,
+        cfg.shoe_up_sign,
+        cfg.plantar_clearance,
+    )
+
+    auto_yaw_degrees = (
+        principal_yaw_degrees(
+            shoe_mesh.vertices,
+            length_axis=cfg.shoe_length_axis,
+            width_axis=cfg.shoe_width_axis,
+        )
+        if cfg.auto_yaw
+        else 0.0
+    )
+    total_yaw_degrees = auto_yaw_degrees + cfg.yaw_degrees
 
     foot_to_shoe = (
         _translation_matrix(shoe_anchor)
-        @ _rotation_matrix(cfg.yaw_degrees, cfg.pitch_degrees, cfg.roll_degrees)
+        @ _rotation_matrix(total_yaw_degrees, cfg.pitch_degrees, cfg.roll_degrees, cfg)
         @ _scale_matrix(scale)
         @ _translation_matrix(-foot_anchor)
-        @ _axis_remap_matrix()
+        @ _axis_remap_matrix(cfg)
     )
+
+    alignment_shift = np.zeros(3, dtype=np.float32)
+    opening_center = None
+    opening_component_index = None
+    opening_component_size = None
+    if cfg.align_ankle_to_opening and opening_mesh is not None:
+        opening = detect_shoe_opening_boundary(opening_mesh, cfg)
+        if opening is not None:
+            ankle_loop = get_single_boundary_loop(foot_mesh)
+            ankle_center = transform_points(foot_mesh.vertices[ankle_loop], foot_to_shoe).mean(axis=0)
+            opening_center_array = np.asarray(opening["center"], dtype=np.float32)
+            opening_shift = np.zeros(3, dtype=np.float32)
+            for axis in [cfg.shoe_length_axis, cfg.shoe_width_axis]:
+                opening_shift[axis] = opening_center_array[axis] - ankle_center[axis]
+            foot_to_shoe = _translation_matrix(opening_shift) @ foot_to_shoe
+            alignment_shift += opening_shift
+            opening_center = tuple(float(v) for v in opening_center_array)
+            opening_component_index = int(opening["index"])
+            opening_component_size = tuple(float(v) for v in np.asarray(opening["size"], dtype=np.float32))
+
+    user_offset = np.asarray(cfg.translation_offset, dtype=np.float32)
+    if np.any(user_offset):
+        foot_to_shoe = _translation_matrix(user_offset) @ foot_to_shoe
+        alignment_shift += user_offset
+
     shoe_to_foot = np.linalg.inv(foot_to_shoe).astype(np.float32)
 
     aligned_foot = transform_points(foot_mesh.vertices, foot_to_shoe)
-    plantar_z = float(aligned_foot[:, 2].min())
+    plantar_z = plantar_coordinate(aligned_foot, cfg.shoe_up_axis, cfg.shoe_up_sign)
+    ankle_center_shoe = transform_points(
+        foot_mesh.vertices[get_single_boundary_loop(foot_mesh)],
+        foot_to_shoe,
+    ).mean(axis=0)
+    final_shoe_anchor = shoe_anchor + alignment_shift
 
     return FootAlignment(
         foot_to_shoe=foot_to_shoe.astype(np.float32),
         shoe_to_foot=shoe_to_foot,
         scale=scale,
         plantar_z=plantar_z,
+        auto_yaw_degrees=auto_yaw_degrees,
         config=cfg,
         foot_anchor_remapped=tuple(float(v) for v in foot_anchor),
-        shoe_anchor=tuple(float(v) for v in shoe_anchor),
+        shoe_anchor=tuple(float(v) for v in final_shoe_anchor),
+        ankle_center_shoe=tuple(float(v) for v in ankle_center_shoe),
+        opening_center=opening_center,
+        opening_component_index=opening_component_index,
+        opening_component_size=opening_component_size,
     )
 
 
@@ -381,7 +749,9 @@ def classify_shoe_points(
 
     cfg = alignment.config
     sdf_values = query_foot_sdf_in_shoe_space(points_shoe, foot_sdf, alignment)
-    below_plantar = points_shoe[:, 2] <= alignment.plantar_z + cfg.plantar_band
+    point_up_values = signed_axis_values(points_shoe, cfg.shoe_up_axis, cfg.shoe_up_sign)
+    plantar_up_value = axis_sign(cfg.shoe_up_sign) * alignment.plantar_z
+    below_plantar = point_up_values <= plantar_up_value + cfg.plantar_band
     regions = {
         "sdf": sdf_values,
         "inside_foot": sdf_values < 0.0,
@@ -436,9 +806,28 @@ def region_summary(regions: Dict[str, np.ndarray]) -> Dict[str, object]:
     return summary
 
 
-def select_faces_by_centroid_z(mesh_data: MeshData, z_max: float) -> np.ndarray:
+def select_faces_below_axis(mesh_data: MeshData, axis: int, max_value: float) -> np.ndarray:
     centroids = mesh_data.vertices[mesh_data.faces].mean(axis=1)
-    return centroids[:, 2] <= z_max
+    return centroids[:, axis] <= max_value
+
+
+def select_faces_below_signed_axis(
+    mesh_data: MeshData,
+    axis: int,
+    axis_direction: float,
+    plantar_value: float,
+    band: float = 0.0,
+) -> np.ndarray:
+    """Select faces on the sole/material side of a signed anatomical up axis."""
+
+    centroids = mesh_data.vertices[mesh_data.faces].mean(axis=1)
+    signed_centroids = axis_sign(axis_direction) * centroids[:, axis]
+    signed_plantar = axis_sign(axis_direction) * float(plantar_value)
+    return signed_centroids <= signed_plantar + float(band)
+
+
+def select_faces_by_centroid_z(mesh_data: MeshData, z_max: float) -> np.ndarray:
+    return select_faces_below_axis(mesh_data, axis=2, max_value=z_max)
 
 
 def make_hybrid_mesh(shell_mesh: MeshData, watertight_mesh: MeshData, watertight_face_mask: np.ndarray) -> MeshData:
