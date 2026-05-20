@@ -24,9 +24,11 @@ from .foot_alignment import (
     build_alignment_from_meshes,
     classify_shoe_points,
     compact_mesh,
+    convex_hull_2d,
     colors_from_regions,
     detect_shoe_opening_boundary,
     find_boundary_components,
+    foot_footprint_mask,
     get_single_boundary_loop,
     load_triangle_mesh,
     make_supr_to_shoe_axis_remap,
@@ -41,10 +43,12 @@ from .foot_alignment import (
     select_faces_by_centroid_z,
     select_faces_below_axis,
     select_faces_below_signed_axis,
+    sole_block_masks,
     transform_points,
     write_colored_ply,
     write_obj_mesh,
 )
+from .foot_loss import FootPriorLoss, FootPriorLossConfig
 from .supr_foot import FootMesh, load_supr_foot_posed, load_supr_foot_template
 
 __all__ = [
@@ -52,6 +56,8 @@ __all__ = [
     "FootAlignmentConfig",
     "FootMesh",
     "FootMeshForSDF",
+    "FootPriorLoss",
+    "FootPriorLossConfig",
     "FootSDFBuildConfig",
     "FootSDFConfig",
     "FootSDFGrid",
@@ -62,9 +68,11 @@ __all__ = [
     "cap_single_boundary_loop",
     "classify_shoe_points",
     "compact_mesh",
+    "convex_hull_2d",
     "colors_from_regions",
     "detect_shoe_opening_boundary",
     "find_boundary_components",
+    "foot_footprint_mask",
     "find_boundary_loops",
     "get_single_boundary_loop",
     "load_supr_foot_posed",
@@ -84,6 +92,7 @@ __all__ = [
     "select_faces_by_centroid_z",
     "select_faces_below_axis",
     "select_faces_below_signed_axis",
+    "sole_block_masks",
     "transform_points",
     "write_colored_ply",
     "write_obj_mesh",

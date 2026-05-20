@@ -24,6 +24,7 @@ from .gshell_tets import GShell_Tets
 import kaolin
 
 from .mlp import MLP
+from foot_prior import FootPriorLoss, FootPriorLossConfig
 
 
 ###############################################################################
@@ -82,6 +83,17 @@ class GShellTetsGeometry(torch.nn.Module):
             else:
                 offset = torch.tensor(offset).cuda().view(1, 3)
             self.offset = offset
+
+        self.foot_prior_loss = None
+        self.last_foot_prior_stats = {}
+        if getattr(self.FLAGS, "use_foot_prior", False):
+            self.foot_prior_loss = FootPriorLoss(
+                FootPriorLossConfig.from_flags(self.FLAGS),
+                device=torch.device("cuda"),
+            )
+            print("Loaded neutral foot prior:")
+            print(f"  SDF: {self.FLAGS.foot_prior_sdf_path}")
+            print(f"  alignment: {self.FLAGS.foot_prior_alignment_path}")
 
         if self.FLAGS.use_sdf_mlp:
             self.sdf    = torch.nn.Parameter(torch.zeros_like(self.verts[:, 0]), requires_grad=True) ## placeholder
@@ -219,6 +231,8 @@ class GShellTetsGeometry(torch.nn.Module):
             'msdf_watertight': extra['msdf_watertight'],
             'msdf_boundary': extra['msdf_boundary'],
             'n_verts_watertight': extra['n_verts_watertight'],
+            'vertices_watertight': extra['vertices_watertight'],
+            'faces_watertight': extra['faces_watertight'],
         }
 
         if self.FLAGS.visualize_watertight:
@@ -377,7 +391,20 @@ class GShellTetsGeometry(torch.nn.Module):
         assert 'perturbed_nrm' not in buffers # disable normal map in first pass
 
 
-        geo_reg_loss = sdf_reg_loss + eik_loss + mesh_msdf_reg_loss
+        foot_prior_reg_loss = torch.tensor(0., device=img_loss.device)
+        self.last_foot_prior_stats = {}
+        if self.foot_prior_loss is not None:
+            surface_points = opt_mesh_dict['sampled_pts']
+            if surface_points is None and opt_mesh_dict['imesh'].v_pos.numel() > 0:
+                surface_points = opt_mesh_dict['imesh'].v_pos
+            foot_prior_reg_loss, self.last_foot_prior_stats = self.foot_prior_loss(
+                iteration=iteration,
+                surface_points=surface_points,
+                watertight_points=opt_mesh_dict.get('vertices_watertight'),
+                watertight_msdf=opt_mesh_dict.get('msdf_watertight'),
+            )
+
+        geo_reg_loss = sdf_reg_loss + eik_loss + mesh_msdf_reg_loss + foot_prior_reg_loss
         shading_reg_loss =  monochrome_loss + mtl_smooth_loss + chroma_loss
         reg_loss = geo_reg_loss + shading_reg_loss
 

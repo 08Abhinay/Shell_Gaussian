@@ -2,6 +2,7 @@
 set -euo pipefail
 
 MIN_FREE_MB="${MIN_FREE_MB:-51200}"  # 50 GB minimum free VRAM
+MAX_PARALLEL_JOBS="${MAX_PARALLEL_JOBS:-0}"  # 0 means use every free GPU
 SESSION_NAME="${1:-gshell_all_shoes}"
 shift $(( $# >= 1 ? 1 : $# ))
 REQUESTED_SHOES=("${@+"$@"}")
@@ -12,6 +13,7 @@ TRAIN_SCRIPT="${PROJECT_DIR}/scripts/train_shoe.sh"
 DATASET_ROOT="${GSHELL_DATASET_ROOT:-/data/abelde/datasets/processed/gshell_shoes}"
 CONFIG_PATH="${GSHELL_CONFIG:-${PROJECT_DIR}/configs/shoes_mc_normfix.json}"
 OUT_SUFFIX="${GSHELL_OUT_SUFFIX:-_normfix}"
+OUTPUT_ROOT="${GSHELL_OUTPUT_ROOT:-${PROJECT_DIR}/output}"
 SKIP_EXISTING="${SKIP_EXISTING:-1}"
 
 timestamp() {
@@ -63,7 +65,7 @@ if [[ "${INSIDE_BATCH_TMUX:-0}" != "1" ]]; then
         exit 1
     fi
 
-    RUN_ROOT="${PROJECT_DIR}/output/batch_runs/${SESSION_NAME}_$(date -u +%Y%m%d_%H%M%S)"
+    RUN_ROOT="${OUTPUT_ROOT}/batch_runs/${SESSION_NAME}_$(date -u +%Y%m%d_%H%M%S)"
     mkdir -p "${RUN_ROOT}"
     BATCH_LOG="${RUN_ROOT}/batch.log"
 
@@ -74,8 +76,10 @@ if [[ "${INSIDE_BATCH_TMUX:-0}" != "1" ]]; then
         "GSHELL_DATASET_ROOT=${DATASET_ROOT}"
         "GSHELL_CONFIG=${CONFIG_PATH}"
         "GSHELL_OUT_SUFFIX=${OUT_SUFFIX}"
+        "GSHELL_OUTPUT_ROOT=${OUTPUT_ROOT}"
         "SKIP_EXISTING=${SKIP_EXISTING}"
         "MIN_FREE_MB=${MIN_FREE_MB}"
+        "MAX_PARALLEL_JOBS=${MAX_PARALLEL_JOBS}"
         "${SCRIPT_PATH}"
         "${SESSION_NAME}"
     )
@@ -99,9 +103,11 @@ exec > >(tee -a "${BATCH_LOG}") 2>&1
 
 echo "[$(timestamp)] Batch training started"
 echo "[$(timestamp)] MIN_FREE_MB=${MIN_FREE_MB}"
+echo "[$(timestamp)] MAX_PARALLEL_JOBS=${MAX_PARALLEL_JOBS}"
 echo "[$(timestamp)] DATASET_ROOT=${DATASET_ROOT}"
 echo "[$(timestamp)] CONFIG_PATH=${CONFIG_PATH}"
 echo "[$(timestamp)] OUT_SUFFIX=${OUT_SUFFIX}"
+echo "[$(timestamp)] OUTPUT_ROOT=${OUTPUT_ROOT}"
 echo "[$(timestamp)] SKIP_EXISTING=${SKIP_EXISTING}"
 
 if [[ ${#REQUESTED_SHOES[@]} -gt 0 ]]; then
@@ -176,7 +182,7 @@ busy_gpu_list() {
 
 for shoe in "${SHOES[@]}"; do
     dataset_dir="${DATASET_ROOT}/${shoe}"
-    out_dir="${PROJECT_DIR}/output/${shoe}${OUT_SUFFIX}"
+    out_dir="${OUTPUT_ROOT}/${shoe}${OUT_SUFFIX}"
 
     if [[ ! -d "${dataset_dir}" ]]; then
         echo "[$(timestamp)] MISSING ${shoe}: dataset not found at ${dataset_dir}"
@@ -193,6 +199,14 @@ for shoe in "${SHOES[@]}"; do
     # Wait until a free GPU (not already used by a running job) is available
     while true; do
         reap_finished
+        running_count=0
+        if [[ -n "${PIDS}" ]]; then
+            running_count=$(wc -w <<< "${PIDS}")
+        fi
+        if [[ "${MAX_PARALLEL_JOBS}" != "0" && "${running_count}" -ge "${MAX_PARALLEL_JOBS}" ]]; then
+            sleep 30
+            continue
+        fi
         GPU_ID="$(claim_gpu "$(busy_gpu_list)")" && break
         sleep 30
     done
@@ -202,6 +216,7 @@ for shoe in "${SHOES[@]}"; do
         GSHELL_DATASET_ROOT="${DATASET_ROOT}" \
         GSHELL_CONFIG="${CONFIG_PATH}" \
         GSHELL_OUT_SUFFIX="${OUT_SUFFIX}" \
+        GSHELL_OUTPUT_ROOT="${OUTPUT_ROOT}" \
         bash "${TRAIN_SCRIPT}" "${shoe}" "${GPU_ID}"
     ) &
     track_job "$!" "${shoe}" "${GPU_ID}"

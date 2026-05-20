@@ -739,6 +739,142 @@ def query_foot_sdf_in_shoe_space(
     return np.concatenate(values, axis=0).astype(np.float32)
 
 
+def convex_hull_2d(points: np.ndarray) -> np.ndarray:
+    """Return the counter-clockwise convex hull of 2D points.
+
+    This avoids an extra scipy dependency for the simple footprint masks used
+    by the alignment diagnostics.
+    """
+
+    points = np.asarray(points, dtype=np.float32)
+    if points.ndim != 2 or points.shape[1] != 2:
+        raise ValueError("points must have shape [N, 2]")
+    if points.shape[0] == 0:
+        return np.empty((0, 2), dtype=np.float32)
+
+    unique = np.unique(points, axis=0)
+    if unique.shape[0] <= 2:
+        return unique.astype(np.float32)
+
+    ordered = sorted((float(x), float(y)) for x, y in unique)
+
+    def cross(origin: Tuple[float, float], a: Tuple[float, float], b: Tuple[float, float]) -> float:
+        return (a[0] - origin[0]) * (b[1] - origin[1]) - (a[1] - origin[1]) * (b[0] - origin[0])
+
+    lower: list[Tuple[float, float]] = []
+    for point in ordered:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], point) <= 0.0:
+            lower.pop()
+        lower.append(point)
+
+    upper: list[Tuple[float, float]] = []
+    for point in reversed(ordered):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], point) <= 0.0:
+            upper.pop()
+        upper.append(point)
+
+    hull = np.asarray(lower[:-1] + upper[:-1], dtype=np.float32)
+    return hull
+
+
+def points_in_convex_polygon(points: np.ndarray, polygon: np.ndarray, margin: float = 0.0) -> np.ndarray:
+    """Return whether 2D points are inside a convex polygon.
+
+    ``margin`` is a world-space tolerance around the polygon boundary. Positive
+    values make the footprint a little more forgiving.
+    """
+
+    points = np.asarray(points, dtype=np.float32)
+    polygon = np.asarray(polygon, dtype=np.float32)
+    if points.ndim != 2 or points.shape[1] != 2:
+        raise ValueError("points must have shape [N, 2]")
+    if polygon.ndim != 2 or polygon.shape[1] != 2:
+        raise ValueError("polygon must have shape [M, 2]")
+    if polygon.shape[0] < 3:
+        return np.zeros((points.shape[0],), dtype=bool)
+
+    inside = np.ones((points.shape[0],), dtype=bool)
+    margin = float(max(margin, 0.0))
+    for index in range(polygon.shape[0]):
+        start = polygon[index]
+        end = polygon[(index + 1) % polygon.shape[0]]
+        edge = end - start
+        edge_length = max(float(np.linalg.norm(edge)), 1e-8)
+        signed_distance_scaled = (
+            edge[0] * (points[:, 1] - start[1])
+            - edge[1] * (points[:, 0] - start[0])
+        )
+        inside &= signed_distance_scaled >= -margin * edge_length
+    return inside
+
+
+def foot_footprint_mask(
+    points_shoe: np.ndarray,
+    foot_vertices_shoe: np.ndarray,
+    config: FootAlignmentConfig,
+    margin: float = 0.01,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Select points whose length/width projection lies under the foot."""
+
+    axes = [config.shoe_length_axis, config.shoe_width_axis]
+    foot_2d = np.asarray(foot_vertices_shoe, dtype=np.float32)[:, axes]
+    points_2d = np.asarray(points_shoe, dtype=np.float32)[:, axes]
+    hull = convex_hull_2d(foot_2d)
+    return points_in_convex_polygon(points_2d, hull, margin=margin), hull
+
+
+def sole_block_masks(
+    mesh_data: MeshData,
+    foot_vertices_shoe: np.ndarray,
+    alignment: FootAlignment,
+    footprint_margin: float = 0.01,
+    plantar_band: Optional[float] = None,
+) -> Dict[str, np.ndarray]:
+    """Find watertight shoe vertices/faces in the solid block under the foot.
+
+    This is a geometric diagnostic mask, not a learned quantity. A point belongs
+    to the block when it is on the base side of the aligned foot's plantar
+    coordinate and its length/width projection falls under the aligned foot
+    footprint.
+    """
+
+    cfg = alignment.config
+    band = cfg.plantar_band if plantar_band is None else float(plantar_band)
+    vertices = np.asarray(mesh_data.vertices, dtype=np.float32)
+    faces = np.asarray(mesh_data.faces, dtype=np.int64)
+    centroids = vertices[faces].mean(axis=1)
+
+    vertex_up = signed_axis_values(vertices, cfg.shoe_up_axis, cfg.shoe_up_sign)
+    face_up = signed_axis_values(centroids, cfg.shoe_up_axis, cfg.shoe_up_sign)
+    plantar_up = axis_sign(cfg.shoe_up_sign) * float(alignment.plantar_z)
+    vertex_below = vertex_up <= plantar_up + band
+    face_below = face_up <= plantar_up + band
+
+    vertex_footprint, footprint_hull = foot_footprint_mask(
+        vertices,
+        foot_vertices_shoe,
+        cfg,
+        margin=footprint_margin,
+    )
+    face_footprint, _ = foot_footprint_mask(
+        centroids,
+        foot_vertices_shoe,
+        cfg,
+        margin=footprint_margin,
+    )
+
+    return {
+        "vertex_below_plantar": vertex_below,
+        "vertex_under_footprint": vertex_footprint,
+        "vertex_sole_block": vertex_below & vertex_footprint,
+        "face_below_plantar": face_below,
+        "face_under_footprint": face_footprint,
+        "face_sole_block": face_below & face_footprint,
+        "face_centroids": centroids,
+        "footprint_hull": footprint_hull,
+    }
+
+
 def classify_shoe_points(
     points_shoe: np.ndarray,
     foot_sdf: FootSDFGrid,

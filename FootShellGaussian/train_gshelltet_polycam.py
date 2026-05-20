@@ -544,8 +544,21 @@ def optimize_mesh(
             iter_dur_avg = np.mean(np.asarray(iter_dur_vec[-log_interval:]))
             
             remaining_time = (FLAGS.iter-it)*iter_dur_avg
-            print("iter=%5d, img_loss=%.6f, depth_loss=%.6f, reg_loss=%.6f, lr=%.5f, time=%.1f ms, rem=%s" % 
-                (it, img_loss_avg, depth_loss_avg, reg_loss_avg, optimizer.param_groups[0]['lr'], iter_dur_avg*1000, util.time_to_text(remaining_time)))
+            foot_stats = getattr(geometry, "last_foot_prior_stats", {})
+            foot_log = ""
+            if foot_stats:
+                foot_log = (
+                    ", foot_loss=%.6f, foot_w=%.3f, foot_inside=%.3f, foot_sole_pts=%d"
+                    % (
+                        foot_stats.get("total", 0.0),
+                        foot_stats.get("schedule_weight", 0.0),
+                        foot_stats.get("clearance_inside_fraction", 0.0),
+                        int(foot_stats.get("plantar_candidate_count", 0)),
+                    )
+                )
+            print(("iter=%5d, img_loss=%.6f, depth_loss=%.6f, reg_loss=%.6f, lr=%.5f, "
+                   "time=%.1f ms, rem=%s%s") %
+                (it, img_loss_avg, depth_loss_avg, reg_loss_avg, optimizer.param_groups[0]['lr'], iter_dur_avg*1000, util.time_to_text(remaining_time), foot_log))
             sys.stdout.flush()
 
         if it == FLAGS.iter:
@@ -599,6 +612,18 @@ if __name__ == "__main__":
     parser.add_argument('--msdf_reg_close_scale', type=float, default=3e-4)
     parser.add_argument('--eikonal_scale', type=float, default=5e-3)
     parser.add_argument('--sdf_regularizer', type=float, default=0.2)
+    parser.add_argument('--use_foot_prior', action='store_true', default=False)
+    parser.add_argument('--foot_prior_sdf_path', type=str, default='')
+    parser.add_argument('--foot_prior_alignment_path', type=str, default='')
+    parser.add_argument('--foot_prior_clearance', type=float, default=0.005)
+    parser.add_argument('--foot_prior_clearance_weight', type=float, default=2.0)
+    parser.add_argument('--foot_prior_msdf_close_weight', type=float, default=0.001)
+    parser.add_argument('--foot_prior_msdf_close_margin', type=float, default=0.001)
+    parser.add_argument('--foot_prior_plantar_sdf_band', type=float, default=0.035)
+    parser.add_argument('--foot_prior_start_iter', type=int, default=500)
+    parser.add_argument('--foot_prior_warmup_iter', type=int, default=1000)
+    parser.add_argument('--foot_prior_max_surface_points', type=int, default=50000)
+    parser.add_argument('--foot_prior_max_watertight_points', type=int, default=50000)
     parser.add_argument('--trainset_path', type=str)
     parser.add_argument('--testset_path', type=str, default='')
 

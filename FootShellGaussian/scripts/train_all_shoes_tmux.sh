@@ -12,6 +12,8 @@ TRAIN_SCRIPT="${PROJECT_DIR}/scripts/train_shoe.sh"
 DATASET_ROOT="${GSHELL_DATASET_ROOT:-/data/abelde/datasets/processed/gshell_shoes}"
 CONFIG_PATH="${GSHELL_CONFIG:-${PROJECT_DIR}/configs/shoes_mc_normfix.json}"
 OUT_SUFFIX="${GSHELL_OUT_SUFFIX:-_normfix}"
+FOOTSHELL_ENV_DIR="${FOOTSHELL_ENV_DIR:-${PROJECT_DIR}/../baselines/GShell/GShell_env}"
+FOOTSHELL_FOOT_PRIOR_ROOT="${FOOTSHELL_FOOT_PRIOR_ROOT:-${PROJECT_DIR}/output/foot_prior_debug}"
 SKIP_EXISTING="${SKIP_EXISTING:-1}"
 
 timestamp() {
@@ -74,6 +76,8 @@ if [[ "${INSIDE_BATCH_TMUX:-0}" != "1" ]]; then
         "GSHELL_DATASET_ROOT=${DATASET_ROOT}"
         "GSHELL_CONFIG=${CONFIG_PATH}"
         "GSHELL_OUT_SUFFIX=${OUT_SUFFIX}"
+        "FOOTSHELL_ENV_DIR=${FOOTSHELL_ENV_DIR}"
+        "FOOTSHELL_FOOT_PRIOR_ROOT=${FOOTSHELL_FOOT_PRIOR_ROOT}"
         "SKIP_EXISTING=${SKIP_EXISTING}"
         "MIN_FREE_MB=${MIN_FREE_MB}"
         "${SCRIPT_PATH}"
@@ -102,6 +106,8 @@ echo "[$(timestamp)] MIN_FREE_MB=${MIN_FREE_MB}"
 echo "[$(timestamp)] DATASET_ROOT=${DATASET_ROOT}"
 echo "[$(timestamp)] CONFIG_PATH=${CONFIG_PATH}"
 echo "[$(timestamp)] OUT_SUFFIX=${OUT_SUFFIX}"
+echo "[$(timestamp)] FOOTSHELL_ENV_DIR=${FOOTSHELL_ENV_DIR}"
+echo "[$(timestamp)] FOOTSHELL_FOOT_PRIOR_ROOT=${FOOTSHELL_FOOT_PRIOR_ROOT}"
 echo "[$(timestamp)] SKIP_EXISTING=${SKIP_EXISTING}"
 
 if [[ ${#REQUESTED_SHOES[@]} -gt 0 ]]; then
@@ -202,6 +208,8 @@ for shoe in "${SHOES[@]}"; do
         GSHELL_DATASET_ROOT="${DATASET_ROOT}" \
         GSHELL_CONFIG="${CONFIG_PATH}" \
         GSHELL_OUT_SUFFIX="${OUT_SUFFIX}" \
+        FOOTSHELL_ENV_DIR="${FOOTSHELL_ENV_DIR}" \
+        FOOTSHELL_FOOT_PRIOR_ROOT="${FOOTSHELL_FOOT_PRIOR_ROOT}" \
         bash "${TRAIN_SCRIPT}" "${shoe}" "${GPU_ID}"
     ) &
     track_job "$!" "${shoe}" "${GPU_ID}"
