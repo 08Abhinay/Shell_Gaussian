@@ -17,6 +17,73 @@ G-Shell is a generic and differentiable representation for both watertight and n
 
 Please refer to [our project page](https://gshell3d.github.io) and [our paper](https://gshell3d.github.io/static/paper/gshell.pdf) for more details.
 
+## Foot Alignment Reproduction
+
+The shoe/foot alignment work for this repository is documented in:
+
+```text
+FOOT_ALIGNMENT_REPRODUCTION.md
+```
+
+That file contains the exact commands for turntable canonicalization, GShell
+training, foot-alignment debug output generation, and the current V4
+support-footbed extraction pipeline.
+
+Current V4 support-footbed command:
+
+```bash
+cd /data/abelde/projects/active/Shell_Gaussian
+
+/data/abelde/projects/active/Shell_Gaussian/baselines/GShell/GShell_env/bin/python \
+  /data/abelde/projects/active/Shell_Gaussian/FootShellGaussian/scripts/run_support_footbed_analysis.py \
+  --mesh-root /data/abelde/projects/active/Shell_Gaussian/baselines/GShell/output/turntable-512-768 \
+  --output-root /data/abelde/projects/active/Shell_Gaussian/baselines/GShell/output/support_footbed_analysis_v4 \
+  --grid-resolution 192 \
+  --footbed-offset 0.015 \
+  --heightmap-min-samples-per-cell 2 \
+  --heightmap-smooth-sigma 1.25 \
+  --heightmap-profile-clip 0.025 \
+  --footbed-inner-margin-cells 7 \
+  --smooth-footbed-window-fraction 0.18 \
+  --footbed-height-fraction 0.22 \
+  --open-boundary-footbed-offset-ratio 0.055 \
+  --open-boundary-footbed-offset-min 0.008 \
+  --open-boundary-footbed-offset-max 0.022 \
+  --overwrite
+```
+
+The same V4 command can also be run from the final executable section of:
+
+```text
+notebooks/foot_support_footbed_playground.ipynb
+```
+
+Current V4 hybrid footbed-aware optimizer command:
+
+```bash
+cd /data/abelde/projects/active/Shell_Gaussian
+
+CUDA_VISIBLE_DEVICES=5 /data/abelde/projects/active/Shell_Gaussian/baselines/GShell/GShell_env/bin/python \
+  /data/abelde/projects/active/Shell_Gaussian/FootShellGaussian/scripts/run_foot_fit_optimization.py \
+  --mesh-root /data/abelde/projects/active/Shell_Gaussian/baselines/GShell/output/turntable-512-768 \
+  --support-root /data/abelde/projects/active/Shell_Gaussian/baselines/GShell/output/support_footbed_analysis_v4 \
+  --baseline-alignment-root /data/abelde/projects/active/Shell_Gaussian/baselines/GShell/output/foot_alignment_turntable-512-768 \
+  --warm-start-alignment-root /data/abelde/projects/active/Shell_Gaussian/baselines/GShell/output/foot_alignment_optimized_turntable-512-768 \
+  --output-root /data/abelde/projects/active/Shell_Gaussian/baselines/GShell/output/foot_alignment_optimized_v4_hybrid_turntable-512-768 \
+  --foot-obj /data/abelde/projects/active/Shell_Gaussian/baselines/SUPR/output/debug_playground/supr_male_right_foot_neutral.obj \
+  --device cuda \
+  --style-mode auto \
+  --adam-steps 120 \
+  --lbfgs-steps 12 \
+  --overwrite
+```
+
+The same optimizer command can also be run from section 15 of:
+
+```text
+notebooks/foot_dataset_alignment_playground.ipynb
+```
+
 
 ## Getting Started
 
