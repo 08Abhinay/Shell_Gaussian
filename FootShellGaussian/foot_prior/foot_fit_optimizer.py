@@ -51,7 +51,6 @@ class FootFitOptimizerConfig:
 
     device: str = "cuda"
     dtype: str = "float32"
-    fit_version: str = "v4"
     style_mode: str = "auto"
     boot_height_ratio_threshold: float = 0.85
     adam_steps: int = 160
@@ -65,8 +64,8 @@ class FootFitOptimizerConfig:
     max_translation_y_ratio: float = 0.12
     max_translation_z_ratio: float = 0.12
     footbed_offset_init_ratio: float = 0.000
-    footbed_offset_min_ratio: float = -0.018
-    footbed_offset_max_ratio: float = 0.018
+    footbed_offset_min_ratio: float = 0.000
+    footbed_offset_max_ratio: float = 0.000
     plantar_band_ratio: float = 0.080
     fit_height_fraction: float = 0.86
     foot_axis_slice_count: int = 28
@@ -82,27 +81,27 @@ class FootFitOptimizerConfig:
     arch_contact_upper: float = 0.026
     toe_contact_lower: float = 0.001
     toe_contact_upper: float = 0.020
-    cavity_weight: float = 28.0
-    plantar_weight: float = 65.0
-    gap_weight: float = 50.0
-    axis_weight: float = 5.0
-    footbed_mask_weight: float = 6.0
-    width_slack_weight: float = 16.0
+    cavity_weight: float = 90.0
+    plantar_weight: float = 135.0
+    gap_weight: float = 70.0
+    axis_weight: float = 35.0
+    footbed_mask_weight: float = 0.0
+    width_slack_weight: float = 20.0
     side_balance_weight: float = 0.0
     side_total_clearance_weight: float = 0.0
     length_balance_weight: float = 0.0
-    prior_weight: float = 4.0
-    top_weight: float = 0.5
+    prior_weight: float = 10.0
+    top_weight: float = 4.0
     side_total_clearance_min_ratio: float = 0.015
     side_total_clearance_max_ratio: float = 0.400
     side_region_edge_quantile: float = 0.08
     sole_yaw_prior_blend: float = 0.20
     yaw_prior_factor: float = 0.30
-    translation_prior_factor: float = 0.15
+    translation_prior_factor: float = 0.0
     offset_prior_factor: float = 0.20
-    multistart_yaw_degrees: Tuple[float, ...] = (-3.0, 0.0, 3.0)
-    multistart_scale_delta: Tuple[float, ...] = (-0.025, 0.0, 0.025)
-    multistart_z_ratio: Tuple[float, ...] = (0.0,)
+    multistart_yaw_degrees: Tuple[float, ...] = (-5.0, 0.0, 5.0)
+    multistart_scale_delta: Tuple[float, ...] = (-0.035, 0.0, 0.035)
+    multistart_z_ratio: Tuple[float, ...] = (-0.025, 0.0, 0.025)
     multistart_offset_ratio_delta: Tuple[float, ...] = (0.0,)
 
 
@@ -470,7 +469,7 @@ def load_pseudo_cavity_from_support_json(
         else None
     )
     if npz_path is not None and npz_path.exists():
-        footbed_payload = _load_v4_footbed_npz(npz_path)
+        footbed_payload = _load_footbed_npz(npz_path)
         footbed_x_centers = footbed_payload["x_centers"]
         footbed_z_centers = footbed_payload["z_centers"]
         footbed_mask = footbed_payload["footbed_mask"]
@@ -509,12 +508,12 @@ def load_pseudo_cavity_from_support_json(
     )
 
 
-def _load_v4_footbed_npz(path: Path) -> Dict[str, object]:
+def _load_footbed_npz(path: Path) -> Dict[str, object]:
     with np.load(path) as payload:
         required = ["x_centers", "z_centers", "footbed_mask", "smooth_footbed_heightmap"]
         missing = [key for key in required if key not in payload.files]
         if missing:
-            raise KeyError(f"Missing V4 footbed fields in {path}: {missing}")
+            raise KeyError(f"Missing footbed heightmap fields in {path}: {missing}")
         x_centers = np.asarray(payload["x_centers"], dtype=np.float32)
         z_centers = np.asarray(payload["z_centers"], dtype=np.float32)
         mask = np.asarray(payload["footbed_mask"], dtype=bool)
@@ -586,9 +585,6 @@ def _effective_config_for_shoe(
     support_length = max(float(cavity.support_length), 1e-8)
     height_ratio = float(shoe_size[cavity.config.shoe_up_axis] / support_length)
     requested_style = str(cfg.style_mode).lower()
-    fit_version = str(cfg.fit_version).lower()
-    if fit_version not in {"v4", "v5", "simple", "legacy", "final_1d"}:
-        raise ValueError("fit_version must be 'v4', 'v5', 'simple', 'legacy', or 'final_1d'")
     if requested_style not in {"auto", "normal", "boot"}:
         raise ValueError("style_mode must be 'auto', 'normal', or 'boot'")
     style = "boot" if requested_style == "auto" and height_ratio >= cfg.boot_height_ratio_threshold else requested_style
@@ -601,6 +597,9 @@ def _effective_config_for_shoe(
             max_translation_x_ratio=0.080,
             max_translation_y_ratio=0.120,
             max_translation_z_ratio=0.120,
+            footbed_offset_init_ratio=0.0,
+            footbed_offset_min_ratio=0.0,
+            footbed_offset_max_ratio=0.0,
             cavity_weight=22.0,
             plantar_weight=95.0,
             gap_weight=45.0,
@@ -615,6 +614,7 @@ def _effective_config_for_shoe(
             multistart_yaw_degrees=(-5.0, 0.0, 5.0),
             multistart_scale_delta=(-0.035, 0.0, 0.035),
             multistart_z_ratio=(-0.025, 0.0, 0.025),
+            multistart_offset_ratio_delta=(0.0,),
         )
     else:
         effective = replace(
@@ -623,32 +623,9 @@ def _effective_config_for_shoe(
             max_translation_x_ratio=0.100,
             max_translation_y_ratio=0.120,
             max_translation_z_ratio=0.120,
-            cavity_weight=28.0,
-            plantar_weight=65.0,
-            gap_weight=50.0,
-            axis_weight=5.0,
-            footbed_mask_weight=6.0,
-            width_slack_weight=16.0,
-            prior_weight=4.0,
-            top_weight=0.5,
-            sole_yaw_prior_blend=0.20,
-            yaw_prior_factor=0.30,
-            translation_prior_factor=0.15,
-            multistart_yaw_degrees=(-3.0, 0.0, 3.0),
-            multistart_scale_delta=(-0.025, 0.0, 0.025),
-            multistart_z_ratio=(0.0,),
-        )
-
-    if fit_version in {"legacy", "final_1d"}:
-        effective = replace(
-            effective,
-            fit_version=fit_version,
-            max_translation_x_ratio=0.100,
-            max_translation_y_ratio=0.120,
-            max_translation_z_ratio=0.120,
-            footbed_offset_init_ratio=0.055 if fit_version == "legacy" else 0.0,
-            footbed_offset_min_ratio=0.025 if fit_version == "legacy" else 0.0,
-            footbed_offset_max_ratio=0.120 if fit_version == "legacy" else 0.0,
+            footbed_offset_init_ratio=0.0,
+            footbed_offset_min_ratio=0.0,
+            footbed_offset_max_ratio=0.0,
             cavity_weight=90.0,
             plantar_weight=135.0,
             gap_weight=70.0,
@@ -660,6 +637,8 @@ def _effective_config_for_shoe(
             length_balance_weight=0.0,
             prior_weight=10.0,
             top_weight=4.0,
+            sole_yaw_prior_blend=0.20,
+            yaw_prior_factor=0.30,
             translation_prior_factor=0.0,
             offset_prior_factor=0.20,
             multistart_yaw_degrees=(-5.0, 0.0, 5.0),
@@ -667,38 +646,9 @@ def _effective_config_for_shoe(
             multistart_z_ratio=(-0.025, 0.0, 0.025),
             multistart_offset_ratio_delta=(0.0,),
         )
-    elif fit_version == "simple":
-        effective = replace(
-            effective,
-            fit_version="simple",
-            cavity_weight=30.0,
-            plantar_weight=90.0,
-            gap_weight=30.0,
-            axis_weight=25.0,
-            footbed_mask_weight=10.0,
-            width_slack_weight=0.0,
-            side_balance_weight=0.0,
-            side_total_clearance_weight=0.0,
-            length_balance_weight=0.0,
-            top_weight=0.0,
-            prior_weight=3.0,
-            translation_prior_factor=0.12,
-            multistart_z_ratio=(-0.025, 0.0, 0.025),
-        )
-    elif fit_version == "v5":
-        effective = replace(
-            effective,
-            fit_version="v5",
-            axis_weight=10.0,
-            side_balance_weight=40.0,
-            side_total_clearance_weight=15.0,
-            length_balance_weight=20.0,
-            multistart_z_ratio=(-0.025, 0.0, 0.025),
-        )
 
     style_info = {
         "mode": style,
-        "fit_version": fit_version,
         "requested_mode": requested_style,
         "height_ratio": height_ratio,
         "height": float(shoe_size[cavity.config.shoe_up_axis]),

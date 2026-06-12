@@ -49,6 +49,7 @@ from .foot_alignment import (
     write_obj_mesh,
 )
 from .foot_loss import FootPriorLoss, FootPriorLossConfig
+from .pseudo_last_loss import PseudoLastPriorConfig, PseudoLastPriorLoss
 from .foot_fit_optimizer import (
     FootFitOptimizerConfig,
     FootFitResult,
@@ -80,6 +81,15 @@ from .support_footprint import (
     save_support_footprint_artifacts,
     write_heightmap_surface_obj,
 )
+from .pseudo_last import (
+    PseudoLastConfig,
+    PseudoLastResult,
+    build_pseudo_last,
+    build_pseudo_last_from_paths,
+    plot_pseudo_last_overlay,
+    plot_section_overlays,
+    save_pseudo_last_artifacts,
+)
 from .supr_foot import FootMesh, load_supr_foot_posed, load_supr_foot_template
 
 __all__ = [
@@ -97,12 +107,18 @@ __all__ = [
     "MeshData",
     "PseudoCavity",
     "PseudoCavityConfig",
+    "PseudoLastConfig",
+    "PseudoLastPriorConfig",
+    "PseudoLastPriorLoss",
+    "PseudoLastResult",
     "LowerOpenBoundary",
     "SupportFootprint",
     "SupportFootprintConfig",
     "build_alignment_from_meshes",
     "build_and_save_signed_sdf_from_obj",
     "build_signed_sdf_grid_from_mesh",
+    "build_pseudo_last",
+    "build_pseudo_last_from_paths",
     "cap_single_boundary_loop",
     "classify_shoe_points",
     "compact_mesh",
@@ -135,6 +151,8 @@ __all__ = [
     "plot_pseudo_footbed_cross_sections",
     "plot_pseudo_footbed_heightmap",
     "plot_pseudo_footbed_surface_preview",
+    "plot_pseudo_last_overlay",
+    "plot_section_overlays",
     "plot_support_faces",
     "plot_width_profile",
     "principal_xy_yaw_degrees",
@@ -149,6 +167,7 @@ __all__ = [
     "select_faces_below_signed_axis",
     "save_pseudo_footbed_heightmap_npz",
     "save_support_footprint_artifacts",
+    "save_pseudo_last_artifacts",
     "sole_block_masks",
     "transform_points",
     "write_heightmap_surface_obj",

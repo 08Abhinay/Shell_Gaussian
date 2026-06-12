@@ -728,8 +728,12 @@ def save_support_footprint_artifacts(
     output_dir: str | Path,
     *,
     prefix: str = "",
+    diagnostics: str = "full",
 ) -> Dict[str, str]:
     """Write summary JSON and standard visualizations for one footprint."""
+
+    if diagnostics not in {"minimal", "full"}:
+        raise ValueError("diagnostics must be 'minimal' or 'full'")
 
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -758,23 +762,34 @@ def save_support_footprint_artifacts(
     write_heightmap_surface_obj(footprint, paths["outer_floor_surface_obj"], surface="floor")
     write_heightmap_surface_obj(footprint, paths["pseudo_footbed_surface_obj"], surface="footbed")
     write_heightmap_surface_obj(footprint, paths["pseudo_footbed_smooth_surface_obj"], surface="smooth_footbed")
-    plot_footprint(footprint, paths["footprint"])
-    plot_width_profile(footprint, paths["width_profile"])
-    plot_footbed_profile(footprint, paths["footbed_profile"])
-    plot_floor_profile_v2(footprint, paths["floor_profile_v2"])
-    plot_floor_samples_overlay(footprint, paths["floor_samples_overlay"])
-    plot_floor_surface_v2(footprint, paths["floor_surface_v2"])
-    plot_floor_diagnostic_v2(footprint, paths["floor_diagnostic_v2"])
-    plot_pseudo_footbed_heightmap(footprint, paths["pseudo_footbed_heightmap"])
-    plot_pseudo_footbed_cross_sections(footprint, paths["pseudo_footbed_cross_sections"])
     plot_pseudo_footbed_surface_preview(footprint, paths["pseudo_footbed_surface_preview"])
     plot_pseudo_footbed_surface_preview(
         footprint,
         paths["pseudo_footbed_smooth_surface_preview"],
         surface="smooth_footbed",
     )
-    plot_support_faces(mesh, footprint, paths["support_overlay"])
-    return {key: str(value) for key, value in paths.items()}
+    written = {
+        "summary": paths["summary"],
+        "pseudo_footbed_heightmap_npz": paths["pseudo_footbed_heightmap_npz"],
+        "outer_floor_surface_obj": paths["outer_floor_surface_obj"],
+        "pseudo_footbed_surface_obj": paths["pseudo_footbed_surface_obj"],
+        "pseudo_footbed_smooth_surface_obj": paths["pseudo_footbed_smooth_surface_obj"],
+        "pseudo_footbed_surface_preview": paths["pseudo_footbed_surface_preview"],
+        "pseudo_footbed_smooth_surface_preview": paths["pseudo_footbed_smooth_surface_preview"],
+    }
+    if diagnostics == "full":
+        plot_footprint(footprint, paths["footprint"])
+        plot_width_profile(footprint, paths["width_profile"])
+        plot_footbed_profile(footprint, paths["footbed_profile"])
+        plot_floor_profile_v2(footprint, paths["floor_profile_v2"])
+        plot_floor_samples_overlay(footprint, paths["floor_samples_overlay"])
+        plot_floor_surface_v2(footprint, paths["floor_surface_v2"])
+        plot_floor_diagnostic_v2(footprint, paths["floor_diagnostic_v2"])
+        plot_pseudo_footbed_heightmap(footprint, paths["pseudo_footbed_heightmap"])
+        plot_pseudo_footbed_cross_sections(footprint, paths["pseudo_footbed_cross_sections"])
+        plot_support_faces(mesh, footprint, paths["support_overlay"])
+        written.update(paths)
+    return {key: str(value) for key, value in written.items()}
 
 
 def save_pseudo_footbed_heightmap_npz(footprint: SupportFootprint, output_path: str | Path) -> None:

@@ -190,10 +190,18 @@ def initial_guess_material_knownkskd(geometry, mlp, FLAGS, init_mat=None):
 ###############################################################################
 
 @torch.no_grad()
-def validate_itr(glctx, target, geometry, opt_material, lgt, FLAGS, denoiser=None):
+def validate_itr(glctx, target, geometry, opt_material, lgt, FLAGS, denoiser=None, iteration=None):
     result_dict = {}
     with torch.no_grad():
-        buffers = geometry.render(glctx, target, lgt, opt_material, use_uv=False, denoiser=denoiser)['buffers']
+        buffers = geometry.render(
+            glctx,
+            target,
+            lgt,
+            opt_material,
+            use_uv=False,
+            denoiser=denoiser,
+            iteration=iteration,
+        )['buffers']
 
         result_dict['ref'] = util.rgb_to_srgb(target['img'][...,0:3])[0]
         result_dict['opt'] = util.rgb_to_srgb(buffers['shaded'][...,0:3])[0]
@@ -414,13 +422,22 @@ def optimize_mesh(
                 if display_image or save_image:
                     save_mesh = True
                     try:
-                        preview_mesh = geometry.getMesh(opt_material)['imesh']
+                        preview_mesh = geometry.getMesh(opt_material, iteration=it)['imesh']
                         if mesh_is_empty(preview_mesh):
                             raise render.EmptyMeshError("Mesh has no vertices/faces during preview")
                         if save_mesh:
                             os.makedirs(os.path.join(save_path, pass_name), exist_ok=True)
                             obj.write_obj(os.path.join(save_path, pass_name), preview_mesh, save_material=False)
-                        result_image, result_dict = validate_itr(glctx, prepare_batch(next(v_it), FLAGS.background), geometry, opt_material, lgt, FLAGS, denoiser=denoiser)
+                        result_image, result_dict = validate_itr(
+                            glctx,
+                            prepare_batch(next(v_it), FLAGS.background),
+                            geometry,
+                            opt_material,
+                            lgt,
+                            FLAGS,
+                            denoiser=denoiser,
+                            iteration=it,
+                        )
 
                         np_result_image = result_image.detach().cpu().numpy()
                         if display_image:
@@ -556,9 +573,38 @@ def optimize_mesh(
                         int(foot_stats.get("plantar_candidate_count", 0)),
                     )
                 )
+            pseudo_last_stats = getattr(geometry, "last_pseudo_last_prior_stats", {})
+            pseudo_last_log = ""
+            if pseudo_last_stats:
+                pseudo_last_log = (
+                    ", xsec_loss=%.6f, xsec_w=%.3f, "
+                    "xsec_mat_pts=%d[%d/%d/%d], xsec_mat_pos=%.3f[%.3f/%.3f/%.3f], "
+                    "xsec_empty_pts=%d, xsec_empty_neg=%.3f, "
+                    "xsec_surface_pts=%d, xsec_surface_abs=%.5f, "
+                    "xsec_grid_msdf_pts=%d, xsec_grid_msdf_pos=%.3f, xsec_grid_h50=%.5f"
+                    % (
+                        pseudo_last_stats.get("xsec_loss", pseudo_last_stats.get("total", 0.0)),
+                        pseudo_last_stats.get("schedule_weight", 0.0),
+                        int(pseudo_last_stats.get("xsec_mat_pts", 0)),
+                        int(pseudo_last_stats.get("xsec_sole_pts", 0)),
+                        int(pseudo_last_stats.get("xsec_plantar_pts", 0)),
+                        int(pseudo_last_stats.get("xsec_sidewall_pts", 0)),
+                        pseudo_last_stats.get("xsec_mat_sdf_pos", 0.0),
+                        pseudo_last_stats.get("xsec_sole_sdf_pos", 0.0),
+                        pseudo_last_stats.get("xsec_plantar_sdf_pos", 0.0),
+                        pseudo_last_stats.get("xsec_sidewall_sdf_pos", 0.0),
+                        int(pseudo_last_stats.get("xsec_empty_pts", 0)),
+                        pseudo_last_stats.get("xsec_empty_sdf_neg", 0.0),
+                        int(pseudo_last_stats.get("xsec_surface_pts", 0)),
+                        pseudo_last_stats.get("xsec_surface_abs_sdf", 0.0),
+                        int(pseudo_last_stats.get("xsec_grid_msdf_pts", 0)),
+                        pseudo_last_stats.get("xsec_grid_msdf_pos", 0.0),
+                        pseudo_last_stats.get("xsec_grid_h_p50", 0.0),
+                    )
+                )
             print(("iter=%5d, img_loss=%.6f, depth_loss=%.6f, reg_loss=%.6f, lr=%.5f, "
-                   "time=%.1f ms, rem=%s%s") %
-                (it, img_loss_avg, depth_loss_avg, reg_loss_avg, optimizer.param_groups[0]['lr'], iter_dur_avg*1000, util.time_to_text(remaining_time), foot_log))
+                   "time=%.1f ms, rem=%s%s%s") %
+                (it, img_loss_avg, depth_loss_avg, reg_loss_avg, optimizer.param_groups[0]['lr'], iter_dur_avg*1000, util.time_to_text(remaining_time), foot_log, pseudo_last_log))
             sys.stdout.flush()
 
         if it == FLAGS.iter:
@@ -624,6 +670,74 @@ if __name__ == "__main__":
     parser.add_argument('--foot_prior_warmup_iter', type=int, default=1000)
     parser.add_argument('--foot_prior_max_surface_points', type=int, default=50000)
     parser.add_argument('--foot_prior_max_watertight_points', type=int, default=50000)
+    parser.add_argument('--use_pseudo_last_prior', action='store_true', default=False)
+    parser.add_argument('--pseudo_last_sdf_path', type=str, default='')
+    parser.add_argument('--pseudo_last_sections_path', type=str, default='')
+    parser.add_argument('--pseudo_last_prior_mode', type=str, default='cross_section')
+    parser.add_argument('--pseudo_last_xsec_start_iter', type=int, default=0)
+    parser.add_argument('--pseudo_last_xsec_warmup_iter', type=int, default=250)
+    parser.add_argument('--pseudo_last_xsec_material_weight', type=float, default=20.0)
+    parser.add_argument('--pseudo_last_xsec_empty_weight', type=float, default=10.0)
+    parser.add_argument('--pseudo_last_xsec_surface_weight', type=float, default=2.0)
+    parser.add_argument('--pseudo_last_xsec_msdf_keep_weight', type=float, default=0.01)
+    parser.add_argument('--pseudo_last_xsec_x_slices', type=int, default=64)
+    parser.add_argument('--pseudo_last_xsec_y_samples', type=int, default=96)
+    parser.add_argument('--pseudo_last_xsec_z_samples', type=int, default=96)
+    parser.add_argument('--pseudo_last_xsec_max_points', type=int, default=49152)
+    parser.add_argument('--pseudo_last_xsec_grid_max_points', type=int, default=0)
+    parser.add_argument('--pseudo_last_xsec_material_margin', type=float, default=0.005)
+    parser.add_argument('--pseudo_last_xsec_empty_margin', type=float, default=0.005)
+    parser.add_argument('--pseudo_last_xsec_surface_band', type=float, default=0.003)
+    parser.add_argument('--pseudo_last_xsec_sole_depth', type=float, default=0.025)
+    parser.add_argument('--pseudo_last_xsec_plantar_h_ratio', type=float, default=0.12)
+    parser.add_argument('--pseudo_last_xsec_lower_wall_h_ratio', type=float, default=0.45)
+    parser.add_argument('--pseudo_last_xsec_ignore_high_h_ratio', type=float, default=0.85)
+    parser.add_argument('--pseudo_last_xsec_support_lateral_pad', type=float, default=0.05)
+    parser.add_argument('--pseudo_last_xsec_msdf_margin', type=float, default=0.005)
+    parser.add_argument('--pseudo_last_xsec_last_surface_points', type=int, default=8192)
+    parser.add_argument('--pseudo_last_xsec_sole_sample_fraction', type=float, default=0.40)
+    parser.add_argument('--pseudo_last_xsec_plantar_sample_fraction', type=float, default=0.30)
+    parser.add_argument('--pseudo_last_xsec_sidewall_sample_fraction', type=float, default=0.30)
+    parser.add_argument('--pseudo_last_collision_weight', type=float, default=0.25)
+    parser.add_argument('--pseudo_last_msdf_keep_weight', type=float, default=0.001)
+    parser.add_argument('--pseudo_last_grid_msdf_keep_weight', type=float, default=0.0)
+    parser.add_argument('--pseudo_last_containment_weight', type=float, default=0.05)
+    parser.add_argument('--pseudo_last_use_field_conditioning', action='store_true', default=False)
+    parser.add_argument('--pseudo_last_msdf_bias_strength', type=float, default=0.0)
+    parser.add_argument('--pseudo_last_msdf_bias_distance', type=float, default=0.055)
+    parser.add_argument('--pseudo_last_msdf_bias_inside_tolerance', type=float, default=0.006)
+    parser.add_argument('--pseudo_last_msdf_bias_dilate_steps', type=int, default=2)
+    parser.add_argument('--pseudo_last_msdf_bias_dilate_decay', type=float, default=0.6)
+    parser.add_argument('--pseudo_last_sdf_material_weight', type=float, default=0.0)
+    parser.add_argument('--pseudo_last_collision_clearance', type=float, default=0.002)
+    parser.add_argument('--pseudo_last_msdf_keep_margin', type=float, default=0.001)
+    parser.add_argument('--pseudo_last_grid_msdf_keep_margin', type=float, default=0.005)
+    parser.add_argument('--pseudo_last_containment_margin', type=float, default=0.001)
+    parser.add_argument('--pseudo_last_sdf_material_margin', type=float, default=0.005)
+    parser.add_argument('--pseudo_last_band_distance', type=float, default=0.035)
+    parser.add_argument('--pseudo_last_inside_tolerance', type=float, default=0.003)
+    parser.add_argument('--pseudo_last_plantar_h_ratio', type=float, default=0.10)
+    parser.add_argument('--pseudo_last_side_h_ratio', type=float, default=0.35)
+    parser.add_argument('--pseudo_last_side_lateral_min', type=float, default=0.70)
+    parser.add_argument('--pseudo_last_heel_s_max', type=float, default=0.25)
+    parser.add_argument('--pseudo_last_forefoot_s_min', type=float, default=0.60)
+    parser.add_argument('--pseudo_last_forefoot_s_max', type=float, default=0.92)
+    parser.add_argument('--pseudo_last_start_iter', type=int, default=500)
+    parser.add_argument('--pseudo_last_warmup_iter', type=int, default=1000)
+    parser.add_argument('--pseudo_last_collision_start_iter', type=int, default=-1)
+    parser.add_argument('--pseudo_last_collision_warmup_iter', type=int, default=-1)
+    parser.add_argument('--pseudo_last_msdf_keep_start_iter', type=int, default=-1)
+    parser.add_argument('--pseudo_last_msdf_keep_warmup_iter', type=int, default=-1)
+    parser.add_argument('--pseudo_last_grid_msdf_keep_start_iter', type=int, default=-1)
+    parser.add_argument('--pseudo_last_grid_msdf_keep_warmup_iter', type=int, default=-1)
+    parser.add_argument('--pseudo_last_containment_start_iter', type=int, default=-1)
+    parser.add_argument('--pseudo_last_containment_warmup_iter', type=int, default=-1)
+    parser.add_argument('--pseudo_last_sdf_material_start_iter', type=int, default=0)
+    parser.add_argument('--pseudo_last_sdf_material_warmup_iter', type=int, default=0)
+    parser.add_argument('--pseudo_last_max_surface_points', type=int, default=50000)
+    parser.add_argument('--pseudo_last_max_watertight_points', type=int, default=50000)
+    parser.add_argument('--pseudo_last_max_last_surface_points', type=int, default=20000)
+    parser.add_argument('--pseudo_last_grid_max_points', type=int, default=0)
     parser.add_argument('--trainset_path', type=str)
     parser.add_argument('--testset_path', type=str, default='')
 

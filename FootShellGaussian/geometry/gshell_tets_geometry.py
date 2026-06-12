@@ -24,7 +24,12 @@ from .gshell_tets import GShell_Tets
 import kaolin
 
 from .mlp import MLP
-from foot_prior import FootPriorLoss, FootPriorLossConfig
+from foot_prior import (
+    FootPriorLoss,
+    FootPriorLossConfig,
+    PseudoLastPriorConfig,
+    PseudoLastPriorLoss,
+)
 
 
 ###############################################################################
@@ -94,6 +99,53 @@ class GShellTetsGeometry(torch.nn.Module):
             print("Loaded neutral foot prior:")
             print(f"  SDF: {self.FLAGS.foot_prior_sdf_path}")
             print(f"  alignment: {self.FLAGS.foot_prior_alignment_path}")
+
+        self.pseudo_last_prior_loss = None
+        self.last_pseudo_last_prior_stats = {}
+        if getattr(self.FLAGS, "use_pseudo_last_prior", False):
+            if getattr(self.FLAGS, "pseudo_last_prior_mode", "cross_section") == "cross_section" and not self.FLAGS.use_sdf_mlp:
+                raise ValueError("The cross-section pseudo-last prior requires use_sdf_mlp=True")
+            self.pseudo_last_prior_loss = PseudoLastPriorLoss(
+                PseudoLastPriorConfig.from_flags(self.FLAGS),
+                device=torch.device("cuda"),
+            )
+            grid_points_world = self.verts
+            if torch.is_tensor(self.offset):
+                grid_points_world = grid_points_world + self.offset.to(
+                    device=grid_points_world.device,
+                    dtype=grid_points_world.dtype,
+                )
+            elif self.offset != 0.0:
+                grid_points_world = grid_points_world + float(self.offset)
+            grid_stats = self.pseudo_last_prior_loss.precompute_grid_keep_weights(
+                grid_points_world,
+                tet_edges=self.all_edges,
+            )
+            print("Loaded pseudo-last topology prior:")
+            print(f"  SDF: {self.FLAGS.pseudo_last_sdf_path}")
+            print(f"  sections: {self.FLAGS.pseudo_last_sections_path}")
+            print(
+                "  cross-section pool: "
+                f"material={int(grid_stats.get('xsec_material_pool_count', 0))}, "
+                f"sole={int(grid_stats.get('xsec_sole_pool_count', 0))}, "
+                f"plantar={int(grid_stats.get('xsec_plantar_pool_count', 0))}, "
+                f"sidewall={int(grid_stats.get('xsec_sidewall_pool_count', 0))}, "
+                f"empty={int(grid_stats.get('xsec_empty_pool_count', 0))}, "
+                f"surface={int(grid_stats.get('xsec_surface_pool_count', 0))}"
+            )
+            print(
+                "  cross-section grid mSDF candidates: "
+                f"{int(grid_stats.get('xsec_grid_msdf_candidate_count', 0))} "
+                f"(sole={int(grid_stats.get('xsec_grid_sole_candidate_count', 0))}, "
+                f"plantar={int(grid_stats.get('xsec_grid_plantar_candidate_count', 0))}, "
+                f"sidewall={int(grid_stats.get('xsec_grid_sidewall_candidate_count', 0))})"
+            )
+            print(
+                "  cross-section grid candidate h: "
+                f"p50={float(grid_stats.get('xsec_grid_h_p50', 0.0)):.5f}, "
+                f"p99={float(grid_stats.get('xsec_grid_h_p99', 0.0)):.5f}, "
+                f"far_below={int(grid_stats.get('xsec_grid_far_below_count', 0))}"
+            )
 
         if self.FLAGS.use_sdf_mlp:
             self.sdf    = torch.nn.Parameter(torch.zeros_like(self.verts[:, 0]), requires_grad=True) ## placeholder
@@ -200,7 +252,7 @@ class GShellTetsGeometry(torch.nn.Module):
             'v_msdf': v_msdf,
         }
 
-    def getMesh(self, material):
+    def getMesh(self, material, iteration=None):
         v_deformed = self.verts + self.max_displacement * self.deform
         if self.FLAGS.use_sdf_mlp:
             sdf = self.sdf_net(v_deformed)
@@ -214,9 +266,10 @@ class GShellTetsGeometry(torch.nn.Module):
             msdf = self.msdf
 
         v_deformed = v_deformed + self.offset
+        msdf_for_marching = msdf
 
         verts, faces, uvs, uv_idx, v_tng, extra = self.gshell_tets(
-            v_deformed, sdf, msdf, self.indices)
+            v_deformed, sdf, msdf_for_marching, self.indices)
         imesh = mesh.Mesh(verts, faces, v_tex=uvs, t_tex_idx=uv_idx, material=material)
 
         with torch.no_grad():
@@ -233,6 +286,11 @@ class GShellTetsGeometry(torch.nn.Module):
             'n_verts_watertight': extra['n_verts_watertight'],
             'vertices_watertight': extra['vertices_watertight'],
             'faces_watertight': extra['faces_watertight'],
+            'grid_msdf': msdf,
+            'grid_msdf_raw': msdf,
+            'grid_msdf_for_marching': msdf_for_marching,
+            'grid_sdf': sdf,
+            'grid_points_world': v_deformed,
         }
 
         if self.FLAGS.visualize_watertight:
@@ -242,8 +300,9 @@ class GShellTetsGeometry(torch.nn.Module):
         return return_dict
 
     def render(self, glctx, target, lgt, opt_material, bsdf=None, denoiser=None, shadow_scale=1.0,
+            iteration=None,
             use_uv=False):
-        opt_mesh_dict = self.getMesh(opt_material)
+        opt_mesh_dict = self.getMesh(opt_material, iteration=iteration)
         opt_mesh = opt_mesh_dict['imesh']
         opt_mesh_watertight = opt_mesh_dict['imesh_watertight'] if 'imesh_watertight' in opt_mesh_dict else None
         if opt_mesh.v_pos.size(0) != 0 and opt_mesh.t_pos_idx.size(0) != 0:
@@ -279,7 +338,8 @@ class GShellTetsGeometry(torch.nn.Module):
         if denoiser is not None: denoiser.set_influence(shadow_ramp)
         opt_mesh_dict = self.render(glctx, target, lgt, opt_material, 
             denoiser=denoiser,
-            shadow_scale=shadow_ramp)
+            shadow_scale=shadow_ramp,
+            iteration=iteration)
         buffers = opt_mesh_dict['buffers']
 
         # ==============================================================================================
@@ -404,7 +464,31 @@ class GShellTetsGeometry(torch.nn.Module):
                 watertight_msdf=opt_mesh_dict.get('msdf_watertight'),
             )
 
-        geo_reg_loss = sdf_reg_loss + eik_loss + mesh_msdf_reg_loss + foot_prior_reg_loss
+        pseudo_last_prior_reg_loss = torch.tensor(0., device=img_loss.device)
+        self.last_pseudo_last_prior_stats = {}
+        if self.pseudo_last_prior_loss is not None:
+            def query_shell_sdf(points_world):
+                query_points = points_world
+                if torch.is_tensor(self.offset):
+                    query_points = query_points - self.offset.to(
+                        device=query_points.device,
+                        dtype=query_points.dtype,
+                    )
+                return self.sdf_net(query_points).reshape(-1)
+
+            pseudo_last_prior_reg_loss, self.last_pseudo_last_prior_stats = self.pseudo_last_prior_loss(
+                iteration=iteration,
+                shell_sdf_query_fn=query_shell_sdf,
+                grid_msdf=opt_mesh_dict.get('grid_msdf'),
+            )
+
+        geo_reg_loss = (
+            sdf_reg_loss
+            + eik_loss
+            + mesh_msdf_reg_loss
+            + foot_prior_reg_loss
+            + pseudo_last_prior_reg_loss
+        )
         shading_reg_loss =  monochrome_loss + mtl_smooth_loss + chroma_loss
         reg_loss = geo_reg_loss + shading_reg_loss
 

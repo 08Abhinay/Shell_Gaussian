@@ -35,16 +35,9 @@ from FootShellGaussian.foot_prior import (  # noqa: E402
 
 
 DEFAULT_MESH_ROOT = PROJECT_ROOT / "baselines/GShell/output/turntable-512-768"
-DEFAULT_SUPPORT_ROOT = PROJECT_ROOT / "baselines/GShell/output/support_footbed_analysis_v4"
-DEFAULT_LEGACY_SUPPORT_ROOT = PROJECT_ROOT / "baselines/GShell/output/support_footbed_analysis"
+DEFAULT_SUPPORT_ROOT = PROJECT_ROOT / "baselines/GShell/output/final/support_1d"
 DEFAULT_BASELINE_ALIGNMENT_ROOT = PROJECT_ROOT / "baselines/GShell/output/foot_alignment_turntable-512-768"
-DEFAULT_WARM_START_ALIGNMENT_ROOT = PROJECT_ROOT / "baselines/GShell/output/foot_alignment_optimized_turntable-512-768"
-DEFAULT_V4_OUTPUT_ROOT = PROJECT_ROOT / "baselines/GShell/output/foot_alignment_optimized_v4_hybrid_turntable-512-768"
-DEFAULT_V5_OUTPUT_ROOT = PROJECT_ROOT / "baselines/GShell/output/foot_alignment_v5_turntable-512-768"
-DEFAULT_SIMPLE_OUTPUT_ROOT = PROJECT_ROOT / "baselines/GShell/output/foot_alignment_simple_turntable-512-768"
-DEFAULT_LEGACY_OUTPUT_ROOT = PROJECT_ROOT / "baselines/GShell/output/foot_alignment_legacy_turntable-512-768"
-DEFAULT_FINAL_1D_SUPPORT_ROOT = PROJECT_ROOT / "baselines/GShell/output/final/support_1d"
-DEFAULT_FINAL_1D_OUTPUT_ROOT = PROJECT_ROOT / "baselines/GShell/output/final/foot_alignment_1d_heightmap"
+DEFAULT_OUTPUT_ROOT = FOOTSHELL_ROOT / "output/foot_fit_optimization_debug"
 DEFAULT_FOOT_OBJ = PROJECT_ROOT / "baselines/SUPR/output/debug_playground/supr_male_right_foot_neutral.obj"
 
 
@@ -53,10 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mesh-root", type=Path, default=DEFAULT_MESH_ROOT)
     parser.add_argument("--support-root", type=Path, default=DEFAULT_SUPPORT_ROOT)
     parser.add_argument("--baseline-alignment-root", type=Path, default=DEFAULT_BASELINE_ALIGNMENT_ROOT)
-    parser.add_argument("--warm-start-alignment-root", type=Path, default=DEFAULT_WARM_START_ALIGNMENT_ROOT)
-    parser.add_argument("--no-warm-start", action="store_true")
-    parser.add_argument("--fit-version", choices=["v4", "v5", "simple", "legacy", "final_1d"], default="v4")
-    parser.add_argument("--output-root", type=Path, default=None)
+    parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--foot-obj", type=Path, default=DEFAULT_FOOT_OBJ)
     parser.add_argument("--scene", action="append", help="Scene directory name, for example Foo_turntable. Repeatable.")
     parser.add_argument("--shoe-name", action="append", help="Shoe name without _turntable. Repeatable.")
@@ -67,25 +57,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--adam-steps", type=int, default=160)
     parser.add_argument("--lbfgs-steps", type=int, default=25)
     parser.add_argument("--adam-lr", type=float, default=0.035)
-    args = parser.parse_args()
-    if args.output_root is None:
-        if args.fit_version == "v5":
-            args.output_root = DEFAULT_V5_OUTPUT_ROOT
-        elif args.fit_version == "simple":
-            args.output_root = DEFAULT_SIMPLE_OUTPUT_ROOT
-        elif args.fit_version == "legacy":
-            args.output_root = DEFAULT_LEGACY_OUTPUT_ROOT
-        elif args.fit_version == "final_1d":
-            args.output_root = DEFAULT_FINAL_1D_OUTPUT_ROOT
-        else:
-            args.output_root = DEFAULT_V4_OUTPUT_ROOT
-    if args.fit_version == "legacy" and args.support_root == DEFAULT_SUPPORT_ROOT:
-        args.support_root = DEFAULT_LEGACY_SUPPORT_ROOT
-    if args.fit_version == "final_1d" and args.support_root == DEFAULT_SUPPORT_ROOT:
-        args.support_root = DEFAULT_FINAL_1D_SUPPORT_ROOT
-    if args.fit_version in {"v5", "simple", "legacy", "final_1d"}:
-        args.no_warm_start = True
-    return args
+    return parser.parse_args()
 
 
 def scene_to_shoe_name(scene_name: str) -> str:
@@ -118,14 +90,9 @@ def process_scene(args: argparse.Namespace, scene_name: str) -> dict[str, object
     shoe_name = scene_to_shoe_name(scene_name)
     scene_dir = args.mesh_root / scene_name
     support_json = args.support_root / scene_name / "support_footprint.json"
-    support_npz = None if args.fit_version == "legacy" else args.support_root / scene_name / "pseudo_footbed_heightmap.npz"
+    support_npz = args.support_root / scene_name / "pseudo_footbed_heightmap.npz"
     baseline_alignment_json = args.baseline_alignment_root / shoe_name / "alignment.json"
-    warm_start_alignment_json = args.warm_start_alignment_root / shoe_name / "alignment_optimized.json"
-    input_alignment_json = (
-        baseline_alignment_json
-        if args.no_warm_start or not warm_start_alignment_json.exists()
-        else warm_start_alignment_json
-    )
+    input_alignment_json = baseline_alignment_json
     output_dir = args.output_root / shoe_name
 
     row: dict[str, object] = {
@@ -134,12 +101,9 @@ def process_scene(args: argparse.Namespace, scene_name: str) -> dict[str, object
         "status": "pending",
         "scene_dir": str(scene_dir),
         "support_json": str(support_json),
-        "support_npz": "" if support_npz is None else str(support_npz),
+        "support_npz": str(support_npz),
         "baseline_alignment_json": str(baseline_alignment_json),
-        "warm_start_alignment_json": str(warm_start_alignment_json),
         "input_alignment_json": str(input_alignment_json),
-        "warm_start_used": bool(input_alignment_json == warm_start_alignment_json),
-        "fit_version": str(args.fit_version),
         "output_dir": str(output_dir),
     }
 
@@ -153,11 +117,10 @@ def process_scene(args: argparse.Namespace, scene_name: str) -> dict[str, object
         ("watertight mesh", mesh_path),
         ("open mesh", open_mesh_path),
         ("support JSON", support_json),
+        ("support footbed NPZ", support_npz),
         ("input alignment", input_alignment_json),
         ("foot OBJ", args.foot_obj),
     ]
-    if support_npz is not None:
-        required_paths.append(("support footbed NPZ", support_npz))
     for label, path in required_paths:
         if not path.exists():
             row.update(status="missing_input", error=f"Missing {label}: {path}")
@@ -175,12 +138,11 @@ def process_scene(args: argparse.Namespace, scene_name: str) -> dict[str, object
         support_json,
         shoe_mesh,
         footbed_npz_path=support_npz,
-        use_sidecar_npz=support_npz is not None,
+        use_sidecar_npz=True,
     )
     optimizer_config = FootFitOptimizerConfig(
         device=args.device,
         style_mode=args.style_mode,
-        fit_version=args.fit_version,
         adam_steps=args.adam_steps,
         adam_lr=args.adam_lr,
         lbfgs_steps=args.lbfgs_steps,
@@ -234,12 +196,9 @@ def process_scene(args: argparse.Namespace, scene_name: str) -> dict[str, object
                 "mesh_path": str(mesh_path),
                 "open_mesh_path": str(open_mesh_path),
                 "support_json": str(support_json),
-                "support_npz": "" if support_npz is None else str(support_npz),
+                "support_npz": str(support_npz),
                 "baseline_alignment_json": str(baseline_alignment_json),
-                "warm_start_alignment_json": str(warm_start_alignment_json),
                 "input_alignment_json": str(input_alignment_json),
-                "warm_start_used": bool(input_alignment_json == warm_start_alignment_json),
-                "fit_version": str(args.fit_version),
             },
             "extra_cavity_metrics": {
                 "baseline": baseline_cavity_metrics,
@@ -263,8 +222,6 @@ def process_scene(args: argparse.Namespace, scene_name: str) -> dict[str, object
 
     row.update(
         status="ok",
-        warm_start_used=bool(input_alignment_json == warm_start_alignment_json),
-        fit_version=str(args.fit_version),
         loss_before=float(result.metrics["baseline_loss"]["total"]),
         loss_after=float(result.metrics["optimized_loss"]["total"]),
         loss_improved=bool(result.metrics["loss_improved"]),
@@ -304,8 +261,6 @@ def write_summary(rows: list[dict[str, object]], output_root: Path) -> None:
         "scene",
         "shoe_name",
         "status",
-        "warm_start_used",
-        "fit_version",
         "loss_before",
         "loss_after",
         "loss_improved",
@@ -392,7 +347,10 @@ def _write_plots(
     baseline_mesh: MeshData,
     optimized_mesh: MeshData,
     result,
+    diagnostics: str = "full",
 ) -> None:
+    if diagnostics not in {"minimal", "full"}:
+        raise ValueError("diagnostics must be 'minimal' or 'full'")
     del open_mesh
     import matplotlib
 
@@ -406,56 +364,57 @@ def _write_plots(
         cavity.config.shoe_up_sign
     ) * offset
 
-    fig, axes = plt.subplots(1, 2, figsize=(13, 5.5))
-    fig.suptitle(f"{shoe_name} - baseline vs optimized foot fit", fontsize=13)
-    ax = axes[0]
-    ax.fill_betweenx(cavity.centerline_x, cavity.left_boundary_z, cavity.right_boundary_z, color="#f0f0f0", label="pseudo-cavity footprint")
-    ax.plot(cavity.centerline_z, cavity.centerline_x, color="#d7191c", linewidth=2.0, label="shoe centerline")
-    ax.scatter(baseline_mesh.vertices[:, 2], baseline_mesh.vertices[:, 0], s=1.5, alpha=0.22, color="#fdae61", label="baseline foot")
-    ax.scatter(optimized_mesh.vertices[:, 2], optimized_mesh.vertices[:, 0], s=1.5, alpha=0.22, color="#2c7bb6", label="optimized foot")
-    ax.set_xlabel("Z width")
-    ax.set_ylabel("X heel to toe")
-    ax.set_aspect("equal", adjustable="box")
-    ax.legend(fontsize=8, loc="best")
-    ax.grid(True, alpha=0.25)
-
-    ax = axes[1]
-    ax.plot(cavity.centerline_x, cavity.floor_y, color="#969696", linewidth=1.5, label="smooth outer floor")
-    ax.plot(cavity.centerline_x, center_footbed_y, color="#1a9641", linewidth=2.0, label="V4 smooth footbed")
-    ax.scatter(baseline_mesh.vertices[:, 0], baseline_mesh.vertices[:, 1], s=1.4, alpha=0.18, color="#fdae61", label="baseline foot")
-    ax.scatter(optimized_mesh.vertices[:, 0], optimized_mesh.vertices[:, 1], s=1.4, alpha=0.18, color="#2c7bb6", label="optimized foot")
-    ax.set_xlabel("X heel to toe")
-    ax.set_ylabel("Y coordinate (+Y bottom, -Y opening)")
-    ax.legend(fontsize=8, loc="best")
-    ax.grid(True, alpha=0.25)
-    fig.tight_layout()
-    fig.savefig(output_dir / "fit_before_after.png", dpi=170)
-    plt.close(fig)
-
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
-    slice_fracs = [0.18, 0.62, 0.90]
-    for ax, frac in zip(axes, slice_fracs):
-        x = float(cavity.centerline_x.min() + frac * (cavity.centerline_x.max() - cavity.centerline_x.min()))
-        left = np.interp(x, cavity.centerline_x, cavity.left_boundary_z)
-        right = np.interp(x, cavity.centerline_x, cavity.right_boundary_z)
-        floor = np.interp(x, cavity.centerline_x, cavity.floor_y)
-        z_line = np.linspace(left, right, 120, dtype=np.float32)
-        x_line = np.full_like(z_line, x, dtype=np.float32)
-        bed_line = cavity.sample_footbed_numpy(x_line, z_line) + np.sign(cavity.config.shoe_up_sign) * offset
-        band = max(cavity.support_length * 0.025, 0.004)
-        mask = np.abs(optimized_mesh.vertices[:, 0] - x) <= band
-        ax.axvspan(left, right, color="#f0f0f0")
-        ax.axhline(floor, color="#969696", linewidth=1.5, label="floor")
-        ax.plot(z_line, bed_line, color="#1a9641", linewidth=1.8, label="V4 footbed")
-        ax.scatter(optimized_mesh.vertices[mask, 2], optimized_mesh.vertices[mask, 1], s=5, alpha=0.45, color="#2c7bb6")
-        ax.set_title(f"X slice {frac:.0%}")
+    if diagnostics == "full":
+        fig, axes = plt.subplots(1, 2, figsize=(13, 5.5))
+        fig.suptitle(f"{shoe_name} - baseline vs optimized foot fit", fontsize=13)
+        ax = axes[0]
+        ax.fill_betweenx(cavity.centerline_x, cavity.left_boundary_z, cavity.right_boundary_z, color="#f0f0f0", label="pseudo-cavity footprint")
+        ax.plot(cavity.centerline_z, cavity.centerline_x, color="#d7191c", linewidth=2.0, label="shoe centerline")
+        ax.scatter(baseline_mesh.vertices[:, 2], baseline_mesh.vertices[:, 0], s=1.5, alpha=0.22, color="#fdae61", label="baseline foot")
+        ax.scatter(optimized_mesh.vertices[:, 2], optimized_mesh.vertices[:, 0], s=1.5, alpha=0.22, color="#2c7bb6", label="optimized foot")
         ax.set_xlabel("Z width")
-        ax.set_ylabel("Y coordinate")
+        ax.set_ylabel("X heel to toe")
+        ax.set_aspect("equal", adjustable="box")
+        ax.legend(fontsize=8, loc="best")
         ax.grid(True, alpha=0.25)
-    axes[0].legend(fontsize=8, loc="best")
-    fig.tight_layout()
-    fig.savefig(output_dir / "cavity_slices.png", dpi=170)
-    plt.close(fig)
+
+        ax = axes[1]
+        ax.plot(cavity.centerline_x, cavity.floor_y, color="#969696", linewidth=1.5, label="smooth outer floor")
+        ax.plot(cavity.centerline_x, center_footbed_y, color="#1a9641", linewidth=2.0, label="smooth footbed")
+        ax.scatter(baseline_mesh.vertices[:, 0], baseline_mesh.vertices[:, 1], s=1.4, alpha=0.18, color="#fdae61", label="baseline foot")
+        ax.scatter(optimized_mesh.vertices[:, 0], optimized_mesh.vertices[:, 1], s=1.4, alpha=0.18, color="#2c7bb6", label="optimized foot")
+        ax.set_xlabel("X heel to toe")
+        ax.set_ylabel("Y coordinate (+Y bottom, -Y opening)")
+        ax.legend(fontsize=8, loc="best")
+        ax.grid(True, alpha=0.25)
+        fig.tight_layout()
+        fig.savefig(output_dir / "fit_before_after.png", dpi=170)
+        plt.close(fig)
+
+        fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
+        slice_fracs = [0.18, 0.62, 0.90]
+        for ax, frac in zip(axes, slice_fracs):
+            x = float(cavity.centerline_x.min() + frac * (cavity.centerline_x.max() - cavity.centerline_x.min()))
+            left = np.interp(x, cavity.centerline_x, cavity.left_boundary_z)
+            right = np.interp(x, cavity.centerline_x, cavity.right_boundary_z)
+            floor = np.interp(x, cavity.centerline_x, cavity.floor_y)
+            z_line = np.linspace(left, right, 120, dtype=np.float32)
+            x_line = np.full_like(z_line, x, dtype=np.float32)
+            bed_line = cavity.sample_footbed_numpy(x_line, z_line) + np.sign(cavity.config.shoe_up_sign) * offset
+            band = max(cavity.support_length * 0.025, 0.004)
+            mask = np.abs(optimized_mesh.vertices[:, 0] - x) <= band
+            ax.axvspan(left, right, color="#f0f0f0")
+            ax.axhline(floor, color="#969696", linewidth=1.5, label="floor")
+            ax.plot(z_line, bed_line, color="#1a9641", linewidth=1.8, label="smooth footbed")
+            ax.scatter(optimized_mesh.vertices[mask, 2], optimized_mesh.vertices[mask, 1], s=5, alpha=0.45, color="#2c7bb6")
+            ax.set_title(f"X slice {frac:.0%}")
+            ax.set_xlabel("Z width")
+            ax.set_ylabel("Y coordinate")
+            ax.grid(True, alpha=0.25)
+        axes[0].legend(fontsize=8, loc="best")
+        fig.tight_layout()
+        fig.savefig(output_dir / "cavity_slices.png", dpi=170)
+        plt.close(fig)
 
     x = optimized_mesh.vertices[:, 0]
     y = optimized_mesh.vertices[:, 1]
@@ -585,9 +544,6 @@ def main() -> None:
     ]:
         if not path.exists():
             raise FileNotFoundError(f"Missing {label}: {path}")
-    if args.fit_version != "v5" and not args.no_warm_start and not args.warm_start_alignment_root.exists():
-        print(f"Warm-start root missing, falling back to baseline alignments: {args.warm_start_alignment_root}")
-
     scenes = discover_scenes(args.mesh_root, args.scene, args.shoe_name)
     if args.max_scenes is not None:
         scenes = scenes[: args.max_scenes]

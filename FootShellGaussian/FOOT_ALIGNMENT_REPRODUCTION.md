@@ -35,6 +35,46 @@ The GShell environment used here is:
 /data/abelde/projects/active/Shell_Gaussian/baselines/GShell/GShell_env
 ```
 
+## Current Clean Foot-Aware Alignment Command
+
+The final one-shot alignment runner starts from trained GShell meshes, extracts
+support/footbed geometry, creates the initial SUPR alignment, runs foot fitting,
+and writes final artifacts under `FootShellGaussian/output`.
+
+Default diagnostics are intentionally minimal for speed. They write only the
+most useful plots:
+
+```text
+<shoe>/support/pseudo_footbed_surface_preview.png
+<shoe>/support/pseudo_footbed_smooth_surface_preview.png
+<shoe>/fit_3d_overlay.png
+<shoe>/plantar_clearance.png
+```
+
+Use `--diagnostics full` only when you want the heavier debug plots such as
+`fit_before_after.png`, `cavity_slices.png`, footprint plots, width profiles,
+floor diagnostics, and contact sheets.
+
+Command:
+
+```bash
+CUDA_VISIBLE_DEVICES=5 ${PY} ${FOOTSHELL_ROOT}/scripts/run_foot_aware_alignment_pipeline.py \
+  --mesh-root ${GSHELL_ROOT}/output/turntable-512-768 \
+  --output-root ${FOOTSHELL_ROOT}/output/foot_aware_alignment \
+  --foot-obj ${PROJECT_ROOT}/baselines/SUPR/output/debug_playground/supr_male_right_foot_neutral.obj \
+  --device cuda \
+  --style-mode auto \
+  --length-ratio 0.85 \
+  --diagnostics minimal \
+  --adam-steps 160 \
+  --lbfgs-steps 25 \
+  --overwrite
+```
+
+The `--length-ratio 0.85` value means the initial SUPR foot length is set to
+85 percent of the shoe length. The optimizer may still adjust uniform scale,
+but this initial value is deliberately less aggressive than the previous 0.90.
+
 ## 1. Canonicalize The Processed Dataset
 
 Problem found: the images look like a consistent turntable dataset, but COLMAP

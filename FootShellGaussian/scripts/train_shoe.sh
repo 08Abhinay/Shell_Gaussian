@@ -15,6 +15,9 @@ OUT_DIR="${PROJECT_DIR}/output/${SHOE_NAME}${OUT_SUFFIX}"
 LOG_DIR="${OUT_DIR}/logs"
 FOOT_PRIOR_ROOT="${FOOTSHELL_FOOT_PRIOR_ROOT:-${PROJECT_DIR}/output/foot_prior_debug}"
 FOOT_PRIOR_ALIGNMENT="${FOOTSHELL_FOOT_PRIOR_ALIGNMENT:-${FOOT_PRIOR_ROOT}/${SHOE_NAME}/alignment.json}"
+PSEUDO_LAST_ROOT="${FOOTSHELL_PSEUDO_LAST_ROOT:-${PROJECT_DIR}/output/pseudo_last_section_loft}"
+PSEUDO_LAST_SDF="${FOOTSHELL_PSEUDO_LAST_SDF:-${PSEUDO_LAST_ROOT}/${SHOE_NAME}/pseudo_last_sdf.npz}"
+PSEUDO_LAST_SECTIONS="${FOOTSHELL_PSEUDO_LAST_SECTIONS:-${PSEUDO_LAST_ROOT}/${SHOE_NAME}/pseudo_last_sections.npz}"
 
 if [ ! -d "$DATASET_DIR" ]; then
     echo "Error: dataset not found at ${DATASET_DIR}"
@@ -81,6 +84,33 @@ if [[ "${CONFIG_USES_FOOT_PRIOR}" == "1" ]]; then
     FOOT_PRIOR_ARGS+=(--foot_prior_alignment_path "$FOOT_PRIOR_ALIGNMENT")
 fi
 
+CONFIG_USES_PSEUDO_LAST_PRIOR="$(
+python - "$CONFIG_PATH" <<'PY'
+import json
+import sys
+with open(sys.argv[1], "r") as f:
+    config = json.load(f)
+print("1" if config.get("use_pseudo_last_prior", False) else "0")
+PY
+)"
+PSEUDO_LAST_ARGS=()
+if [[ "${CONFIG_USES_PSEUDO_LAST_PRIOR}" == "1" ]]; then
+    if [ ! -f "$PSEUDO_LAST_SDF" ]; then
+        echo "Error: pseudo-last SDF not found at ${PSEUDO_LAST_SDF}"
+        echo "Run scripts/run_pseudo_last_builder.py for this shoe first, or set FOOTSHELL_PSEUDO_LAST_SDF."
+        exit 1
+    fi
+    if [ ! -f "$PSEUDO_LAST_SECTIONS" ]; then
+        echo "Error: pseudo-last sections not found at ${PSEUDO_LAST_SECTIONS}"
+        echo "Run scripts/run_pseudo_last_builder.py for this shoe first, or set FOOTSHELL_PSEUDO_LAST_SECTIONS."
+        exit 1
+    fi
+    PSEUDO_LAST_ARGS+=(
+        --pseudo_last_sdf_path "$PSEUDO_LAST_SDF"
+        --pseudo_last_sections_path "$PSEUDO_LAST_SECTIONS"
+    )
+fi
+
 cd "$PROJECT_DIR"
 
 echo "Training shoe: ${SHOE_NAME}"
@@ -92,6 +122,10 @@ echo "Env: ${ENV_DIR}"
 if [[ "${CONFIG_USES_FOOT_PRIOR}" == "1" ]]; then
     echo "Foot alignment: ${FOOT_PRIOR_ALIGNMENT}"
 fi
+if [[ "${CONFIG_USES_PSEUDO_LAST_PRIOR}" == "1" ]]; then
+    echo "Pseudo-last SDF: ${PSEUDO_LAST_SDF}"
+    echo "Pseudo-last sections: ${PSEUDO_LAST_SECTIONS}"
+fi
 echo "CXX: ${CXX}"
 
 python -u train_gshelltet_polycam.py \
@@ -99,4 +133,5 @@ python -u train_gshelltet_polycam.py \
     --trainset_path "$DATASET_DIR" \
     --out-dir "$OUT_DIR" \
     "${FOOT_PRIOR_ARGS[@]}" \
+    "${PSEUDO_LAST_ARGS[@]}" \
     2>&1 | tee "${LOG_DIR}/train.log"
