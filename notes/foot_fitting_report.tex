@@ -1,0 +1,810 @@
+\documentclass[11pt]{article}
+
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath,amssymb}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage[mathlines]{lineno}
+\usepackage{microtype}
+\usepackage{hyperref}
+
+\definecolor{linkblue}{RGB}{0,72,145}
+\definecolor{codegray}{RGB}{245,245,245}
+\definecolor{codeframe}{RGB}{210,210,210}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=linkblue,
+  citecolor=linkblue,
+  urlcolor=linkblue,
+  pdftitle={Optimization-Based Foot Fitting Inside Reconstructed Shoe Meshes},
+  pdfauthor={Abhinay Belde}
+}
+
+\lstdefinestyle{pythonstyle}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codegray},
+  frame=single,
+  rulecolor=\color{codeframe},
+  breaklines=true,
+  columns=fullflexible,
+  showstringspaces=false,
+  keepspaces=true,
+  tabsize=2
+}
+
+\setlist[itemize]{leftmargin=1.5em}
+\setlist[enumerate]{leftmargin=1.7em}
+\setlength{\parskip}{0.5em}
+\setlength{\parindent}{0pt}
+\renewcommand\linenumberfont{\normalfont\scriptsize\color{gray}}
+
+\title{\textbf{Optimization-Based Foot Fitting Inside Reconstructed Shoe Meshes}\\
+\large Geometry, SDF, Contact Optimization, and Production Roadmap}
+\author{Rough Planning}
+\date{May 20, 2026}
+
+\begin{document}
+\maketitle
+\linenumbers
+\modulolinenumbers[1]
+\tableofcontents
+\newpage
+
+\section{Optimization Based Foot Fitting Inside Reconstructed Shoe Meshes}
+
+\subsection{Key Recommendation}
+
+The most robust formulation for this setting is not ``align a foot to the shoe mesh,'' but fit a parametric foot into an inferred pseudo-last or pseudo-cavity derived from the outer shoe mesh. That recommendation is consistent with the footwear literature, which treats the shoe last as the inner volume that matters for fit, and with adjacent vision and graphics literature, which gets robustness by combining model priors, collision exclusion, contact encouragement, and staged optimization rather than relying on raw shape alignment alone.
+
+The footwear papers closest to this problem focus on shoe-last customization, fit evaluation, and 3D ease allowance. The SMPL, scene-contact, and hand-object-contact papers contribute the modern optimization machinery that is useful here. I did not find a widely adopted open paper that takes only an outer shoe mesh and directly fits a parametric foot into it end-to-end; the best solution is a hybrid of these lines of work~\cite{bao-last,luximon-last,cad-last,fitness-lasts,ease-allowance,smplify,smplifyx,prox,posa,contactopt,cpf}.
+
+For the canonicalized coordinates, the right geometric anchor is the lower sole or footbed geometry, not whole-shoe PCA. The 3D foot-measurement literature already uses low points near the platform, projection to a horizontal plane, and slice-based boundary extraction to stabilize foot registration. The shoe-last literature explicitly models toe spring, heel height, rearfoot/forefoot zones, and 3D ease allowance rather than assuming a single rigid flat alignment. Biomechanics work on foot-ground contact also suggests that heel and forefoot should be treated separately, because single-shape roll-over abstractions can be too crude~\cite{witana-foot-measurements,cad-foot-scan,toe-spring,rollover}.
+
+\subsection{Relevant Literature}
+
+The most relevant footwear-specific papers are these. \emph{Integrated approach to design and manufacture of shoe lasts for orthopaedic use} defines the shoe last as the solid model of the inner volume of the shoe. \emph{Foot measurements from three-dimensional scans} gives a useful registration and slicing mindset for robust geometric measurements. \emph{Shoe-last design innovation for better shoe fitting} is especially important because it explicitly notes that meaningful comparison methods had often been limited to 2D alignment or 3D ICP-like fitness evaluation, which is very close to the gap that appears in the current alignment problem.
+
+\emph{A computer-aided design system for foot-feature-based shoe last customization} deforms a base last from foot features and visualizes fit through contours. \emph{An analysis and evaluation of fitness for shoe lasts and human feet} uses a fitness function built around ball girth, waist girth, and instep girth, which are repeatedly treated in this literature as key fit measurements. \emph{Customization of shoe last based on 3D design process with adjustable 3D ease allowance} is highly relevant because it models rearfoot and forefoot separately and studies how 3D ease allowance is distributed between foot and last.
+
+\emph{Guess your size} adds a practical reminder that foot-shape diversity and user preference matter, so a single hard-coded ``foot is x\% of shoe outer length'' rule is too brittle. \emph{Measure2Shape} shows that statistical foot-shape models can be predicted from a small number of measurements with millimeter-scale accuracy, which is useful later if a measurement-driven foot prior is needed~\cite{bao-last,luximon-last,cad-last,fitness-lasts,ease-allowance,guess-size,measure2shape,feature-last}.
+
+There is also footwear simulation work that is useful conceptually, even if it is often too heavy for large-scale alignment. \emph{Contact model, fit process and foot animation for the virtual footwear simulator of the footwear comfort} and \emph{Human foot modeling towards footwear design} model foot-footwear interaction and foot deformation for virtual footwear design. The 2022 scoping review on finite-element modeling for footwear concludes that FE methods are useful but still constrained by geometry reconstruction challenges, computational cost, material modeling, realistic loading, and validation burden. That is exactly why a geometry/SDF/contact optimizer is a better first production solution for thousands of shoes than a full FE simulator~\cite{fe-review,virtual-footwear,human-foot-modeling}.
+
+For the foot model itself, SUPR-Foot is a strong match to this setup: it provides an articulated foot model with toe joints and learned ground-contact deformations, which gives a principled way to add forefoot or toe articulation instead of using ad hoc nonuniform scaling. Related foot-model work such as FIND, FOUND, and FOCUS is also relevant because it treats foot shape fitting as an optimization problem over a parametric or implicit foot model, even though those papers solve bare-foot reconstruction rather than foot-in-shoe fitting~\cite{supr-foot,find,found,focus}.
+
+The most transferable adjacent methods are from human model fitting, human-scene contact, and hand-object contact. SMPLify provides the template for staged optimization with a parametric model plus priors and interpenetration penalties. SMPLify-X adds a better pose prior and a fast interpenetration term. PROX is the closest conceptual analogue to this problem: it extends SMPLify-X with a scene interpenetration term and a contact term that only activates when surfaces are close in distance and orientation. POSA learns a body-centric contact prior that generalizes to new scenes, which is exactly the kind of prior that can later be learned from fitted shoes.
+
+On the self-contact side, explicit contact constraints improve fitting. On the hand-object side, ContactOpt and CPF are especially useful: ContactOpt refines pose using a differentiable contact model, and CPF represents contacts as a spring-like potential field. For collision handling, Local Optimization for Robust Signed Distance Field Collision is a good reference for why SDF-based contact is attractive and how to reason about mesh/SDF collision robustly~\cite{smplify,smplifyx,prox,posa,self-contact,contactopt,cpf,sdf-collision,sdf-contact}.
+
+\subsection{Shoe Representation and Initialization}
+
+A robust shoe representation for this case should have three separate pieces:
+
+\begin{enumerate}
+  \item a support footprint on the lower sole,
+  \item a footbed profile inferred from the lower shoe geometry plus a small latent thickness model,
+  \item a conservative pseudo-cavity SDF that comes from the outer mesh but is shrunk inward by region-dependent shell-thickness priors.
+\end{enumerate}
+
+This is more faithful to shoe-last thinking than trying to interpret the raw outer shell literally as the space available to the foot. The literature on shoe lasts and 3D ease allowance makes the same conceptual distinction between the foot, the last, and the distributed clearance between them~\cite{bao-last,ease-allowance}.
+
+For support-region detection, use only faces or vertices that are both near the bottom-side extreme in the $+Y$ convention and have normals compatible with the outer sole direction. Witana et al. provide a strong precedent for selecting points close to the platform, projecting them, and then using slice boundaries rather than the whole cloud for registration. In this shoe setting, adapt that idea as follows: take a bottom band, project it to the $X Z$ plane, rasterize a footprint occupancy map, close small gaps caused by tread or reconstruction noise, keep the main connected component, and derive a sole-only centerline from the midpoint between the left and right footprint boundaries across $x$-slices. This answers the ``yaw from lower sole geometry rather than whole-shoe PCA'' question. It uses exactly the part of the shoe that should control the foot~\cite{witana-foot-measurements}.
+
+A practical sole-only yaw estimator is:
+\begin{equation}
+\mathcal{F}_{\mathrm{sole}} =
+\left\{
+f :
+d_b(c_f) \ge q_{0.98}(d_b),
+\quad
+n_f \cdot \hat{y}_S \ge \cos \theta_{\mathrm{sole}}
+\right\},
+\end{equation}
+where $d_b(p)=p_y$ in the shoe frame, $c_f$ is the face centroid, and $n_f$ is the outward face normal. After projecting $\mathcal{F}_{\mathrm{sole}}$ into $X Z$, compute left and right footprint boundaries $z_L(x)$ and $z_R(x)$, define the midline
+\begin{equation}
+m(x)=\frac{1}{2}\left(z_L(x)+z_R(x)\right),
+\end{equation}
+smooth it with a spline, and initialize yaw from the line joining the heel centroid and the ball-region centroid, not the toe tip and not the shaft. The footwear literature's emphasis on slice-based measurements and the shoe-last literature's focus on fit-critical zones both support this footprint-first approach~\cite{cad-last,fitness-lasts,witana-foot-measurements}.
+
+For toe spring, infer it from the longitudinal footbed profile, not from global pitch. Compute a sole or footbed profile $\bar{B}(x)$ as the median support height in a narrow band around the centerline. Fit a baseline through the rearfoot and midfoot, then treat the persistent front rise above that baseline as the toe-spring curve. The biomechanics literature defines toe spring as the upward forefoot curvature of the shoe and shows that it changes toe-joint mechanics. The shoe-last literature also explicitly states that the foot or last should be adjusted to account for toe spring and heel height. That means the optimizer should not force the entire plantar foot onto one plane. It should allow a separate forefoot hinge or toe articulation~\cite{cad-foot-scan,toe-spring,rollover,supr-foot}.
+
+For the pseudo-cavity, the cleanest outer-mesh-only formulation is to create an outer-mesh SDF $D_{\mathrm{out}}(x)$ and then define a conservative cavity SDF
+\begin{equation}
+D_{\mathrm{cav}}(x)=D_{\mathrm{out}}(x)-T_{\mathrm{shell}}(x;a),
+\end{equation}
+where $T_{\mathrm{shell}}$ is a low-dimensional shell-thickness model with parameters $a$. At minimum, $a$ should contain a bottom or insole offset, because that is how unknown sole thickness and footbed height are absorbed. In the improved version, let $T_{\mathrm{shell}}$ vary smoothly between rearfoot, midfoot, and forefoot so the footbed can stay approximately parallel to the outsole while still accounting for different heel or rocker constructions.
+
+This is also where the ``only outer shoe mesh, no true cavity scan'' issue is handled: stop pretending the true cavity is known, and instead optimize inside a conservative cavity proxy with a strong prior on reasonable shell thickness and ease allowance. That is much more production-safe. The shoe-last and 3D-ease literature supports the idea that distributed clearance, not direct foot-surface coincidence, is the quantity to model~\cite{bao-last,ease-allowance}.
+
+\subsection{Optimization Objective}
+
+If the foot identity is known, the minimum variable set should be
+\begin{equation}
+\Theta = \left\{
+s,\psi,\phi,\rho,t_x,t_y,t_z,q_{\mathrm{mtp}},a
+\right\},
+\end{equation}
+where $s$ is isotropic scale, $(\psi,\phi,\rho)$ are yaw, pitch, and roll, $t$ is translation, $q_{\mathrm{mtp}}$ is a low-dimensional forefoot or toe articulation parameter, and $a$ parameterizes unknown footbed or shell thickness. If the foot identity is not known or only approximately known, add a small number of SUPR shape coefficients $\beta$ with a strong prior instead of using non-anatomical anisotropic scaling. SUPR is the right model family here because it already includes toe articulation and ground-contact deformations~\cite{supr-foot}.
+
+The objective I would use is:
+\begin{equation}
+\mathcal{L}(\Theta) =
+\lambda_{\mathrm{cav}} L_{\mathrm{cav}}
++ \lambda_{\mathrm{plantar}} L_{\mathrm{plantar}}
++ \lambda_{\mathrm{seat}} L_{\mathrm{seat}}
++ \lambda_{\mathrm{axis}} L_{\mathrm{axis}}
++ \lambda_{\mathrm{girth}} L_{\mathrm{girth}}
++ \lambda_{\mathrm{toe}} L_{\mathrm{toe}}
++ \lambda_{\mathrm{prior}} L_{\mathrm{prior}}
++ \lambda_{\mathrm{sym}} L_{\mathrm{sym}}.
+\end{equation}
+This structure is directly inspired by SMPLify/SMPLify-X style parametric fitting, PROX-style exclusion plus contact, and ContactOpt/CPF style soft-contact energies, while the footwear-specific parts come from shoe-last ease allowance and girth-based fit work~\cite{fitness-lasts,smplify,smplifyx,prox,contactopt,cpf}.
+
+A good containment term is a one-sided barrier on the cavity SDF:
+\begin{equation}
+L_{\mathrm{cav}} =
+\frac{1}{|S|}
+\sum_{i\in S}
+\phi_+\left(m_{\mathrm{wall}} - D_{\mathrm{cav}}(v_i(\Theta))\right),
+\end{equation}
+where $S$ is a dense sample of foot surface points, $m_{\mathrm{wall}}$ is the desired minimum wall clearance, and $\phi_+(u)$ is a softplus or Huber barrier. This is the direct geometry/SDF/collision optimization term. Use dense samples, not only mesh vertices, if the foot mesh is coarse. Smoothed SDF-based collision is a natural match to PROX-like exclusion terms and to the SDF collision literature~\cite{prox,sdf-collision}.
+
+For footbed contact, do not force the entire plantar surface onto the support surface. Define anatomical plantar masks such as heel pad, lateral and medial metatarsal heads, hallux pad, mid-arch, and toe pads. If $B(x,z;a)$ is the inferred footbed height in the $+Y$-bottom convention, define plantar clearance
+\begin{equation}
+c_i(\Theta)=B(v_i^x,v_i^z;a)-v_i^y.
+\end{equation}
+Then use an interval loss rather than a zero-distance loss:
+\begin{equation}
+L_{\mathrm{plantar}} =
+\frac{1}{|\mathcal{P}|}
+\sum_{i\in \mathcal{P}}
+w_i
+\left[
+\phi_+(\ell_i-c_i)
++ \phi_+(c_i-u_i)
+\right].
+\end{equation}
+Here $\ell_i$ and $u_i$ are region-specific lower and upper bounds. Heel and met-head regions should have tighter target ranges, while the arch and toe regions should allow more float. This follows the shoe-last/ease literature and the biomechanics literature: a comfortable fit is about distributed ease and blocking, not globally zero clearance, and separate heel/forefoot mechanics matter~\cite{ease-allowance,toe-spring,rollover}.
+
+For heel seating and longitudinal scale, explicitly optimize the heel gap and toe gap. Let $x^{\mathrm{wall}}_{\mathrm{heel}}$ and $x^{\mathrm{wall}}_{\mathrm{toe}}$ be inferred internal heel and toe planes from the pseudo-cavity, and let $x^{\mathrm{heel}}_{\min}$ and $x^{\mathrm{toe}}_{\max}$ be the posterior heel and anterior toe extents of the transformed foot. Then
+\begin{equation}
+g_h=x^{\mathrm{heel}}_{\min}-x^{\mathrm{wall}}_{\mathrm{heel}},
+\qquad
+g_t=x^{\mathrm{wall}}_{\mathrm{toe}}-x^{\mathrm{toe}}_{\max}.
+\end{equation}
+Use interval or soft target losses on both. This is how scale should really be estimated: not from a fixed fraction of outer length, but from heel seating, toe allowance, and cross-sectional fit together. The footwear fit literature repeatedly centers fit on the ball, waist, and instep regions, and the size-recommendation literature shows foot-shape variation is too large for a single hard-coded scale rule~\cite{fitness-lasts,guess-size}.
+
+For yaw, pitch, and roll, use separate terms. Yaw should stay close to the sole-derived centerline. Pitch should be weakly attracted to the shoe's toe-spring profile through $q_{\mathrm{mtp}}$ rather than through global pitch alone. Roll should be weakly regularized toward the local support plane inferred from heel and forefoot slices. A useful alignment term is
+\begin{equation}
+L_{\mathrm{axis}} =
+\frac{1}{K}
+\sum_{k=1}^{K}
+\rho\left(z^{\mathrm{foot}}_{\mathrm{axis}}(x_k)-m(x_k)\right)
++ \rho(\psi-\psi_{\mathrm{sole}}),
+\end{equation}
+where $z^{\mathrm{foot}}_{\mathrm{axis}}(x_k)$ is the center of the foot section at slice $x_k$, $m(x)$ is the sole-only centerline, and $\rho$ is a robust penalty. For toe spring, either use SUPR toe joints or a smooth, blended forefoot transform around the metatarsophalangeal axis; do not try to absorb everything into global pitch. That is the failure mode that makes fits look too flat or too high in the front~\cite{cad-foot-scan,toe-spring,rollover,supr-foot}.
+
+The foot SDF is also worth using. A symmetric narrow-band term helps detect collisions that a surface-only term can miss:
+\begin{equation}
+L_{\mathrm{sym}} =
+\frac{1}{|Q|}
+\sum_{q\in Q}
+\phi_+\left(m_{\mathrm{sym}}-D_{\mathrm{foot}}\left(T^{-1}_{\Theta}(q)\right)\right),
+\end{equation}
+where $Q$ is a sample of pseudo-cavity boundary points, $D_{\mathrm{foot}}$ is the foot SDF in raw SUPR coordinates, and $T^{-1}_{\Theta}$ maps shoe-frame points back into foot-frame coordinates. This is a direct way to exploit the existing SDF and is in the spirit of mesh/SDF collision handling~\cite{sdf-collision,sdf-contact}.
+
+\subsection{Implementation and Scaling}
+
+In Python, use \texttt{trimesh} for mesh cleaning, slicing, footprint extraction, and CPU-side sanity checks, but run the final objective in PyTorch against precomputed grids. \texttt{trimesh.intersections.mesh\_multiplane} is a convenient way to slice many $x$-planes, and \texttt{trimesh.proximity.signed\_distance} is useful for debugging. Note the library's sign convention: it reports positive distance inside the mesh and negative distance outside, which is the opposite of many SDF conventions. Normalize that sign once and unit-test it. Trimesh also exposes ICP, but its own documentation notes that ICP only behaves reasonably when the initialization is already roughly correct, which is exactly why ICP should remain a diagnostic tool here, not the main fitter~\cite{trimesh}.
+
+The practical production path is to precompute a shoe-footbed grid and a pseudo-cavity SDF grid, then query them on the GPU with \texttt{torch.nn.functional.grid\_sample}. PyTorch's \texttt{grid\_sample} supports both 2D and volumetric sampling, which makes it a good fit for this kind of differentiable geometry objective. For optimization, use Adam first to get into the right basin, then switch to LBFGS for cleanup; PyTorch's LBFGS reevaluates the objective through a closure, which is exactly what is needed once the candidate is close~\cite{grid-sample,adam,lbfgs}.
+
+A practical optimizer skeleton looks like this:
+
+\begin{lstlisting}[style=pythonstyle]
+# Precompute from shoe mesh
+support = detect_support_faces(shoe_mesh)  # lower sole only
+footprint = rasterize_footprint(support)
+centerline = fit_centerline_from_footprint(footprint)
+footbed = build_footbed_heightmap(shoe_mesh, support)
+cavity_sdf = build_pseudocavity_sdf(shoe_mesh, style_prior)
+
+# Parameters
+params = init_from_support(centerline, footbed, cavity_sdf, supr_foot)
+
+# Coarse stage
+adam = torch.optim.Adam(params.trainables(), lr=1e-2)
+for _ in range(200):
+    adam.zero_grad()
+    loss = objective(params, cavity_sdf, footbed, centerline, foot_sdf)
+    loss.backward()
+    adam.step()
+
+# Fine stage
+lbfgs = torch.optim.LBFGS(
+    params.trainables(), max_iter=40, line_search_fn="strong_wolfe"
+)
+
+def closure():
+    lbfgs.zero_grad()
+    loss = objective(params, cavity_sdf, footbed, centerline, foot_sdf)
+    loss.backward()
+    return loss
+
+lbfgs.step(closure)
+\end{lstlisting}
+
+That coarse-to-fine schedule closely mirrors the broader model-fitting literature, but the important domain-specific difference is that initialization should come from the support representation rather than raw PCA or a weak ankle-opening guess~\cite{smplify,prox,contactopt}.
+
+To make the system robust over thousands of shoes, add three production features. First, run multi-start from a small pool of seeds that vary yaw, scale, forefoot hinge, and heel-seat offset around the sole-derived initialization; this catches local minima. Second, compute simple style descriptors from the outer mesh: shaft height, back height, opening confidence, sole curvature, heel-to-forefoot drop, and footprint aspect ratio. Use them either to hard-route shoes into rough families such as low shoe, boot, clog or mule, and slide, or to regress the shell-thickness parameters $a$. Third, once enough successful fits are available, learn a POSA-like prior for foot-shoe contact and a SMPLify-like initializer that predicts $\Theta$ from shoe descriptors, then keep the optimizer as the final refinement layer. That gives a fitted pose and alignment prior that can be reused during neural shoe-mesh training~\cite{smplify,prox,posa}.
+
+\subsection{Validation, Failure Modes, and Roadmap}
+
+The most useful debug outputs are not just the final overlay. Generate a sole-only footprint plot with the extracted centerline overlaid; a longitudinal footbed profile showing heel, midfoot, forefoot, and toe-spring rise; cross-sections at heel, waist, ball, instep, and toe; a plantar clearance heatmap on the foot; a penetration heatmap on foot and shoe; and a contour-style fit visualization similar in spirit to the contour figure used in shoe-last customization work.
+
+Quantitatively, log at least these metrics per fit: minimum cavity clearance, heel gap, toe gap, centerline misalignment angle, forefoot pitch relative to the extracted toe-spring angle, ball/waist/instep slack, plantar-support coverage on heel and met-head masks, the fraction of plantar vertices that are floating beyond tolerance, and multi-start parameter spread. The emphasis on ball/waist/instep measurements is directly supported by the shoe-fit literature~\cite{cad-last,fitness-lasts}.
+
+The main failure modes are predictable. Toe spring errors show up as good heel seating but excessive forefoot penetration or excessive toe float. Heel seating errors show up as a large heel gap combined with seemingly good toe fit. Yaw errors show up as one sidewall colliding while the opposite side has too much slack, even though length looks correct. Scale errors show up in ball or instep overfill even when toe and heel gaps look plausible. Boot failures usually mean the shaft volume is still influencing the fit, which can be detected when a fit looks acceptable in the upper but poor at the outsole. Slide or clog failures usually come from over-using dorsal or heel-counter terms that should have been disabled or weakened. High disagreement between multi-start solutions is also a strong automatic QC signal.
+
+The broader contact-fitting literature and the footwear literature both imply that contact-aware constraints help only when the contact surfaces themselves are well identified; if the support map is wrong, the optimizer will confidently solve the wrong problem~\cite{ease-allowance,prox,contactopt,rollover}.
+
+\paragraph{Simple baseline.}
+Start with a rigid or similarity fit of a fixed SUPR foot that optimizes only $\{s,\psi,\phi,\rho,t\}$ against a sole-derived centerline, heel gap, toe gap, ball-width slack, and a constant-offset footbed. Do not use whole-shoe PCA at all. This version already addresses the biggest problems: wrong yaw, wrong vertical seating, and wrong global scale. It will also be easy to validate and fast enough to batch over a large catalog~\cite{witana-foot-measurements}.
+
+\paragraph{Improved optimizer.}
+Add a forefoot hinge or SUPR toe articulation, a low-dimensional shell-thickness model $a$, dense pseudo-cavity SDF containment, and the symmetric foot-SDF term. Partition the plantar mask into heel, arch, met-head, hallux, and toes, and use interval-based support rather than hard contact. This is the version expected to handle toe spring, clogs, slides, rocker soles, and many boots much better than the current heuristic pipeline. It is also the right place to introduce style-conditioned priors and multi-start fitting~\cite{contactopt,toe-spring,supr-foot,sdf-collision}.
+
+\paragraph{Production-scale version.}
+After a few thousand successful fits, learn a lightweight predictor from shoe descriptors to the initial parameter distribution $(\mu,\Sigma)$, the shell-thickness prior $a$, and a foot-shoe contact prior over plantar vertices. Then use the optimizer only as a refinement and QC stage. In parallel, use the fitted transforms and contact maps as priors during neural shoe reconstruction or canonicalization training, exactly the way SMPLify-style optimization has often been used to bootstrap learned regressors, and the way POSA turns fitted interactions into a reusable contact prior. This is the version most likely to be robust at scale without hand-tuning every style family~\cite{smplify,posa}.
+
+\section{Practical Algorithm Summary}
+
+This section rewrites the method in an implementation-oriented way so it is easier to turn into code.
+
+\subsection{Stage 0: Inputs and Coordinate Convention}
+
+Inputs:
+
+\begin{enumerate}
+  \item Canonicalized shoe mesh $M_S=(V_S,F_S)$ with $+X$ heel-to-toe, $+Y$ bottom/sole side, $-Y$ opening/up side, and $+Z$ width direction.
+  \item SUPR foot mesh $M_F(\beta,q)$ or a static SUPR foot mesh in raw SUPR coordinates.
+  \item Foot SDF $D_{\mathrm{foot}}$ in raw SUPR coordinates.
+  \item Optional foot anatomical masks: heel, arch, metatarsal heads, hallux, toes, dorsal foot, ankle loop.
+\end{enumerate}
+
+Outputs:
+
+\begin{enumerate}
+  \item Similarity transform $(s,R,t)$, where $R=R_y(\psi)R_z(\phi)R_x(\rho)$ or the equivalent for the shoe frame.
+  \item Optional toe/forefoot articulation $q_{\mathrm{mtp}}$.
+  \item Optional shell/footbed offset parameters $a$.
+  \item Per-vertex or per-sample diagnostics: cavity clearance, plantar clearance, support mask, sidewall penetration, heel/toe gaps.
+\end{enumerate}
+
+The key engineering principle is: estimate the pose from the support geometry, then use the whole outer mesh only as a soft, conservative constraint.
+
+\subsection{Stage 1: Extract Lower Support/Sole Geometry}
+
+Use the shoe's $+Y$-bottom convention. If canonicalization is correct, bottom-side faces should have large $y$ values and outward normals that roughly point along $+Y$. Select a bottom band and apply a normal filter:
+\begin{equation}
+\mathcal{F}_{\mathrm{sole}} =
+\left\{
+f :
+y(c_f)\ge q_{\tau}(y(c_f)),
+\quad
+n_f\cdot \hat{y}_S\ge \cos \theta
+\right\},
+\end{equation}
+where $q_{\tau}$ can start near $0.95$ to $0.98$, and $\theta$ can start around $45^\circ$. For noisy GShell meshes, use a wider bottom band and then keep the largest connected component after projection.
+
+Then rasterize $(x,z)$ of the selected faces onto a 2D grid. Perform binary closing and hole filling. From this footprint, compute:
+
+\begin{itemize}
+  \item heel region: lowest $x$ or rear 10--15\% of footprint length,
+  \item ball region: roughly 60--75\% of footprint length from heel,
+  \item toe region: front 10--15\%,
+  \item boundaries $z_L(x)$ and $z_R(x)$,
+  \item centerline $m(x)=\frac{1}{2}(z_L(x)+z_R(x))$,
+  \item sole yaw $\psi_{\mathrm{sole}}$ from heel-to-ball or heel-to-midfoot line.
+\end{itemize}
+
+This avoids upper/shaft bias because boots and high uppers can dominate whole-mesh PCA, but they should not decide the foot's centerline.
+
+\subsection{Stage 2: Infer a Footbed Heightmap}
+
+Because only the outer shoe mesh is available, the true insole or inner cavity is unknown. Use a conservative proxy:
+\begin{equation}
+B(x,z;a)=B_{\mathrm{outer}}(x,z)-T_{\mathrm{bottom}}(x,z;a),
+\end{equation}
+where $B_{\mathrm{outer}}(x,z)$ is the observed bottom/sole-side height and $T_{\mathrm{bottom}}$ is an unknown thickness or offset. In the $+Y$-bottom convention, be consistent about signs: if larger $y$ is lower, then moving from outsole toward the footbed generally decreases $y$. The equation above is conceptual; implement it after confirming the sign with a small visualization.
+
+Start with a constant $T_{\mathrm{bottom}}$. Then upgrade to:
+\begin{equation}
+T_{\mathrm{bottom}}(x,z;a)=
+a_0+a_1r_{\mathrm{heel}}(x)+a_2r_{\mathrm{mid}}(x)+a_3r_{\mathrm{fore}}(x),
+\end{equation}
+where $r_{\mathrm{heel}}$, $r_{\mathrm{mid}}$, and $r_{\mathrm{fore}}$ are smooth radial-basis or spline weights along shoe length. This gives the optimizer enough flexibility for heel lift, rocker, and toe spring without inventing arbitrary deformations.
+
+\subsection{Stage 3: Initialize Foot Pose}
+
+Initialize scale from inner length, not outer length:
+\begin{equation}
+s_0 =
+\frac{
+L_{\mathrm{pseudo\mbox{-}inner}}
+- g_{\mathrm{toe,target}}
+- g_{\mathrm{heel,target}}
+}{
+L_{\mathrm{foot}}
+}.
+\end{equation}
+Initialize yaw from the lower sole centerline $\psi_{\mathrm{sole}}$. Initialize vertical translation so the plantar heel and met-head masks have small positive clearance above the inferred footbed. Initialize pitch from the rearfoot-midfoot support plane, not from the entire shoe. Initialize roll from a robust plane fit to the rearfoot and forefoot support points.
+
+Run 5--20 multi-start candidates:
+\begin{equation}
+\psi=\psi_{\mathrm{sole}}+\delta_{\psi},
+\qquad
+s=s_0(1+\delta_s),
+\qquad
+q_{\mathrm{mtp}}=\delta_q,
+\end{equation}
+where $\delta_{\psi}\in\{-5^\circ,0,5^\circ\}$, $\delta_s\in\{-0.03,0,0.03\}$, and $\delta_q$ samples plausible toe-spring angles. Keep the best candidate by objective value and QC metrics.
+
+\subsection{Stage 4: Optimize with Staged Losses}
+
+A stable staged schedule is usually better than activating all losses at full strength from the start.
+
+\textbf{Stage A: coarse similarity fit.} Optimize $s,\psi,t_x,t_y,t_z$ with centerline, heel gap, toe gap, and plantar interval losses. Keep pitch/roll weakly regularized.
+
+\textbf{Stage B: 6-DoF fit.} Add pitch/roll and pseudo-cavity containment. Turn on sidewall/girth losses.
+
+\textbf{Stage C: forefoot and shell refinement.} Add $q_{\mathrm{mtp}}$, shell thickness $a$, symmetric foot SDF term, and stronger contact-region losses.
+
+\textbf{Stage D: final cleanup.} Use LBFGS for 20--50 iterations with all losses active and smaller robust margins.
+
+\subsection{Stage 5: Export the Fitted Prior for Neural Training}
+
+For each fitted shoe, save:
+
+\begin{itemize}
+  \item \texttt{foot\_to\_shoe\_transform.json},
+  \item \texttt{fitted\_foot\_mesh.obj},
+  \item \texttt{plantar\_contact\_mask.npy},
+  \item \texttt{cavity\_clearance.npy},
+  \item \texttt{footbed\_heightmap.npy},
+  \item \texttt{fit\_metrics.json},
+  \item visualization images for QC.
+\end{itemize}
+
+During neural mesh training, use these outputs as priors. For example, use the foot mesh as a weak occupancy exclusion prior, use plantar contact maps to regularize open-surface reconstruction around the footbed, and use fitted transforms to canonicalize shoe/foot relations across the dataset.
+
+\section{PyTorch/trimesh Implementation Details}
+
+\subsection{Mesh Preprocessing}
+
+Use \texttt{trimesh} for cleaning and topological sanity:
+
+\begin{lstlisting}[style=pythonstyle]
+import trimesh
+
+shoe = trimesh.load(shoe_path, force="mesh")
+shoe.remove_duplicate_faces()
+shoe.remove_degenerate_faces()
+shoe.remove_unreferenced_vertices()
+shoe.merge_vertices()
+
+# Optional smoothing only for support extraction, not for final geometry.
+shoe_for_support = shoe.copy()
+\end{lstlisting}
+
+Do not over-smooth the actual mesh used for SDF construction, because smoothing can erase useful boundaries. Smooth only the extracted support signal or heightmap.
+
+\subsection{Support-Face Detection}
+
+\begin{lstlisting}[style=pythonstyle]
+import numpy as np
+
+def detect_support_faces(mesh, q=0.97, normal_cos=0.5):
+    V = mesh.vertices
+    F = mesh.faces
+    centroids = V[F].mean(axis=1)
+    normals = mesh.face_normals
+
+    y_thresh = np.quantile(centroids[:, 1], q)  # +Y is bottom
+    bottom_band = centroids[:, 1] >= y_thresh
+    normal_ok = normals[:, 1] >= normal_cos
+    idx = np.where(bottom_band & normal_ok)[0]
+    return idx
+\end{lstlisting}
+
+In practice, use this as a first pass. If too few faces are selected, relax the normal threshold and widen the bottom band. If too many faces are selected in a boot or clog, use connected components in projected $X Z$ footprint and keep the largest sole-like component.
+
+\subsection{Footprint and Centerline}
+
+\begin{lstlisting}[style=pythonstyle]
+from scipy.ndimage import binary_closing, binary_fill_holes
+from scipy.interpolate import UnivariateSpline
+
+# Pseudocode only
+def footprint_centerline(points_xz, grid_res=256):
+    occ, x_edges, z_edges = rasterize(points_xz, grid_res)
+    occ = binary_closing(occ, iterations=2)
+    occ = binary_fill_holes(occ)
+    occ = keep_largest_component(occ)
+
+    xs = []
+    mids = []
+    widths = []
+    for ix in range(occ.shape[0]):
+        cols = np.where(occ[ix])[0]
+        if len(cols) < 3:
+            continue
+        z_left = z_edges[cols.min()]
+        z_right = z_edges[cols.max()]
+        x_mid = 0.5 * (x_edges[ix] + x_edges[ix + 1])
+        xs.append(x_mid)
+        mids.append(0.5 * (z_left + z_right))
+        widths.append(z_right - z_left)
+
+    spline = UnivariateSpline(xs, mids, s=0.001 * len(xs))
+    return spline, np.asarray(xs), np.asarray(widths)
+\end{lstlisting}
+
+Use the spline only over the stable central part of the footprint. Do not trust very front toe slices or rear heel slices if they are too narrow or noisy.
+
+\subsection{Differentiable Transform}
+
+Represent scale, Euler angles, and translation as PyTorch tensors. Keep the rotation parameterization simple at first, because only small pitch/roll changes are needed. Later, switch to quaternions or Lie algebra if needed.
+
+\begin{lstlisting}[style=pythonstyle]
+import torch
+
+def transform_points(V, log_s, yaw, pitch, roll, t):
+    s = torch.exp(log_s)
+    R = euler_to_matrix(yaw, pitch, roll)  # define for your axis convention
+    return s * (V @ R.T) + t
+\end{lstlisting}
+
+Use \texttt{log\_s} rather than $s$ directly so the scale stays positive. Put tight priors on all angles and scale.
+
+\subsection{Grid-Based SDF Query}
+
+Build SDF grids in shoe coordinates and sample them using \texttt{torch.nn.functional.grid\_sample}. Normalize query coordinates into $[-1,1]^3$ before sampling.
+
+\begin{lstlisting}[style=pythonstyle]
+import torch.nn.functional as F
+
+def sample_grid_3d(grid, xyz, bbox_min, bbox_max):
+    # grid: [1, 1, D, H, W]
+    # xyz: [N, 3] in world/shoe coordinates
+    uvw = 2.0 * (xyz - bbox_min) / (bbox_max - bbox_min) - 1.0
+    # grid_sample expects [Nbatch, Dout, Hout, Wout, 3]
+    query = uvw.view(1, -1, 1, 1, 3)
+    val = F.grid_sample(grid, query, align_corners=True, mode="bilinear")
+    return val.view(-1)
+\end{lstlisting}
+
+Unit-test SDF sign conventions with one point clearly outside the shoe and one point clearly inside the outer mesh. Then lock the convention in code comments.
+
+\subsection{Robust Penalties}
+
+Use softplus barriers or Huberized hinge losses:
+
+\begin{lstlisting}[style=pythonstyle]
+def smooth_hinge(x, beta=20.0):
+    # approximates max(x, 0)
+    return torch.nn.functional.softplus(beta * x) / beta
+
+def huber(x, delta=0.005):
+    ax = x.abs()
+    return torch.where(ax < delta, 0.5 * x * x / delta, ax - 0.5 * delta)
+\end{lstlisting}
+
+For example, containment can be implemented as:
+
+\begin{lstlisting}[style=pythonstyle]
+clearance = sample_grid_3d(cavity_sdf_grid, foot_samples, bbox_min, bbox_max)
+loss_cav = smooth_hinge(m_wall - clearance).mean()
+\end{lstlisting}
+
+\subsection{Plantar Contact Interval}
+
+\begin{lstlisting}[style=pythonstyle]
+def plantar_interval_loss(foot_pts, plantar_idx, footbed_grid, lower, upper, weights):
+    P = foot_pts[plantar_idx]
+    B = sample_heightmap_2d(footbed_grid, P[:, [0, 2]])
+    c = B - P[:, 1]  # confirm sign for +Y-bottom convention
+    lo = lower[plantar_idx]
+    hi = upper[plantar_idx]
+    w = weights[plantar_idx]
+    return (w * (smooth_hinge(lo - c) + smooth_hinge(c - hi))).mean()
+\end{lstlisting}
+
+The sign of $c$ depends on whether the heightmap stores the outsole, insole, or bottom-side coordinate. Before running thousands of shoes, plot $c$ for one known good manual alignment and verify that contact regions have the expected small positive clearance.
+
+\section{Failure Modes and Automatic Detection}
+
+\subsection{Support Extraction Failure}
+
+Symptoms: centerline jumps, footprint is split into multiple large components, yaw is unstable across small threshold changes, or the selected support area is extremely small.
+
+Detection metrics:
+
+\begin{itemize}
+  \item support area divided by shoe footprint area,
+  \item number of connected components,
+  \item centerline curvature outliers,
+  \item yaw difference between thresholds $q=0.95,0.97,0.98$,
+  \item width profile discontinuities.
+\end{itemize}
+
+Automatic response: widen bottom band, relax normal filter, apply projection-space morphology, or fall back to lower 20\% mesh slices rather than face normals.
+
+\subsection{Toe-Spring Failure}
+
+Symptoms: heel looks seated but forefoot penetrates the footbed, or the toe floats far above the toe box/footbed.
+
+Detection metrics:
+
+\begin{itemize}
+  \item forefoot plantar clearance mean and max,
+  \item toe-pad floating fraction,
+  \item estimated toe-spring angle mismatch,
+  \item high loss on $q_{\mathrm{mtp}}$ prior.
+\end{itemize}
+
+Automatic response: enable forefoot hinge, increase toe-spring range, or classify the shoe as rocker/raised-toe style.
+
+\subsection{Wrong Yaw}
+
+Symptoms: one medial/lateral side collides and the opposite side has large slack; length and vertical placement may look correct.
+
+Detection metrics:
+
+\begin{itemize}
+  \item left/right sidewall slack imbalance,
+  \item large $L_{\mathrm{axis}}$,
+  \item multi-start yaw disagreement,
+  \item width profile overfill on only one side.
+\end{itemize}
+
+Automatic response: rerun yaw multi-start, use heel-to-ball centerline instead of full centerline, or downweight noisy toe slices.
+
+\subsection{Wrong Vertical Seating}
+
+Symptoms: foot floats above the footbed or penetrates below it.
+
+Detection metrics:
+
+\begin{itemize}
+  \item plantar support coverage,
+  \item heel clearance median,
+  \item met-head clearance median,
+  \item fraction of plantar samples outside interval.
+\end{itemize}
+
+Automatic response: adjust $a_0$, optimize vertical translation first, and make footbed loss dominate before turning on full SDF containment.
+
+\subsection{Boot/Clog/Slide Style Failure}
+
+Symptoms: boot shaft biases cavity/SDF, clogs lack a heel counter, slides have no full upper, or dorsal contact terms pull the foot into nonsensical places.
+
+Detection metrics:
+
+\begin{itemize}
+  \item shaft height ratio,
+  \item heel counter confidence,
+  \item upper coverage over instep,
+  \item opening confidence,
+  \item dorsal containment confidence.
+\end{itemize}
+
+Automatic response: style-route losses. For slides, reduce heel-counter and dorsal containment terms. For boots, downweight shaft geometry and rely more on lower footbed and forefoot/heel seating. For clogs, use weaker heel seating and stronger footbed/forefoot constraints.
+
+\section{Recommended Outputs Per Shoe}
+
+For each shoe, generate:
+
+\begin{enumerate}
+  \item \texttt{overlay\_side.png}: shoe plus fitted foot from lateral side.
+  \item \texttt{overlay\_top.png}: shoe plus fitted foot from opening/top side.
+  \item \texttt{footprint\_centerline.png}: projected sole footprint and extracted centerline.
+  \item \texttt{footbed\_profile.png}: longitudinal footbed profile and toe-spring estimate.
+  \item \texttt{cross\_sections.png}: heel, waist, ball, instep, and toe slices.
+  \item \texttt{plantar\_clearance\_heatmap.png}: color-coded foot plantar surface.
+  \item \texttt{penetration\_heatmap.png}: foot and shoe collision heatmap.
+  \item \texttt{fit\_metrics.json}: scalar QC metrics.
+  \item \texttt{fit\_status.json}: pass/warn/fail and failure reason.
+\end{enumerate}
+
+A production run should not rely on visual inspection for every shoe, but it should save enough visualizations that failed cases are easy to diagnose.
+
+\begin{thebibliography}{33}
+
+\bibitem{bao-last}
+H. P. Bao et al.,
+``Integrated approach to design and manufacture of shoe lasts for orthopaedic use.''
+ScienceDirect.
+\url{https://www.sciencedirect.com/science/article/abs/pii/0360835294900744}
+
+\bibitem{luximon-last}
+A. Luximon et al.,
+``Shoe-last design innovation for better shoe fitting.''
+ScienceDirect.
+\url{https://www.sciencedirect.com/science/article/abs/pii/S0166361509001365}
+
+\bibitem{cad-last}
+``A computer-aided design system for foot-feature-based shoe last customization.''
+Springer.
+\url{https://link.springer.com/article/10.1007/s00170-009-2087-7}
+
+\bibitem{fitness-lasts}
+``An analysis and evaluation of fitness for shoe lasts and human feet.''
+ResearchGate / source listing.
+\url{https://www.researchgate.net/publication/222023003_An_analysis_and_evaluation_of_fitness_for_shoe_lasts_and_human_feet}
+
+\bibitem{ease-allowance}
+``Customization of shoe last based on 3D design process with adjustable 3D ease allowance.''
+Springer.
+\url{https://link.springer.com/article/10.1007/s00170-022-10427-5}
+
+\bibitem{smplify}
+F. Bogo et al.,
+``SMPLify: 3D Human Pose and Shape from a Single Image.''
+Project page.
+\url{https://smplify.is.tue.mpg.de/}
+
+\bibitem{smplifyx}
+G. Pavlakos et al.,
+``Expressive Body Capture: 3D Hands, Face, and Body from a Single Image'' / SMPLify-X.
+arXiv.
+\url{https://arxiv.org/abs/1904.05866}
+
+\bibitem{prox}
+M. Hassan et al.,
+``Resolving 3D Human Pose Ambiguities with 3D Scene Constraints'' / PROX.
+Project page.
+\url{https://prox.is.tue.mpg.de/}
+
+\bibitem{posa}
+M. Hassan et al.,
+``POSA: Populating 3D Scenes by Learning Human-Scene Interaction.''
+Project page.
+\url{https://posa.is.tue.mpg.de/}
+
+\bibitem{contactopt}
+P. Grady et al.,
+``ContactOpt: Optimizing Contact to Improve Grasps.''
+Project page.
+\url{https://www.pgrady.net/contactopt/}
+
+\bibitem{cpf}
+``CPF: Learning a Contact Potential Field for Modeling the Hand-Object Interaction.''
+arXiv.
+\url{https://arxiv.org/abs/2012.00924}
+
+\bibitem{witana-foot-measurements}
+C. P. Witana et al.,
+``Foot measurements from three-dimensional scans.''
+ScienceDirect.
+\url{https://www.sciencedirect.com/science/article/abs/pii/S0169814106001260}
+
+\bibitem{cad-foot-scan}
+``3D Foot Scan to Custom Shoe Last.''
+CAD Journal PDF.
+\url{https://www.cad-journal.net/files/vol_2/CAD_2%281-4%29_2005_11-18.pdf}
+
+\bibitem{toe-spring}
+``Toe springs affect foot biomechanics.''
+Scientific Reports / Nature.
+\url{https://www.nature.com/articles/s41598-020-71247-9}
+
+\bibitem{rollover}
+``Foot-ground contact / roll-over and foot mechanics.''
+Frontiers in Neurorobotics.
+\url{https://www.frontiersin.org/journals/neurorobotics/articles/10.3389/fnbot.2019.00062/full}
+
+\bibitem{supr-foot}
+SUPR-Foot: articulated foot model with toe joints and contact deformations.
+Project page.
+\url{https://supr.is.tue.mpg.de/}
+
+\bibitem{self-contact}
+``On Self-Contact and Human Pose.''
+CVPR 2021 paper.
+\url{https://openaccess.thecvf.com/content/CVPR2021/papers/Muller_On_Self-Contact_and_Human_Pose_CVPR_2021_paper.pdf}
+
+\bibitem{fe-review}
+Y. Song et al.,
+``Finite element modelling for footwear design and evaluation: A scoping review.''
+ScienceDirect.
+\url{https://www.sciencedirect.com/science/article/pii/S2405844022022289}
+
+\bibitem{virtual-footwear}
+M. J. Ruperez et al.,
+``Contact model, fit process and foot animation for the virtual simulator of the footwear comfort.''
+ScienceDirect.
+\url{https://www.sciencedirect.com/science/article/abs/pii/S0010448509002346}
+
+\bibitem{human-foot-modeling}
+Y. M. Tang et al.,
+``Human foot modeling towards footwear design.''
+ScienceDirect.
+\url{https://www.sciencedirect.com/science/article/abs/pii/S001044851100193X}
+
+\bibitem{sdf-collision}
+``Local Optimization for Robust Signed Distance Field Collision.''
+ACM Digital Library.
+\url{https://dl.acm.org/doi/10.1145/3384538}
+
+\bibitem{sdf-contact}
+M. Macklin,
+``SDF Contact.''
+PDF.
+\url{https://mmacklin.com/sdfcontact.pdf}
+
+\bibitem{trimesh}
+Trimesh documentation: intersections, proximity, and registration.
+\url{https://trimesh.org/};
+\url{https://trimesh.org/trimesh.intersections.html};
+\url{https://trimesh.org/trimesh.proximity.html};
+\url{https://trimesh.org/trimesh.registration.html}
+
+\bibitem{grid-sample}
+PyTorch documentation: \texttt{torch.nn.functional.grid\_sample}.
+\url{https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.grid_sample.html}
+
+\bibitem{adam}
+PyTorch documentation: \texttt{torch.optim.Adam}.
+\url{https://docs.pytorch.org/docs/stable/generated/torch.optim.Adam.html}
+
+\bibitem{lbfgs}
+PyTorch documentation: \texttt{torch.optim.LBFGS}.
+\url{https://docs.pytorch.org/docs/stable/generated/torch.optim.LBFGS.html}
+
+\bibitem{guess-size}
+S. Huang et al.,
+``Guess your size: A hybrid model for footwear size recommendation.''
+ScienceDirect.
+\url{https://www.sciencedirect.com/science/article/abs/pii/S1474034617302367}
+
+\bibitem{measure2shape}
+Z. Zhu et al.,
+``Measure2Shape / A novel footwear customisation framework utilising 3D anthropometric measurements.''
+ScienceDirect.
+\url{https://www.sciencedirect.com/science/article/abs/pii/S0166361525000223}
+
+\bibitem{feature-last}
+``A feature-based shoe-last design and automatic model construction.''
+CAD Journal.
+\url{https://cad-journal.net/files/vol_22/CAD_22%284%29_2025_600-615.pdf}
+
+\bibitem{find}
+``FIND: Parametric foot model / foot fitting related work.''
+arXiv.
+\url{https://arxiv.org/abs/2210.12241}
+
+\bibitem{found}
+``FOUND: Foot optimization / foot reconstruction related work.''
+arXiv.
+\url{https://arxiv.org/abs/2310.18279}
+
+\bibitem{focus}
+``FOCUS: Foot reconstruction / foot model related work.''
+arXiv.
+\url{https://arxiv.org/abs/2502.06367}
+
+\bibitem{self-contact-arxiv}
+L. Muller et al.,
+``On Self-Contact and Human Pose.''
+CVPR 2021.
+\url{https://arxiv.org/abs/2104.03176}
+
+\end{thebibliography}
+
+\end{document}

@@ -1,0 +1,1234 @@
+% Options for packages loaded elsewhere
+\PassOptionsToPackage{unicode}{hyperref}
+\PassOptionsToPackage{hyphens}{url}
+\PassOptionsToPackage{dvipsnames,svgnames,x11names}{xcolor}
+%
+\documentclass[
+  10.5pt,
+]{article}
+\usepackage{amsmath,amssymb}
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{textcomp} % provide euro and other symbols
+\else % if luatex or xetex
+  \usepackage{unicode-math} % this also loads fontspec
+  \defaultfontfeatures{Scale=MatchLowercase}
+  \defaultfontfeatures[\rmfamily]{Ligatures=TeX,Scale=1}
+\fi
+\usepackage{lmodern}
+\ifPDFTeX\else
+  % xetex/luatex font selection
+  \setmainfont[]{DejaVu Serif}
+  \setmonofont[]{Noto Sans Mono}
+\fi
+% Use upquote if available, for straight quotes in verbatim environments
+\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+\IfFileExists{microtype.sty}{% use microtype if available
+  \usepackage[]{microtype}
+  \UseMicrotypeSet[protrusion]{basicmath} % disable protrusion for tt fonts
+}{}
+\makeatletter
+\@ifundefined{KOMAClassName}{% if non-KOMA class
+  \IfFileExists{parskip.sty}{%
+    \usepackage{parskip}
+  }{% else
+    \setlength{\parindent}{0pt}
+    \setlength{\parskip}{6pt plus 2pt minus 1pt}}
+}{% if KOMA class
+  \KOMAoptions{parskip=half}}
+\makeatother
+\usepackage{xcolor}
+\usepackage[margin=0.8in]{geometry}
+\usepackage{color}
+\usepackage{fancyvrb}
+\newcommand{\VerbBar}{|}
+\newcommand{\VERB}{\Verb[commandchars=\\\{\}]}
+\DefineVerbatimEnvironment{Highlighting}{Verbatim}{commandchars=\\\{\}}
+% Add ',fontsize=\small' for more characters per line
+\newenvironment{Shaded}{}{}
+\newcommand{\AlertTok}[1]{\textcolor[rgb]{1.00,0.00,0.00}{\textbf{#1}}}
+\newcommand{\AnnotationTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textbf{\textit{#1}}}}
+\newcommand{\AttributeTok}[1]{\textcolor[rgb]{0.49,0.56,0.16}{#1}}
+\newcommand{\BaseNTok}[1]{\textcolor[rgb]{0.25,0.63,0.44}{#1}}
+\newcommand{\BuiltInTok}[1]{\textcolor[rgb]{0.00,0.50,0.00}{#1}}
+\newcommand{\CharTok}[1]{\textcolor[rgb]{0.25,0.44,0.63}{#1}}
+\newcommand{\CommentTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textit{#1}}}
+\newcommand{\CommentVarTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textbf{\textit{#1}}}}
+\newcommand{\ConstantTok}[1]{\textcolor[rgb]{0.53,0.00,0.00}{#1}}
+\newcommand{\ControlFlowTok}[1]{\textcolor[rgb]{0.00,0.44,0.13}{\textbf{#1}}}
+\newcommand{\DataTypeTok}[1]{\textcolor[rgb]{0.56,0.13,0.00}{#1}}
+\newcommand{\DecValTok}[1]{\textcolor[rgb]{0.25,0.63,0.44}{#1}}
+\newcommand{\DocumentationTok}[1]{\textcolor[rgb]{0.73,0.13,0.13}{\textit{#1}}}
+\newcommand{\ErrorTok}[1]{\textcolor[rgb]{1.00,0.00,0.00}{\textbf{#1}}}
+\newcommand{\ExtensionTok}[1]{#1}
+\newcommand{\FloatTok}[1]{\textcolor[rgb]{0.25,0.63,0.44}{#1}}
+\newcommand{\FunctionTok}[1]{\textcolor[rgb]{0.02,0.16,0.49}{#1}}
+\newcommand{\ImportTok}[1]{\textcolor[rgb]{0.00,0.50,0.00}{\textbf{#1}}}
+\newcommand{\InformationTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textbf{\textit{#1}}}}
+\newcommand{\KeywordTok}[1]{\textcolor[rgb]{0.00,0.44,0.13}{\textbf{#1}}}
+\newcommand{\NormalTok}[1]{#1}
+\newcommand{\OperatorTok}[1]{\textcolor[rgb]{0.40,0.40,0.40}{#1}}
+\newcommand{\OtherTok}[1]{\textcolor[rgb]{0.00,0.44,0.13}{#1}}
+\newcommand{\PreprocessorTok}[1]{\textcolor[rgb]{0.74,0.48,0.00}{#1}}
+\newcommand{\RegionMarkerTok}[1]{#1}
+\newcommand{\SpecialCharTok}[1]{\textcolor[rgb]{0.25,0.44,0.63}{#1}}
+\newcommand{\SpecialStringTok}[1]{\textcolor[rgb]{0.73,0.40,0.53}{#1}}
+\newcommand{\StringTok}[1]{\textcolor[rgb]{0.25,0.44,0.63}{#1}}
+\newcommand{\VariableTok}[1]{\textcolor[rgb]{0.10,0.09,0.49}{#1}}
+\newcommand{\VerbatimStringTok}[1]{\textcolor[rgb]{0.25,0.44,0.63}{#1}}
+\newcommand{\WarningTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textbf{\textit{#1}}}}
+\usepackage{longtable,booktabs,array}
+\usepackage{calc} % for calculating minipage widths
+% Correct order of tables after \paragraph or \subparagraph
+\usepackage{etoolbox}
+\makeatletter
+\patchcmd\longtable{\par}{\if@noskipsec\mbox{}\fi\par}{}{}
+\makeatother
+% Allow footnotes in longtable head/foot
+\IfFileExists{footnotehyper.sty}{\usepackage{footnotehyper}}{\usepackage{footnote}}
+\makesavenoteenv{longtable}
+\setlength{\emergencystretch}{3em} % prevent overfull lines
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\setcounter{secnumdepth}{5}
+\ifLuaTeX
+  \usepackage{selnolig}  % disable illegal ligatures
+\fi
+\usepackage{bookmark}
+\IfFileExists{xurl.sty}{\usepackage{xurl}}{} % add URL line breaks if available
+\urlstyle{same}
+\hypersetup{
+  pdftitle={Pseudo-Last Design for SUPR-Guided Shoe Reconstruction},
+  pdfauthor={Prepared for Abhinay Belde},
+  colorlinks=true,
+  linkcolor={blue},
+  filecolor={Maroon},
+  citecolor={Blue},
+  urlcolor={blue},
+  pdfcreator={LaTeX via pandoc}}
+
+\title{Pseudo-Last Design for SUPR-Guided Shoe Reconstruction}
+\author{Prepared for Abhinay Belde}
+\date{May 31, 2026}
+
+\begin{document}
+\maketitle
+
+{
+\hypersetup{linkcolor=}
+\setcounter{tocdepth}{3}
+\tableofcontents
+}
+\section{Pseudo-Last Design for SUPR-Guided Shoe
+Reconstruction}\label{pseudo-last-design-for-supr-guided-shoe-reconstruction}
+
+\subsection{Design target}\label{design-target}
+
+For your use case, the right target is \textbf{not} an industrial
+manufacturing last and \textbf{not} a literal copy of the SUPR foot. It
+is a \textbf{computational, watertight, smooth interior prior} that
+preserves the hidden sole/interior support region well enough to
+regularize a NeuS-style or G-Shell-style reconstruction when the shoe
+opening hides much of the inner topology. That framing matches the
+literature on both sides of your problem: NeuS reconstructs a zero-level
+SDF from images but notes that severe self-occlusion and thin structures
+remain difficult without stronger geometric constraints, while G-Shell
+explicitly represents open surfaces as islands on a watertight shell
+using a manifold SDF, making a watertight interior-support prior
+especially natural for the hidden parts of a shoe. SUPR is also a better
+anatomical seed than older generic body models because it explicitly
+improves feet, toe motion, and foot deformation under ground contact
+using large-scale body-part and 4D foot scans.
+
+In digital footwear work, the shoe last is treated as the core
+determinant of shoe shape, fit, and volume, and custom-last workflows
+typically align the foot to a heel-based axis, then apply
+\textbf{region-specific ease allowances} and \textbf{cross-sectional
+editing} rather than copying raw anatomy vertex-for-vertex. That is
+exactly the right design philosophy here: treat the SUPR foot as the
+anatomical low-frequency prior, and build a smoother, more shoe-like
+pseudo-last that is intentionally biased toward stable hidden topology.
+
+My recommendation is therefore:
+
+\textbf{Use a section-based pseudo-last pipeline.}\\
+Preserve the plantar support geometry and overall hindfoot/forefoot
+volume cues from the aligned SUPR foot, but replace the literal
+dorsal/toe anatomy with a smoother last-like upper envelope, then
+convert that mesh into a watertight SDF/occupancy prior for shell and
+mSDF supervision.
+
+\subsection{Why a last is not a foot}\label{why-a-last-is-not-a-foot}
+
+A real shoe last is a \textbf{rigid shaping tool}, not a literal foot
+twin. Footwear references and last-design papers describe the last as
+the object that determines shoe style, fit, and internal volume, and
+last-processing papers explicitly note that a scanned foot must
+typically be \textbf{adjusted} before it matches last conventions
+because footwear includes features such as toe spring, heel height, and
+intentionally distributed ease. In other words, the last is already a
+geometric abstraction of the foot, with added design bias.
+
+A foot, by contrast, is articulated, compliant, and dynamically
+changing. Dynamic foot-shape studies show that foot morphology changes
+under loading; safety-shoe and walking studies report practically
+relevant changes in width and girth between static and dynamic
+conditions, and 4D statistical models capture both inter-person and
+within-gait variation. That matters because copying the bare anatomical
+foot too faithfully will overfit the wrong signal in exactly the regions
+that should instead become a smoother shoe cavity.
+
+The forefoot makes this especially clear. Toe-box studies show that shoe
+toe-box shape and volume materially affect dorsal and plantar forefoot
+pressures, with sharper or more constrained toe regions increasing
+pressure in sensitive areas. Put bluntly: \textbf{individual toes are
+anatomically real, but they are not the right topology for a sneaker
+toe-box prior}.
+
+A final point is population variation. Large-scale foot-scan analyses
+and footwear-focused reviews show substantial differences across sex and
+region, and the review literature is explicit that women's feet should
+not be treated as scaled-down men's feet. For your problem, the
+implication is not that you need sex-specific last engineering on day
+one, but that a good pseudo-last should be \textbf{parametric and
+smoothable}, not hard-coded around one raw foot surface.
+
+\subsection{Anatomy to preserve and anatomy to
+modify}\label{anatomy-to-preserve-and-anatomy-to-modify}
+
+The simplest useful rule is this:
+
+\textbf{Preserve low-frequency, support-relevant anatomy. Smooth
+high-frequency, shoe-hostile anatomy.}
+
+The parts I would preserve are the \textbf{plantar heel}, \textbf{ball
+region}, \textbf{general forefoot spread}, \textbf{overall instep dome},
+\textbf{heel bulb / calcaneal back volume}, and a \textbf{moderated
+medial arch uplift}. Those are the features most closely tied to
+support, contact, and functional fit in the footwear and orthotic
+literature, and they are exactly the kinds of landmarks and measurements
+most foot-shape pipelines focus on: heel point, toe point, ball
+landmarks, arch region, dorsal height, midfoot width, and girths.
+Plantar-shape studies also show that weight-bearing plantar geometry
+matters for support design, so preserving bottom shape in some form is
+important.
+
+The parts I would deliberately smooth or remove are the
+\textbf{shank/leg above the ankle}, \textbf{separate toes},
+\textbf{sharp metatarsal-head bumps}, \textbf{malleolar/ankle
+prominences}, and any small dorsum/navicular protrusions that create
+local waviness without adding useful support semantics for a closed
+sneaker. That choice is consistent with section-based last workflows and
+with ease-allowance approaches that distribute fit volume smoothly
+across last regions rather than preserving every anatomical protrusion.
+
+So, in practical terms:
+
+\begin{itemize}
+\tightlist
+\item
+  \textbf{Keep:} plantar support shape, hindfoot cup volume, forefoot
+  width trend, instep height trend.
+\item
+  \textbf{Soften:} arch details into a clean midfoot sweep.
+\item
+  \textbf{Merge:} toes into one toe-box mass.
+\item
+  \textbf{Tighten:} upper heel slightly for hold.
+\item
+  \textbf{Delete:} anything above the intended collar/opening zone.
+\end{itemize}
+
+That gives you a prior that is anatomically anchored where it matters
+and topologically conservative where image supervision is weak.
+
+\subsection{Mesh construction
+algorithm}\label{mesh-construction-algorithm}
+
+\subsubsection{Preprocess and crop the SUPR
+foot}\label{preprocess-and-crop-the-supr-foot}
+
+Use the aligned neutral SUPR right foot as the starting mesh \(M_f\).
+Because your shoes are already normalized, operate entirely in
+normalized coordinates and define the foot length
+
+\[
+L_f = x_{\max}(M_f) - x_{\min}(M_f).
+\]
+
+I recommend estimating a \textbf{leg axis} from the rear-top vertex
+cluster rather than using a naive axis-aligned clip. If SUPR joint data
+are available, use the ankle joint and local shank axis directly;
+otherwise, estimate the axis by PCA over vertices in the rearfoot and
+upper-shank cluster. Then sweep a family of planes orthogonal to that
+axis near the ankle and pick the plane whose section perimeter is
+minimal. This removes the leg above the ankle much more cleanly than
+clipping by \(x=\text{const}\). That is consistent with footwear
+alignment literature, which emphasizes robust reference axes and warns
+that simple heel-to-toe alignment can be unstable when toe geometry is
+irregular.
+
+After that crop, keep the foot-side component and triangulate a
+temporary cap over the cut boundary. This temporary cap is only for
+downstream section extraction and SDF cleanup; it does not need to be
+final-quality.
+
+\subsubsection{Build a shoe-constrained centerline and width
+profile}\label{build-a-shoe-constrained-centerline-and-width-profile}
+
+Even if you already have a support centerline, I would recompute a
+\textbf{sectional centerline} from the support footprint as a
+consistency check.
+
+At each slice \(x_i\), intersect the support footprint with the line
+\(x=x_i\). Let the largest connected interval be
+
+\[
+I_i = [z_L(x_i), z_R(x_i)].
+\]
+
+Define the raw center and support width as
+
+\[
+c_i^0 = \frac{z_L(x_i) + z_R(x_i)}{2}, \qquad
+w_i^0 = z_R(x_i)-z_L(x_i).
+\]
+
+Then smooth both with cubic smoothing splines or a discrete
+second-derivative regularizer:
+
+\[
+c = \arg\min_{\tilde c}\sum_i \left(\tilde c(x_i)-c_i^0\right)^2 + \lambda_c \sum_i (\Delta^2 \tilde c_i)^2,
+\]
+
+\[
+w = \arg\min_{\tilde w}\sum_i \left(\tilde w(x_i)-w_i^0\right)^2 + \lambda_w \sum_i (\Delta^2 \tilde w_i)^2.
+\]
+
+Because your shoes are already in a heel-to-toe coordinate frame, this
+x-monotone formulation is simpler and more stable than a full
+medial-axis skeleton for normal sneakers. Foot-measurement and
+retail-scan pipelines use essentially this kind of axis/outline logic
+when extracting robust length, width, and heel-width measurements.
+
+\subsubsection{Preserve the plantar shape using the footbed and the SUPR
+arch}\label{preserve-the-plantar-shape-using-the-footbed-and-the-supr-arch}
+
+Let \(B(x,z)\) be your pseudo-footbed surface in the given coordinates,
+where larger \(y\) means more downward/closer to the sole. Let
+\(y_f^{pl}(x,z)\) be the plantar surface of the cropped SUPR foot after
+local interpolation.
+
+You do \textbf{not} want to flatten the pseudo-last bottom to the
+footbed everywhere, because that erases useful arch information. But you
+also do \textbf{not} want to use the bare foot plantar surface directly,
+because that may float unrealistically relative to the shoe support
+geometry.
+
+A useful blend is:
+
+\[
+y_b(x,z) = B(x,z) - \rho_b(s)\,[B(x,z)-y_f^{pl}(x,z)]_+,
+\qquad s=\frac{x-x_h}{L_f},
+\]
+
+where \([u]_+=\max(u,0)\), \(x_h=x_{\min}(M_f)\), and \(\rho_b(s)\) is
+an arch-preservation weight that is strong in the midfoot and weak in
+heel/toe support zones.
+
+A good default is a Gaussian-like arch weight:
+
+\[
+\rho_b(s)=\rho_{\text{arch}}\exp\!\left(-\frac{(s-0.45)^2}{2(0.12)^2}\right).
+\]
+
+This gives you a bottom surface that follows the shoe-derived footbed in
+supported regions while retaining moderated arch lift from the
+anatomical foot in the midfoot. Plantar-shape studies under different
+weight-bearing conditions strongly support the idea that the plantar
+surface should be treated as a controlled design variable in anything
+support-related.
+
+\subsubsection{Extract cross-sections and merge the
+toes}\label{extract-cross-sections-and-merge-the-toes}
+
+Now slice the cropped foot mesh at \(N_x\) equally spaced \(x\)-planes.
+Equal-interval sectioning is standard in digital last design; classic
+foot-to-last work even describes 1\% foot-length sections, and more
+recent CAD work still builds shoe lasts from regular cross-sections and
+characteristic points.
+
+For each slice \(x_i\):
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  Intersect the mesh with the plane \(x=x_i\).
+\item
+  Convert the resulting contour to local slice coordinates \((\xi, h)\),
+  where \[
+  \xi = z-c(x_i), \qquad h = y_b(x_i,z)-y.
+  \] Here \(h\) is height above the last bottom.
+\item
+  Rasterize the slice to a binary mask \(M_i(\xi,h)\).
+\end{enumerate}
+
+For the toe region, do \textbf{not} use the raw mask directly. Instead,
+starting at a normalized longitudinal position \(s_{\text{merge}}\),
+apply morphological closing with an elliptical kernel whose radii
+increase toward the toe tip:
+
+\[
+M_i' = (M_i \oplus K_i)\ominus K_i.
+\]
+
+This closes the inter-toe gaps and turns the literal toe anatomy into
+one continuous toe-box section. It is the simplest robust way to enforce
+``one toe-box volume'' without hand-sculpting. After closing, extract
+the contour of \(M_i'\) and fit a smooth superellipse or resampled
+B-spline.
+
+\subsubsection{Add toe allowance, heel hold, and optional side/top
+inflation}\label{add-toe-allowance-heel-hold-and-optional-sidetop-inflation}
+
+Compute a smoothed raw foot half-width \(a_f(x)\) and raw foot height
+\(H_f(x)\) from the post-processed slice masks, then regularize them
+along \(x\) with the same second-derivative smoothing used for the
+centerline.
+
+Then define target allowances:
+
+\[
+\delta_x = \alpha_t L_f
+\]
+
+for toe length,
+
+\[
+\delta_w(s)=W_f\left(\alpha_{mid} g(s;0.30,0.55) + \alpha_{fore} g(s;0.60,0.85)\right)
+\]
+
+for side clearance, and
+
+\[
+\delta_h(s)=H_f(s)\left(\beta_{vamp} g(s;0.35,0.65)+\beta_{toe} g(s;0.72,0.95)\right)
+\]
+
+for top clearance, where \(g(s;a,b)\) is a smoothstep profile.
+
+Then clamp the width to the shoe support geometry:
+
+\[
+a_t(x)= \min\!\left(\eta_s\,\frac{w(x)}{2},\; a_f(x)+\delta_w(s)\right),
+\]
+
+\[
+H(x)=H_f(x)+\delta_h(s).
+\]
+
+The factor \(\eta_s<1\) is important when your support profile comes
+from an outer shoe mesh rather than the true inner cavity.
+
+For the upper envelope, use a superellipse section:
+
+\[
+H_{\text{shoe}}(x,\xi)=H(x)\left[1-\left|\frac{\xi}{a_t(x)}\right|^{p(s)}\right]_+^{1/q(s)},
+\]
+
+\[
+y_u(x,z) = y_b(x,z) - H_{\text{shoe}}(x, z-c(x)).
+\]
+
+Then add a \textbf{height-dependent heel-hold contraction} in the
+hindfoot by shrinking the slice laterally after section generation:
+
+\[
+z \leftarrow c(x) + \big(z-c(x)\big)\Big(1-\gamma_h(s)\tau^\nu\Big),
+\qquad
+\tau=\frac{y_b(x,z)-y}{H(x)},
+\]
+
+with \(\gamma_h(s)\) nonzero only in the hindfoot. This keeps the
+plantar heel width stable while tightening the upper heel volume, which
+is much closer to what a sneaker backpart actually needs.
+
+For toe allowance, append a short extension cap of length \(\delta_x\)
+beyond the anatomical toe tip and taper width/height smoothly to zero,
+for example with a hemispheroidal taper:
+
+\[
+a_t(x_t+u)=a_t(x_t)\sqrt{1-(u/\delta_x)^2},
+\qquad
+H(x_t+u)=H(x_t)\sqrt{1-(u/\delta_x)^2},
+\quad u\in[0,\delta_x].
+\]
+
+\subsubsection{Loft, cap, remesh, and do an SDF cleanup
+round-trip}\label{loft-cap-remesh-and-do-an-sdf-cleanup-round-trip}
+
+After generating all contours:
+
+\begin{itemize}
+\tightlist
+\item
+  resample every contour to the same point count \(N_\theta\),
+\item
+  loft adjacent slices with a strip of triangles,
+\item
+  triangulate the toe cap,
+\item
+  triangulate the ankle-opening cap from the crop contour,
+\item
+  isotropically remesh,
+\item
+  smooth only non-plantar vertices,
+\item
+  then do one \textbf{SDF round-trip}: mesh \(\rightarrow\) signed grid
+  \(\rightarrow\) Marching Cubes.
+\end{itemize}
+
+That last step is the easiest way to remove small self-intersections and
+guarantee a watertight output. Because this pseudo-last is
+computational, not manufacturing-grade, the SDF round-trip is a feature,
+not a bug.
+
+\subsubsection{Reference pseudocode}\label{reference-pseudocode}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\KeywordTok{def}\NormalTok{ build\_pseudolast(}
+\NormalTok{    supr\_mesh,}
+\NormalTok{    foot\_transform,}
+\NormalTok{    footbed\_B,           }\CommentTok{\# callable B(x, z)}
+\NormalTok{    support\_footprint,   }\CommentTok{\# x{-}z mask or interval function}
+\NormalTok{    N\_x}\OperatorTok{=}\DecValTok{128}\NormalTok{,}
+\NormalTok{    N\_theta}\OperatorTok{=}\DecValTok{128}
+\NormalTok{):}
+\NormalTok{    M }\OperatorTok{=}\NormalTok{ transform\_mesh(supr\_mesh, foot\_transform)}
+
+    \CommentTok{\# {-}{-}{-} crop leg above ankle {-}{-}{-}}
+\NormalTok{    leg\_axis }\OperatorTok{=}\NormalTok{ estimate\_leg\_axis\_pca(M)}
+\NormalTok{    crop\_plane }\OperatorTok{=}\NormalTok{ choose\_min\_perimeter\_ankle\_plane(M, leg\_axis)}
+\NormalTok{    M }\OperatorTok{=}\NormalTok{ cut\_keep\_foot\_side(M, crop\_plane)}
+
+    \CommentTok{\# {-}{-}{-} support centerline / width {-}{-}{-}}
+\NormalTok{    xs }\OperatorTok{=}\NormalTok{ np.linspace(xmin(M), xmax(M), N\_x)}
+\NormalTok{    c\_raw, w\_raw }\OperatorTok{=}\NormalTok{ sectional\_centerline\_width(support\_footprint, xs)}
+\NormalTok{    c }\OperatorTok{=}\NormalTok{ smooth\_profile(c\_raw, lam}\OperatorTok{=}\FloatTok{1e{-}3}\NormalTok{)}
+\NormalTok{    w }\OperatorTok{=}\NormalTok{ smooth\_profile(w\_raw, lam}\OperatorTok{=}\FloatTok{1e{-}3}\NormalTok{)}
+
+    \CommentTok{\# {-}{-}{-} plantar bottom from footbed + moderated arch preservation {-}{-}{-}}
+\NormalTok{    y\_bottom }\OperatorTok{=}\NormalTok{ build\_bottom\_surface(M, footbed\_B, c, arch\_strength}\OperatorTok{=}\FloatTok{0.75}\NormalTok{)}
+
+    \CommentTok{\# {-}{-}{-} extract and clean sections {-}{-}{-}}
+\NormalTok{    sections }\OperatorTok{=}\NormalTok{ []}
+    \ControlFlowTok{for}\NormalTok{ x }\KeywordTok{in}\NormalTok{ xs:}
+\NormalTok{        contour }\OperatorTok{=}\NormalTok{ mesh\_section(M, x)}
+\NormalTok{        mask }\OperatorTok{=}\NormalTok{ rasterize\_section(contour, center\_z}\OperatorTok{=}\NormalTok{c(x), bottom}\OperatorTok{=}\NormalTok{y\_bottom)}
+\NormalTok{        s }\OperatorTok{=}\NormalTok{ (x }\OperatorTok{{-}}\NormalTok{ xs[}\DecValTok{0}\NormalTok{]) }\OperatorTok{/}\NormalTok{ (xs[}\OperatorTok{{-}}\DecValTok{1}\NormalTok{] }\OperatorTok{{-}}\NormalTok{ xs[}\DecValTok{0}\NormalTok{])}
+
+        \ControlFlowTok{if}\NormalTok{ s }\OperatorTok{\textgreater{}=} \FloatTok{0.74}\NormalTok{:}
+\NormalTok{            mask }\OperatorTok{=}\NormalTok{ morphological\_close(mask, kernel}\OperatorTok{=}\NormalTok{toe\_kernel(s))}
+
+\NormalTok{        a\_f, H\_f }\OperatorTok{=}\NormalTok{ fit\_section\_stats(mask)}
+\NormalTok{        a\_t, H\_t }\OperatorTok{=}\NormalTok{ apply\_clearances(}
+\NormalTok{            a\_f}\OperatorTok{=}\NormalTok{a\_f,}
+\NormalTok{            H\_f}\OperatorTok{=}\NormalTok{H\_f,}
+\NormalTok{            support\_half\_width}\OperatorTok{=}\FloatTok{0.93} \OperatorTok{*} \FloatTok{0.5} \OperatorTok{*}\NormalTok{ w(x),}
+\NormalTok{            s}\OperatorTok{=}\NormalTok{s}
+\NormalTok{        )}
+
+\NormalTok{        contour }\OperatorTok{=}\NormalTok{ superellipse\_contour(a\_t, H\_t, p}\OperatorTok{=}\NormalTok{section\_p(s), q}\OperatorTok{=}\NormalTok{section\_q(s))}
+\NormalTok{        contour }\OperatorTok{=}\NormalTok{ apply\_heel\_hold(contour, s}\OperatorTok{=}\NormalTok{s, shrink}\OperatorTok{=}\FloatTok{0.05}\NormalTok{)}
+\NormalTok{        contour }\OperatorTok{=}\NormalTok{ map\_section\_to\_world(contour, x}\OperatorTok{=}\NormalTok{x, center\_z}\OperatorTok{=}\NormalTok{c(x), bottom}\OperatorTok{=}\NormalTok{y\_bottom)}
+\NormalTok{        sections.append(contour)}
+
+\NormalTok{    sections }\OperatorTok{=}\NormalTok{ add\_toe\_extension\_cap(sections, toe\_allowance}\OperatorTok{=}\FloatTok{0.05} \OperatorTok{*}\NormalTok{ foot\_length(M))}
+\NormalTok{    mesh }\OperatorTok{=}\NormalTok{ loft\_sections(sections)}
+\NormalTok{    mesh }\OperatorTok{=}\NormalTok{ cap\_openings(mesh)         }\CommentTok{\# ankle cap + remaining caps}
+\NormalTok{    mesh }\OperatorTok{=}\NormalTok{ smooth\_nonplantar(mesh)}
+\NormalTok{    mesh }\OperatorTok{=}\NormalTok{ sdf\_roundtrip(mesh, resolution}\OperatorTok{=}\DecValTok{192}\NormalTok{)}
+
+    \ControlFlowTok{return}\NormalTok{ mesh}
+\end{Highlighting}
+\end{Shaded}
+
+\subsection{Mathematical formulation and normalized
+defaults}\label{mathematical-formulation-and-normalized-defaults}
+
+\subsubsection{Coordinates and section
+model}\label{coordinates-and-section-model}
+
+Use your coordinate convention directly:
+
+\begin{itemize}
+\tightlist
+\item
+  \(+X\): heel \(\rightarrow\) toe
+\item
+  \(+Y\): sole/down
+\item
+  \(-Y\): opening/up
+\item
+  \(+Z\): width
+\end{itemize}
+
+Define the normalized longitudinal coordinate
+
+\[
+s = \frac{x-x_h}{L_f}, \qquad L_f=x_t-x_h.
+\]
+
+Define height above the bottom reference using your footbed:
+
+\[
+h(x,y,z) = y_b(x,z)-y,
+\]
+
+where \(y_b\) is the blended plantar surface from the previous section.
+
+With this convention, the pseudo-last volume can be represented
+slice-wise as
+
+\[
+\Omega_{\text{last}}=\Big\{(x,y,z)\;:\; x\in[x_h,\,x_t+\delta_x],\;
+y_u(x,z)\le y \le y_b(x,z)\Big\},
+\]
+
+and \(y_u\) is the smoother shoe-like upper envelope built from section
+width and height profiles.
+
+The profiles that matter most are:
+
+\begin{itemize}
+\tightlist
+\item
+  centerline \(c(x)\),
+\item
+  half-width \(a_t(x)\),
+\item
+  section height \(H(x)\),
+\item
+  arch-preservation weight \(\rho_b(s)\),
+\item
+  heel-hold strength \(\gamma_h(s)\).
+\end{itemize}
+
+All of them should be regularized along \(x\) by curvature penalties,
+not just smoothed ad hoc. In practice, the discrete objective
+
+\[
+f^{sm}=\arg\min_f \sum_i (f_i-\hat f_i)^2 + \lambda \sum_i (\Delta^2 f_i)^2
+\]
+
+works well for \(f\in\{c,w,a_f,H_f\}\).
+
+\subsubsection{Recommended normalized
+priors}\label{recommended-normalized-priors}
+
+Because your meshes are normalized, I would treat all defaults as
+\textbf{dimensionless fractions} of foot length, foot width, or local
+sectional height. The toe-length numbers below are anchored to
+footwear-fit literature that commonly recommends about 10-15 mm of extra
+length for adults; the width-related values are engineering priors
+informed by the literature on dynamic foot widening, pliable fit, and
+the fact that footwear fit still lacks one universal quantitative
+standard.
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2000}}
+  >{\raggedleft\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2667}}
+  >{\raggedleft\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2667}}
+  >{\raggedleft\arraybackslash}p{(\columnwidth - 6\tabcolsep) * \real{0.2667}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Quantity
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedleft
+Symbol
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedleft
+Recommended range
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedleft
+Good default
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Toe length allowance & \(\alpha_t\) & \(0.040L_f\) to \(0.060L_f\) &
+\(0.050L_f\) \\
+Toe merge start & \(s_{\text{merge}}\) & 0.72 to 0.78 & 0.74 \\
+Full toe-box by & \(s_{\text{box}}\) & 0.86 to 0.92 & 0.88 \\
+Midfoot side clearance & \(\alpha_{mid}\) & \(0.010W_f\) to \(0.030W_f\)
+& \(0.020W_f\) \\
+Forefoot side clearance & \(\alpha_{fore}\) & \(0.030W_f\) to
+\(0.060W_f\) & \(0.040W_f\) \\
+Vamp / top clearance & \(\beta_{vamp}\) & 0.04 to 0.08 of local height &
+0.05 \\
+Toe vertical clearance & \(\beta_{toe}\) & 0.03 to 0.07 of local height
+& 0.04 \\
+Heel clearance & \(\alpha_{heel}\) & 0.01 to 0.03 of local heel width &
+0.015 \\
+Heel-hold upper shrink & \(\gamma_h\) & 0.03 to 0.08 of hindfoot upper
+width & 0.05 \\
+Arch/bottom preservation & \(\rho_{\text{arch}}\) & 0.60 to 0.90 &
+0.75 \\
+Support-to-inner width scale & \(\eta_s\) & 0.90 to 0.96 & 0.93 \\
+Forefoot superellipse exponent & \(p\) & 3.0 to 4.5 & 3.5 \\
+Vertical superellipse exponent & \(q\) & 1.8 to 2.8 & 2.2 \\
+\end{longtable}
+
+A few practical notes matter here.
+
+First, \textbf{toe allowance should be longer than side allowance is
+wide}. If you inflate width aggressively but barely extend length, the
+pseudo-last becomes bulbous rather than sneaker-like.
+
+Second, \textbf{heel clearance should stay meaningfully smaller than
+forefoot side clearance}. Otherwise the prior will teach the shell that
+heel looseness is acceptable, which is usually the opposite of what
+stabilizes topology in a low-top shoe.
+
+Third, if your support width was extracted from the \textbf{outer} shoe
+mesh, start with \(\eta_s \approx 0.93\). If it came from a cleaner
+estimate of the footbed/interior support region, you can move it toward
+0.96.
+
+\subsection{SDF conversion and mSDF-guided
+training}\label{sdf-conversion-and-msdf-guided-training}
+
+\subsubsection{Convert the pseudo-last mesh to an SDF or occupancy
+field}\label{convert-the-pseudo-last-mesh-to-an-sdf-or-occupancy-field}
+
+Once you have a watertight pseudo-last mesh \(M_L\), convert it to a
+continuous field on the same domain as your reconstruction model.
+
+For any query point \(p\), define the unsigned distance
+
+\[
+d_u(p) = \min_{t\in M_L} \|p-\Pi_t(p)\|_2,
+\]
+
+where \(\Pi_t(p)\) is the closest point on triangle \(t\). For the sign,
+if the mesh is watertight, ray parity is fine; if you want robustness to
+small imperfections after lofting, use a generalized or fast
+winding-number test. That is a standard geometry-processing choice and
+works well for voxelization and signing distances.
+
+Then define
+
+\[
+d_L(p)=\text{sign}(p)\,d_u(p),
+\]
+
+and a truncated field
+
+\[
+\tilde d_L(p)=\mathrm{clip}(d_L(p),-\tau,\tau),
+\qquad \tau \in [0.03L_f,\;0.06L_f].
+\]
+
+If you need occupancy instead of SDF, use either
+
+\[
+o_L(p)=\mathbf{1}[d_L(p)\le 0]
+\]
+
+or a differentiable soft occupancy
+
+\[
+\hat o_L(p)=\sigma\!\left(-\frac{d_L(p)}{\sigma_o}\right),
+\qquad \sigma_o \approx 0.01L_f.
+\]
+
+DeepSDF and Occupancy Networks are still the right conceptual references
+here: continuous SDFs give you a boundary plus inside/outside semantics,
+while occupancy fields give you a smooth classifier at arbitrary
+resolution.
+
+\subsubsection{Use the pseudo-last in shell training
+first}\label{use-the-pseudo-last-in-shell-training-first}
+
+For G-Shell-style training, I would use the pseudo-last in \textbf{two
+stages}.
+
+The first stage regularizes the \textbf{watertight shell SDF}
+\(d_\theta\). Assume the usual sign convention that \(d_\theta(p)<0\)
+means the point lies inside the current shell volume.
+
+Sample points on the pseudo-last surface \(S_L\), and enforce that the
+pseudo-last sits strictly inside the learned shell by a margin
+\(m_{in}\):
+
+\[
+\mathcal L_{\text{contain}}
+=
+\mathbb E_{p\sim S_L}
+\left[
+\mathrm{softplus}(d_\theta(p)+m_{in})
+\right].
+\]
+
+A good starting margin is \(m_{in}=0.01L_f\).
+
+Then define pseudo-last support bands:
+
+\[
+\mathcal B_{\text{plantar}}
+=
+\{p\in S_L : h(p)\le \tau_p\},
+\]
+
+\[
+\mathcal B_{\text{side}}
+=
+\{p\in S_L : \tau_p < h(p)\le \tau_s,\; |z-c(x)|>0.7a_t(x)\}.
+\]
+
+These are the hidden regions you most want to preserve: inner sole,
+lower sidewall, heel cup.
+
+Now softly anchor the shell near those bands:
+
+\[
+\mathcal L_{\text{band}}
+=
+\mathbb E_{p\sim \mathcal B_{\text{plantar}}\cup\mathcal B_{\text{side}}}
+\left[
+|d_\theta(p)+m_b|
+\right],
+\]
+
+where \(m_b\) is a small desired shell offset. This prevents the
+watertight shell from collapsing inward in the unseen sole/interior
+zone.
+
+\subsubsection{Then use the pseudo-last to classify which shell areas
+should stay active in
+mSDF}\label{then-use-the-pseudo-last-to-classify-which-shell-areas-should-stay-active-in-msdf}
+
+G-Shell's key idea is to represent an open surface as an island on a
+watertight shell via an mSDF. So after the shell exists, use the
+pseudo-last to decide which shell neighborhoods are
+\textbf{topologically valuable} and should be kept active.
+
+Let \(q_i\) be shell vertices and \(m_\theta(q_i)\) the learned manifold
+SDF value on the shell. Define a soft keep probability
+
+\[
+\hat t_i = \sigma\!\left(-\frac{m_\theta(q_i)}{\beta}\right),
+\]
+
+where lower mSDF means ``keep this shell area active.''
+
+Now create pseudo-labels from visible shoe data and pseudo-last support
+bands:
+
+\[
+t_i
+=
+\mathbf 1\Big[
+d(q_i,S_{\text{vis}})<\tau_{\text{vis}}
+\;\;\lor\;\;
+d(q_i,\mathcal B_{\text{plantar}}\cup\mathcal B_{\text{side}})<\tau_L
+\Big].
+\]
+
+Then train with
+
+\[
+\mathcal L_{\text{keep}}
+=
+-\frac{1}{N}\sum_i
+\left[
+t_i \log \hat t_i + (1-t_i)\log(1-\hat t_i)
+\right].
+\]
+
+Add a shell-graph smoothness term to avoid fragmented islands:
+
+\[
+\mathcal L_{\text{smooth}}
+=
+\frac{1}{|E|}\sum_{(i,j)\in E}
+w_{ij}\,|m_\theta(q_i)-m_\theta(q_j)|.
+\]
+
+The complete regularizer is then
+
+\[
+\mathcal L_{\text{pseudo-last}}
+=
+\lambda_c \mathcal L_{\text{contain}}
++\lambda_b \mathcal L_{\text{band}}
++\lambda_k \mathcal L_{\text{keep}}
++\lambda_s \mathcal L_{\text{smooth}}.
+\]
+
+In practice, I would use a curriculum:
+
+\begin{itemize}
+\tightlist
+\item
+  \textbf{early:} larger \(\lambda_c,\lambda_b\) so the shell forms
+  around the last and visible outside;
+\item
+  \textbf{mid:} increase \(\lambda_k\) so the mSDF preserves
+  support-related islands;
+\item
+  \textbf{late:} decay all pseudo-last weights and let image evidence
+  dominate where it exists.
+\end{itemize}
+
+This is directly analogous in spirit to clothed-human reconstruction
+pipelines that use a parametric body model to regularize unseen regions
+without forcing the final surface to equal the template. PaMIR
+conditions an implicit field on a parametric body model; ICON uses an
+estimated SMPL body to guide occluded normal prediction and implicit
+reconstruction; SeSDF explicitly deforms an SMPL-X-derived SDF to
+recover the clothed surface.
+
+\subsection{Failure cases and
+validation}\label{failure-cases-and-validation}
+
+The most common failure mode will be \textbf{bad foot-in-shoe
+alignment}. If the aligned SUPR foot is too far forward, your toe
+allowance becomes meaningless; if it is too low or too wide, the
+pseudo-last will overconstrain the shell and hallucinate impossible
+interior volume. This should be checked before any lofting or SDF
+conversion.
+
+The next failure mode is \textbf{using support width as if it were
+actual inner width}. Many shoe meshes expose outsole/support shape more
+reliably than the interior cavity, so directly using the raw support
+width can overestimate the true inner width. That is why I recommend the
+\(\eta_s\) clamp and why the pseudo-last should be a \textbf{soft
+prior}, not a hard cavity template.
+
+There are also failure modes from over-sculpting:
+
+\begin{itemize}
+\tightlist
+\item
+  too much toe merge makes the forefoot clownish;
+\item
+  too much arch preservation makes flat sneakers unrealistically hollow;
+\item
+  too much heel shrink creates self-intersections or an implausibly
+  narrow backpart;
+\item
+  too much top inflation makes the shell over-thick and weakens
+  visible-view supervision;
+\item
+  insufficient profile smoothing causes slice-to-slice ripples and
+  unstable SDF signs.
+\end{itemize}
+
+Population variation is a quieter but real failure source. Large scan
+studies and methodological reviews show foot-shape variation across sex
+and regions, so one single fixed setting will not behave equally well
+across all shoes and target feet. That is another reason to keep all
+allowances normalized and learnable/tunable.
+
+For validation, I would use a small but strict battery.
+
+\textbf{Geometry diagnostics}
+
+\begin{itemize}
+\tightlist
+\item
+  \textbf{Plantar RMSE to footbed} \[
+  \mathrm{RMSE}_{plantar}
+  =
+  \sqrt{
+  \frac{1}{|S_b|}
+  \sum_{(x,z)\in S_b}
+  \left(y_b(x,z)-B(x,z)\right)^2
+  }.
+  \]
+\item
+  \textbf{Arch lift profile} along the centerline: \[
+  a_{\text{arch}}(x)=B(x,c(x))-y_b(x,c(x)).
+  \]
+\item
+  \textbf{Support conformity ratio} \[
+  r_w(x)=\frac{2a_t(x)}{w(x)}.
+  \] This should stay below your chosen \(\eta_s\) cap.
+\item
+  \textbf{Profile roughness} \[
+  R_a=\sum_i (\Delta^2 a_i)^2,\qquad
+  R_H=\sum_i (\Delta^2 H_i)^2.
+  \] Sudden spikes indicate loft instability.
+\end{itemize}
+
+\textbf{Topology diagnostics}
+
+\begin{itemize}
+\tightlist
+\item
+  the mesh must be watertight,
+\item
+  no self-intersections,
+\item
+  exactly one connected toe-box component in slices after
+  \(s_{\text{box}}\),
+\item
+  stable slice ordering and no contour flips.
+\end{itemize}
+
+\textbf{Containment diagnostics}
+
+\begin{itemize}
+\tightlist
+\item
+  fraction of pseudo-last surface points lying inside the coarse outer
+  shoe envelope,
+\item
+  histogram of shell-to-last distances in the plantar and heel bands,
+\item
+  color map of clearance over the pseudo-last surface.
+\end{itemize}
+
+\textbf{Visualization diagnostics}
+
+The single most useful visualization is a stack of sectional overlays
+every 5\% of foot length. Plot, in each slice:
+
+\begin{itemize}
+\tightlist
+\item
+  raw SUPR section,
+\item
+  toe-merged/smoothed section,
+\item
+  pseudo-last section,
+\item
+  support interval \([z_L,z_R]\),
+\item
+  local footbed \(B\).
+\end{itemize}
+
+If those overlays look right, the 3D mesh almost always looks right. If
+they do not, no amount of mesh smoothing will save you.
+
+A broader caveat from the footwear-fit literature is that there is still
+no universally accepted single metric of shoe fit, so section
+diagnostics plus explicit dimension/error plots are more trustworthy
+than a single scalar ``fit score.''
+
+\subsection{Prior art and reading
+list}\label{prior-art-and-reading-list}
+
+The most relevant \textbf{shoe-last and foot-to-last} papers for your
+project are \emph{A Deformation Method for Shoe Last Customization} by
+Leng and Du, which uses aligned foot/last distance maps; \emph{A CAD
+Approach for Designing Customized Shoe Last} by the same authors, which
+explicitly adjusts foot data to toe spring and heel height before last
+formation; \emph{Shoe-last Design Innovation for Better Shoe Fitting} by
+Luximon and Luximon; \emph{3D Foot Scan to Custom Shoe Last} by Rout and
+colleagues, which sections the foot at equal percentage intervals;
+\emph{Computer Aided Design and Development of Customized Shoe Last} by
+Sambhav and colleagues; \emph{Customization of shoe last based on 3D
+design process with adjustable 3D ease allowance} by Mishra and
+colleagues; and \emph{A Feature-based Shoe-last Design and its Automatic
+Model Construction} by Li and colleagues. Those papers are the clearest
+direct precedents for a section-based, parameterized pseudo-last
+generator.
+
+For \textbf{anatomical foot priors and foot-shape variability}, the most
+relevant sources are \emph{SUPR: A Sparse Unified Part-Based Human
+Representation}; \emph{Dynamic foot morphology explained through 4D
+scanning and shape modeling}; \emph{Analysis of 1.2 million foot scans
+from North America, Europe and Asia}; and the 2024 review \emph{Foot
+shape assessment techniques for orthotic and footwear applications}.
+Those provide the strongest justification for using SUPR as an
+anatomical base while still smoothing it into a last-like envelope.
+
+For \textbf{template/SDF priors in reconstruction}, the core references
+are \emph{DeepSDF}, \emph{Occupancy Networks}, \emph{NeuS}, and
+\emph{Ghost on the Shell}. Together they give you the right conceptual
+ladder: continuous signed fields, continuous occupancy, multiview neural
+surface reconstruction, and finally watertight-shell-plus-mSDF topology
+control for open/non-watertight geometry.
+
+For the \textbf{SMPL/clothed-human analogy} that is closest to your
+proposed use of a pseudo-last, I would read \emph{PIFu}, \emph{PaMIR},
+\emph{ICON}, and \emph{SeSDF}. The common theme is highly relevant to
+your shoe problem: use an anatomical/template prior to stabilize
+geometry in hidden or weakly observed regions, but learn a flexible
+implicit field that is free to deviate where the observed surface
+demands it.
+
+The practical bottom line is that your pseudo-last should be implemented
+as a \textbf{section-lofted, footbed-aware, toe-merged, heel-controlled,
+watertight support prior}. If you do that, it becomes a very natural
+supervisory object for both shell SDF containment and G-Shell mSDF
+keep/cut decisions in the exact regions where turntable images give you
+the least information.
+
+\section{References and source links}\label{references-and-source-links}
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  NeuS: Learning Neural Implicit Surfaces by Volume Rendering for
+  Multi-view Reconstruction. \url{https://arxiv.org/abs/2106.10689}
+\item
+  G-Shell project page. \url{https://gshell3d.github.io/}
+\item
+  Ghost on the Shell / G-Shell paper page.
+  \url{https://openreview.net/forum?id=Ad87VjRqUw}
+\item
+  SUPR: A Sparse Unified Part-Based Human Representation.
+  \url{https://arxiv.org/abs/2210.13861}
+\item
+  A Deformation Method for Shoe Last Customization.
+  \url{https://www.cad-journal.net/files/vol_2/CAD_2\%281-4\%29_2005_11-18.pdf}
+\item
+  A CAD Approach for Designing Customized Shoe Last.
+  \url{https://www.cad-journal.net/files/vol_3/CAD_3\%281-4\%29_2006_377-384.pdf}
+\item
+  Shoe-last Design Innovation for Better Shoe Fitting.
+  \url{https://www.sciencedirect.com/science/article/abs/pii/S0166361509001365}
+\item
+  3D Foot Scan to Custom Shoe Last.
+  \url{https://www.researchgate.net/publication/228879419_3D_Foot_Scan_to_Custom_Shoe_Last}
+\item
+  Computer Aided Design and Development of Customized Shoe Last.
+  \url{https://www.cad-journal.net/files/vol_8/CAD_8\%286\%29_2011_819-826.pdf}
+\item
+  Customization of shoe last based on 3D design process with adjustable
+  3D ease allowance for better comfort and design.
+  \url{https://link.springer.com/article/10.1007/s00170-022-10427-5}
+\item
+  A Feature-based Shoe-last Design and its Automatic Model Construction.
+  \url{https://cad-journal.net/files/vol_22/CAD_22\%284\%29_2025_600-615.pdf}
+\item
+  Dynamic foot morphology explained through 4D scanning and shape
+  modeling. \url{https://arxiv.org/abs/2007.11077}
+\item
+  Analysis of 1.2 million foot scans from North America, Europe and
+  Asia. \url{https://www.nature.com/articles/s41598-019-55432-z}
+\item
+  Foot shape assessment techniques for orthotic and footwear
+  applications.
+  \url{https://www.frontiersin.org/journals/bioengineering-and-biotechnology/articles/10.3389/fbioe.2024.1416499/full}
+\item
+  Robust estimation of foot dimensions from 3D foot scan data.
+  \url{https://proc.3dbody.tech/papers/A2012/a12147_20son.pdf}
+\item
+  Quantitative comparison of plantar foot shapes under different
+  weight-bearing conditions.
+  \url{https://www.researchgate.net/publication/8624319_Quantitative_comparison_of_plantar_foot_shapes_under_different_weight-bearing_conditions}
+\item
+  Plantar foot shapes under different weight-bearing conditions.
+  \url{https://ira.lib.polyu.edu.hk/bitstream/10397/6811/1/Tsung_Plantar_Foot_Shapes.pdf}
+\item
+  The effect of shoe toe box shape and volume on forefoot interdigital
+  and plantar pressures in healthy females.
+  \url{https://pubmed.ncbi.nlm.nih.gov/23886242/}
+\item
+  Research profile page for toe-box pressure paper.
+  \url{https://researchprofiles.herts.ac.uk/en/publications/the-effect-of-shoe-toe-box-shape-and-volume-on-forefoot-interdigi/}
+\item
+  Does the shoe really fit? Characterising ill-fitting footwear among
+  community-dwelling older adults attending podiatry services.
+  \url{https://pmc.ncbi.nlm.nih.gov/articles/PMC7020372/}
+\item
+  Comparison of shoe-length fit between people with and without diabetic
+  peripheral neuropathy.
+  \url{https://pmc.ncbi.nlm.nih.gov/articles/PMC3407779/}
+\item
+  An exploratory study of dynamic foot shape measurements.
+  \url{https://pmc.ncbi.nlm.nih.gov/articles/PMC10224935/}
+\item
+  A methodology for determining the allowances for fitting footwear.
+  \url{https://www.researchgate.net/publication/264438902_A_methodology_for_determining_the_allowances_for_fitting_footwear}
+\item
+  Foot deformation during walking.
+  \url{https://www.researchgate.net/publication/261254608_Foot_deformation_during_walking_Differences_between_static_and_dynamic_3D_foot_morphology_in_developing_feet}
+\item
+  Dynamic foot shape and safety footwear study.
+  \url{https://www.tandfonline.com/doi/full/10.1080/19424280.2018.1529062}
+\item
+  Generalized winding numbers.
+  \url{https://dl.acm.org/doi/10.1145/2461912.2461916}
+\item
+  Fast winding numbers for soups and clouds.
+  \url{https://www.dgp.toronto.edu/projects/fast-winding-numbers/}
+\item
+  Fast winding numbers paper PDF.
+  \url{https://www.dgp.toronto.edu/projects/fast-winding-numbers/fast-winding-numbers-for-soups-and-clouds-siggraph-2018-compressed-barill-et-al.pdf}
+\item
+  DeepSDF: Learning Continuous Signed Distance Functions for Shape
+  Representation. \url{https://arxiv.org/abs/1901.05103}
+\item
+  Occupancy Networks: Learning 3D Reconstruction in Function Space.
+  \url{https://arxiv.org/abs/1812.03828}
+\item
+  PIFu: Pixel-Aligned Implicit Function for High-Resolution Clothed
+  Human Digitization. \url{https://arxiv.org/abs/1905.05172}
+\item
+  PaMIR: Parametric Model-Conditioned Implicit Representation for
+  Image-based Human Reconstruction.
+  \url{https://arxiv.org/abs/2007.03858}
+\item
+  ICON project page. \url{https://icon.is.tue.mpg.de/}
+\item
+  ICON: Implicit Clothed Humans Obtained from Normals.
+  \url{https://openaccess.thecvf.com/content/CVPR2022/papers/Xiu_ICON_Implicit_Clothed_Humans_Obtained_From_Normals_CVPR_2022_paper.pdf}
+\item
+  SeSDF: Self-Evolved Signed Distance Field for Implicit 3D Clothed
+  Human Reconstruction.
+  \url{https://openaccess.thecvf.com/content/CVPR2023/papers/Cao_SeSDF_Self-Evolved_Signed_Distance_Field_for_Implicit_3D_Clothed_Human_CVPR_2023_paper.pdf}
+\item
+  Footwear comfort: a systematic search and narrative synthesis.
+  \url{https://pmc.ncbi.nlm.nih.gov/articles/PMC8650278/}
+\item
+  Footwear Toe-Box Shape and Medial Forefoot Pressures.
+  \url{https://pmc.ncbi.nlm.nih.gov/articles/PMC11992996/}
+\item
+  Medical-grade footwear: the impact of fit and comfort.
+  \url{https://pmc.ncbi.nlm.nih.gov/articles/PMC5217416/}
+\item
+  Toe Box Shape of Running Shoes Affects In-Shoe Foot Function.
+  \url{https://www.mdpi.com/2306-5354/11/5/457}
+\item
+  Human foot modeling towards footwear design.
+  \url{https://www.sciencedirect.com/science/article/abs/pii/S001044851100193X}
+\item
+  NeuS2 project page. \url{https://vcai.mpi-inf.mpg.de/projects/NeuS2/}
+\item
+  Learning Signed Distance Field for Multi-view Surface Reconstruction.
+  \url{https://arxiv.org/abs/2108.09964}
+\item
+  Distance Field Rasterization for End-to-End Mesh Reconstruction.
+  \url{https://arxiv.org/html/2604.23537v1}
+\item
+  GPU Gems Chapter 34: Signed Distance Fields Using Single-Pass GPU Scan
+  Conversion of Tetrahedra.
+  \url{https://developer.nvidia.com/gpugems/gpugems3/part-v-physics-simulation/chapter-34-signed-distance-fields-using-single-pass-gpu}
+\item
+  Automated Shoe Last Customization using MATLAB.
+  \url{https://www.scitepress.org/Papers/2019/79493/79493.pdf}
+\item
+  Laser Line-Scanning Based Customized Shoe-Last System.
+  \url{https://www.researchgate.net/publication/251970370_Laser_Line-Scanning_Based_Customized_Shoe-Last_System}
+\item
+  Rapid parametric design methods for shoe-last customization.
+  \url{https://www.researchgate.net/publication/227333110_Rapid_parametric_design_methods_for_shoe-last_customization}
+\item
+  Morphing-Based Surface Blending Operator for Footwear CAD.
+  \url{https://www.researchgate.net/publication/267586204_A_Morphing-Based_Surface_Blending_Operator_for_Footwear_CAD}
+\item
+  Foot shape prediction using elliptical Fourier analysis.
+  \url{https://www.researchgate.net/publication/313827280_Foot_shape_prediction_using_elliptical_Fourier_analysis}
+\item
+  3D foot shape generation from 2D information.
+  \url{https://www.researchgate.net/publication/7671857_3D_foot_shape_generation_from_2D_information}
+\end{enumerate}
+
+\end{document}
