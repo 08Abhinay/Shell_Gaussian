@@ -1,0 +1,60 @@
+{
+  "description": "External shoe assets rendered into a canonical synthetic dataset. Source axes map into raw canonical X=length, Y=width, Z=up.",
+  "shoes": [
+    {
+      "name": "adidas-yeezy-boost-350-v2-zyon",
+      "model": "adidas-yeezy-boost-350-v2-zyon/source/mob.fbx",
+      "source_axes": {
+        "length": "-Y",
+        "width": "X",
+        "up": "Z"
+      }
+    },
+    {
+      "name": "air-jordan-1",
+      "model": "air-jordan-1/source/sketchfab_shoe.fbx",
+      "source_axes": {
+        "length": "-Y",
+        "width": "X",
+        "up": "Z"
+      },
+      "selection": {
+        "mode": "axis-min",
+        "axis": "Y",
+        "separate_loose_parts": true
+      }
+    },
+    {
+      "name": "nike-air-jordan",
+      "model": "nike-air-jordan/source/model.glb",
+      "source_axes": {
+        "length": "-X",
+        "width": "Y",
+        "up": "Z"
+      },
+      "selection": {
+        "mode": "axis-min",
+        "axis": "Y",
+        "separate_loose_parts": true
+      }
+    },
+    {
+      "name": "cipela-za-upload",
+      "model": "shoe_1/cipela za upload/cipela za upload.OBJ",
+      "source_axes": {
+        "length": "-X",
+        "width": "-Z",
+        "up": "-Y"
+      }
+    },
+    {
+      "name": "sneakers-low-poly-downloadable",
+      "model": "sneakers-low-poly-downloadable/source/Sneakers.obj",
+      "source_axes": {
+        "length": "X",
+        "width": "Z",
+        "up": "Y"
+      }
+    }
+  ]
+}
