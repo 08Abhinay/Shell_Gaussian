@@ -73,23 +73,24 @@ def createLoss(FLAGS):
 @torch.no_grad()
 def prepare_batch(target, bg_type='black'):
     assert len(target['img'].shape) == 4, "Image shape should be [n, h, w, c]"
+    target = {
+        key: value.cuda(non_blocking=True) if torch.is_tensor(value) else value
+        for key, value in target.items()
+    }
+    device = target['img'].device
     if bg_type == 'checker':
-        background = torch.tensor(util.checkerboard(target['img'].shape[1:3], 8), dtype=torch.float32, device='cuda')[None, ...]
+        background = torch.tensor(util.checkerboard(target['img'].shape[1:3], 8), dtype=torch.float32, device=device)[None, ...]
     elif bg_type == 'black':
-        background = torch.zeros(target['img'].shape[0:3] + (3,), dtype=torch.float32, device='cuda')
+        background = torch.zeros(target['img'].shape[0:3] + (3,), dtype=torch.float32, device=device)
     elif bg_type == 'white':
-        background = torch.ones(target['img'].shape[0:3] + (3,), dtype=torch.float32, device='cuda')
+        background = torch.ones(target['img'].shape[0:3] + (3,), dtype=torch.float32, device=device)
     elif bg_type == 'reference':
         background = target['img'][..., 0:3]
     elif bg_type == 'random':
-        background = torch.rand(target['img'].shape[0:3] + (3,), dtype=torch.float32, device='cuda')
+        background = torch.rand(target['img'].shape[0:3] + (3,), dtype=torch.float32, device=device)
     else:
         assert False, "Unknown background type %s" % bg_type
 
-    target['mv'] = target['mv'].cuda()
-    target['mvp'] = target['mvp'].cuda()
-    target['campos'] = target['campos'].cuda()
-    target['img'] = target['img'].cuda()
     target['background'] = background
 
     target['img'] = torch.cat((torch.lerp(background, target['img'][..., 0:3], target['img'][..., 3:4]), target['img'][..., 3:4]), dim=-1)
@@ -472,7 +473,7 @@ def optimize_mesh(
         # ==============================================================================================
         #  Final loss
         # ==============================================================================================
-        total_loss = img_loss + reg_loss
+        total_loss = img_loss + depth_loss + reg_loss
 
         img_loss_vec.append(img_loss.item())
         depth_loss_vec.append(depth_loss.item())
@@ -697,8 +698,9 @@ if __name__ == "__main__":
     #  Create data pipeline
     # ==============================================================================================
     data_root = FLAGS.trainset_path
+    validate_root = FLAGS.testset_path if FLAGS.testset_path else data_root
     dataset_train    = DatasetNERF(os.path.join(data_root, 'transforms.json'), FLAGS, examples=int(1e6))
-    dataset_validate = DatasetNERF(os.path.join(data_root, 'transforms.json'), FLAGS)
+    dataset_validate = DatasetNERF(os.path.join(validate_root, 'transforms.json'), FLAGS)
 
 
     # ==============================================================================================

@@ -184,7 +184,7 @@ def shade(
         'ks_grad'           : torch.cat((ks_grad, alpha), dim=-1),
         'normal_grad'       : torch.cat((nrm_grad, alpha), dim=-1),
         # 'depth'             : torch.cat(((gb_pos - view_pos).pow(2).sum(dim=-1, keepdim=True).sqrt(), allone_map), dim=-1),
-        # 'invdepth'          : torch.cat((1.0 / ((gb_pos - view_pos).pow(2) + eps).sum(dim=-1, keepdim=True).sqrt(), allone_map), dim=-1),
+        'invdepth'          : torch.cat((1.0 / ((gb_pos - view_pos).pow(2) + eps).sum(dim=-1, keepdim=True).sqrt(), allone_map), dim=-1),
     }
 
     if 'diffuse_accum' in locals():
@@ -383,9 +383,11 @@ def render_mesh(
     # clip space transform
     v_pos_clip = ru.xfm_points(mesh.v_pos[None, ...], mtx_in)
 
-    # Render all layers front-to-back
+    # Render the first visible layer, and optionally a second peeled layer.
+    # The first layer drives the normal RGB/depth losses. The second layer is
+    # useful for concavities such as shoe interiors where the first hit may be
+    # the collar/rim and the next hit may be the footbed.
     with dr.DepthPeeler(ctx, v_pos_clip, mesh.t_pos_idx.int(), full_res) as peeler:
-        assert num_layers == 1
         rast, db = peeler.rasterize_next_layer()
         visible_triangles = rast[:,:,:,-1].long().unique()
         if visible_triangles[0] == 0:
@@ -403,17 +405,21 @@ def render_mesh(
                 xfm_lgt=xfm_lgt,
                 shade_data=shade_data),
             rast)]
-        # rast, db = peeler.rasterize_next_layer()
-        # layer_second = [
-        #     (render_layer(
-        #         FLAGS, v_pos_clip,
-        #         rast, db, mesh, view_pos, lgt, resolution, spp, msaa,
-        #         optix_ctx, bsdf, denoiser, shadow_scale,
-        #         use_uv=use_uv, finetune_normal=finetune_normal,
-        #         extra_dict=extra_dict,
-        #         xfm_lgt=xfm_lgt,
-        #         shade_data=shade_data),
-        #     rast)]
+        layer_second = None
+        if num_layers > 1:
+            rast, db = peeler.rasterize_next_layer()
+            visible_second = rast[:,:,:,-1].long().unique()
+            if visible_second.numel() > 0 and visible_second[-1] > 0:
+                layer_second = [
+                    (render_layer(
+                        FLAGS, v_pos_clip,
+                        rast, db, mesh, view_pos, lgt, resolution, spp, msaa,
+                        optix_ctx, bsdf, denoiser, shadow_scale,
+                        use_uv=use_uv, finetune_normal=finetune_normal,
+                        extra_dict=extra_dict,
+                        xfm_lgt=xfm_lgt,
+                        shade_data=shade_data),
+                    rast)]
 
     # Setup background
     if background is not None:
@@ -444,14 +450,16 @@ def render_mesh(
         # Downscale to framebuffer resolution. Use avg pooling
         out_buffers[key] = util.avg_pool_nhwc(accum, spp) if spp > 1 else accum
 
-    # accum = composite_buffer('shaded', layer_second, background.clone(), True)
-    # out_buffers['shaded_second'] = util.avg_pool_nhwc(accum, spp) if spp > 1 else accum
+    if num_layers > 1:
+        if layer_second is not None:
+            accum = composite_buffer('shaded', layer_second, background.clone(), True)
+            out_buffers['shaded_second'] = util.avg_pool_nhwc(accum, spp) if spp > 1 else accum
 
-    # accum = composite_buffer('invdepth', layer_second, torch.zeros_like(layers[0][0]['invdepth']), True)
-    # out_buffers['invdepth_second'] = util.avg_pool_nhwc(accum, spp) if spp > 1 else accum
-
-    # accum = composite_buffer('depth', layer_second, torch.ones_like(layers[0][0]['depth']) * default_depth, True)
-    # out_buffers['depth_second'] = util.avg_pool_nhwc(accum, spp) if spp > 1 else accum
+            accum = composite_buffer('invdepth', layer_second, torch.zeros_like(layers[0][0]['invdepth']), True)
+            out_buffers['invdepth_second'] = util.avg_pool_nhwc(accum, spp) if spp > 1 else accum
+        else:
+            out_buffers['shaded_second'] = torch.zeros_like(out_buffers['shaded'])
+            out_buffers['invdepth_second'] = torch.zeros_like(out_buffers['invdepth'])
 
     return out_buffers
 

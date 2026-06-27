@@ -30,7 +30,7 @@ def parse_args() -> argparse.Namespace:
         "--output-root",
         type=Path,
         default=ROOT / "output" / "canonical-512-768",
-        help="Root containing *_canonical output directories.",
+        help="Root containing completed GShell output directories.",
     )
     parser.add_argument(
         "--config",
@@ -83,7 +83,7 @@ def load_flags(config_path: Path) -> SimpleNamespace:
 def resolve_scene_dirs(output_root: Path, scene_names: list[str] | None) -> list[Path]:
     if scene_names:
         return [output_root / name for name in scene_names]
-    return sorted(path for path in output_root.iterdir() if path.is_dir() and path.name.endswith("_canonical"))
+    return sorted(path for path in output_root.iterdir() if path.is_dir() and (path / "mesh" / "model.pt").exists())
 
 
 def export_one(scene_dir: Path, flags: SimpleNamespace, overwrite: bool) -> dict[str, object]:
@@ -131,7 +131,7 @@ def main() -> None:
     flags = load_flags(args.config)
     scene_dirs = resolve_scene_dirs(args.output_root, args.scene)
     if not scene_dirs:
-        raise RuntimeError(f"No *_canonical scene directories found under {args.output_root}")
+        raise RuntimeError(f"No completed GShell scene directories found under {args.output_root}")
 
     rows = []
     for index, scene_dir in enumerate(scene_dirs, start=1):

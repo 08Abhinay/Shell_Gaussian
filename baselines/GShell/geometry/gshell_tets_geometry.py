@@ -241,11 +241,12 @@ class GShellTetsGeometry(torch.nn.Module):
         extra_dict = {
             'msdf': opt_mesh_dict['msdf'],
         }
+        render_layers = 2 if (self.FLAGS.use_depth_2nd_layer or self.FLAGS.use_img_2nd_layer) else 1
         opt_mesh_dict['buffers'] = render.render_mesh(
             self.FLAGS, glctx, opt_mesh, target['mvp'], target['campos'], lgt, target['resolution'], spp=target['spp'], 
             msaa=True, background=target['background'], bsdf=bsdf, use_uv=use_uv,
             optix_ctx=self.optix_ctx, denoiser=denoiser, shadow_scale=shadow_scale,
-            extra_dict=extra_dict)
+            extra_dict=extra_dict, num_layers=render_layers)
         if self.FLAGS.visualize_watertight:
             opt_mesh_dict['buffers_watertight'] = render.render_mesh(
                 self.FLAGS, glctx, opt_mesh_watertight, target['mvp'], target['campos'], lgt, target['resolution'], spp=target['spp'], 
@@ -328,12 +329,13 @@ class GShellTetsGeometry(torch.nn.Module):
             eps = 1e-3
             open_scale = self.FLAGS.msdf_reg_open_scale
             close_scale = self.FLAGS.msdf_reg_close_scale
-            eps = torch.tensor([eps]).cuda()
+            eps = torch.tensor(eps, device=img_loss.device)
 
             if open_scale > 0:
+                msdf_values = opt_mesh_dict['msdf'].clamp(min=-eps).reshape(-1)
                 mesh_msdf_reg_loss = open_scale * mesh_msdf_regscale * F.huber_loss(
-                    opt_mesh_dict['msdf'].clamp(min=-eps).squeeze(), 
-                    -eps.expand(opt_mesh_dict['msdf'].size(0)), 
+                    msdf_values,
+                    -eps.expand_as(msdf_values),
                     reduction='sum'
                 )
             else:
@@ -343,15 +345,15 @@ class GShellTetsGeometry(torch.nn.Module):
                 with torch.no_grad():
                     visible_verts = (opt_mesh_dict['imesh'].t_pos_idx[buffers['visible_triangles']]).unique()
                     visible_boundary_verts = visible_verts[visible_verts >= opt_mesh_dict['n_verts_watertight']] - opt_mesh_dict['n_verts_watertight']
-                    visible_boundary_mask = torch.zeros(opt_mesh_dict['msdf_boundary'].size(0)).cuda()
+                    visible_boundary_mask = torch.zeros(opt_mesh_dict['msdf_boundary'].size(0), device=img_loss.device)
                     visible_boundary_mask[visible_boundary_verts] = 1
                     visible_boundary_mask = visible_boundary_mask.bool()
 
                 boundary_msdf = opt_mesh_dict['msdf_boundary']
-                boundary_msdf = boundary_msdf[visible_boundary_mask]
+                boundary_msdf = boundary_msdf[visible_boundary_mask].clamp(max=eps).reshape(-1)
                 mesh_msdf_reg_loss += close_scale * mesh_msdf_regscale * F.huber_loss(
-                    boundary_msdf.clamp(max=eps).squeeze(), 
-                    eps.expand(boundary_msdf.size(0)), 
+                    boundary_msdf,
+                    eps.expand_as(boundary_msdf),
                     reduction='sum'
                 )
         else:

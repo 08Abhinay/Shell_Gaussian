@@ -3,6 +3,7 @@ set -euo pipefail
 
 MIN_FREE_MB="${MIN_FREE_MB:-51200}"  # 50 GB minimum free VRAM
 MAX_PARALLEL_JOBS="${MAX_PARALLEL_JOBS:-0}"  # 0 means use every free GPU
+ALLOWED_GPUS="${ALLOWED_GPUS:-}"
 SESSION_NAME="${1:-gshell_all_shoes}"
 shift $(( $# >= 1 ? 1 : $# ))
 REQUESTED_SHOES=("${@+"$@"}")
@@ -20,10 +21,27 @@ timestamp() {
     date -u +"%Y-%m-%dT%H:%M:%SZ"
 }
 
+ALLOWED_GPUS="${ALLOWED_GPUS// /}"
+
+gpu_is_allowed() {
+    local idx="$1"
+    local allowed_gpu
+    if [[ -z "${ALLOWED_GPUS}" ]]; then
+        return 0
+    fi
+    IFS=',' read -r -a allowed_gpu_list <<< "${ALLOWED_GPUS}"
+    for allowed_gpu in "${allowed_gpu_list[@]}"; do
+        if [[ "${idx}" == "${allowed_gpu}" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 get_free_gpus() {
     nvidia-smi --query-gpu=index,memory.free --format=csv,noheader,nounits \
     | while IFS=', ' read -r idx free; do
-        if [[ "${free}" -ge "${MIN_FREE_MB}" ]]; then
+        if gpu_is_allowed "${idx}" && [[ "${free}" -ge "${MIN_FREE_MB}" ]]; then
             echo "${idx}"
         fi
     done
@@ -80,6 +98,7 @@ if [[ "${INSIDE_BATCH_TMUX:-0}" != "1" ]]; then
         "SKIP_EXISTING=${SKIP_EXISTING}"
         "MIN_FREE_MB=${MIN_FREE_MB}"
         "MAX_PARALLEL_JOBS=${MAX_PARALLEL_JOBS}"
+        "ALLOWED_GPUS=${ALLOWED_GPUS}"
         "${SCRIPT_PATH}"
         "${SESSION_NAME}"
     )
@@ -93,6 +112,7 @@ if [[ "${INSIDE_BATCH_TMUX:-0}" != "1" ]]; then
     echo "Started tmux session: ${SESSION_NAME}"
     echo "Batch log: ${BATCH_LOG}"
     echo "Min free VRAM: ${MIN_FREE_MB} MiB"
+    echo "Allowed GPUs: ${ALLOWED_GPUS:-all}"
     echo "Attach with: tmux attach -t ${SESSION_NAME}"
     exit 0
 fi
@@ -104,6 +124,7 @@ exec > >(tee -a "${BATCH_LOG}") 2>&1
 echo "[$(timestamp)] Batch training started"
 echo "[$(timestamp)] MIN_FREE_MB=${MIN_FREE_MB}"
 echo "[$(timestamp)] MAX_PARALLEL_JOBS=${MAX_PARALLEL_JOBS}"
+echo "[$(timestamp)] ALLOWED_GPUS=${ALLOWED_GPUS:-all}"
 echo "[$(timestamp)] DATASET_ROOT=${DATASET_ROOT}"
 echo "[$(timestamp)] CONFIG_PATH=${CONFIG_PATH}"
 echo "[$(timestamp)] OUT_SUFFIX=${OUT_SUFFIX}"
