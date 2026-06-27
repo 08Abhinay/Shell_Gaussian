@@ -602,9 +602,22 @@ def optimize_mesh(
                         pseudo_last_stats.get("xsec_grid_h_p50", 0.0),
                     )
                 )
+            bottom_msdf_stats = getattr(geometry, "last_bottom_msdf_conditioning_stats", {})
+            bottom_msdf_log = ""
+            if bottom_msdf_stats and bottom_msdf_stats.get("enabled", 0.0) > 0.0:
+                bottom_msdf_log = (
+                    ", bottom_anchor=%s, bottom_msdf_full=%d, bottom_msdf_blend=%d, bottom_msdf_changed=%d, bottom_y=%.5f"
+                    % (
+                        bottom_msdf_stats.get("anchor_mode", "unknown"),
+                        int(bottom_msdf_stats.get("full_count", 0)),
+                        int(bottom_msdf_stats.get("blend_count", 0)),
+                        int(bottom_msdf_stats.get("changed_count", 0)),
+                        bottom_msdf_stats.get("anchor_y", bottom_msdf_stats.get("canonical_y_bottom", 0.0)),
+                    )
+                )
             print(("iter=%5d, img_loss=%.6f, depth_loss=%.6f, reg_loss=%.6f, lr=%.5f, "
-                   "time=%.1f ms, rem=%s%s%s") %
-                (it, img_loss_avg, depth_loss_avg, reg_loss_avg, optimizer.param_groups[0]['lr'], iter_dur_avg*1000, util.time_to_text(remaining_time), foot_log, pseudo_last_log))
+                   "time=%.1f ms, rem=%s%s%s%s") %
+                (it, img_loss_avg, depth_loss_avg, reg_loss_avg, optimizer.param_groups[0]['lr'], iter_dur_avg*1000, util.time_to_text(remaining_time), foot_log, pseudo_last_log, bottom_msdf_log))
             sys.stdout.flush()
 
         if it == FLAGS.iter:
@@ -670,6 +683,18 @@ if __name__ == "__main__":
     parser.add_argument('--foot_prior_warmup_iter', type=int, default=1000)
     parser.add_argument('--foot_prior_max_surface_points', type=int, default=50000)
     parser.add_argument('--foot_prior_max_watertight_points', type=int, default=50000)
+    parser.add_argument('--use_bottom_msdf_conditioning', action='store_true', default=False)
+    parser.add_argument('--bottom_msdf_margin', type=float, default=0.01)
+    parser.add_argument('--bottom_msdf_protect_height', type=float, default=0.012)
+    parser.add_argument('--bottom_msdf_blend_height', type=float, default=0.008)
+    parser.add_argument(
+        '--bottom_msdf_anchor_mode',
+        type=str,
+        default='canonical_grid_bottom',
+        choices=['canonical_grid_bottom', 'canonical_fixed_y', 'sdf_solid_quantile'],
+    )
+    parser.add_argument('--bottom_msdf_anchor_y', type=float, default=0.09)
+    parser.add_argument('--bottom_msdf_anchor_quantile', type=float, default=0.995)
     parser.add_argument('--use_pseudo_last_prior', action='store_true', default=False)
     parser.add_argument('--pseudo_last_sdf_path', type=str, default='')
     parser.add_argument('--pseudo_last_sections_path', type=str, default='')

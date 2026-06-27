@@ -91,6 +91,22 @@ class GShellTetsGeometry(torch.nn.Module):
 
         self.foot_prior_loss = None
         self.last_foot_prior_stats = {}
+        canonical_grid_points_world = self.verts
+        if torch.is_tensor(self.offset):
+            canonical_grid_points_world = canonical_grid_points_world + self.offset.to(
+                device=canonical_grid_points_world.device,
+                dtype=canonical_grid_points_world.dtype,
+            )
+        elif self.offset != 0.0:
+            canonical_grid_points_world = canonical_grid_points_world + float(self.offset)
+        canonical_y_coords = canonical_grid_points_world[:, 1]
+        canonical_y_bottom = canonical_y_coords.max()
+        canonical_y_top = canonical_y_coords.min()
+        self.bottom_msdf_slab_info = {
+            "canonical_y_bottom": float(canonical_y_bottom.item()),
+            "canonical_y_top": float(canonical_y_top.item()),
+            "canonical_height": float((canonical_y_bottom - canonical_y_top).item()),
+        }
         if getattr(self.FLAGS, "use_foot_prior", False):
             self.foot_prior_loss = FootPriorLoss(
                 FootPriorLossConfig.from_flags(self.FLAGS),
@@ -102,6 +118,7 @@ class GShellTetsGeometry(torch.nn.Module):
 
         self.pseudo_last_prior_loss = None
         self.last_pseudo_last_prior_stats = {}
+        self.last_bottom_msdf_conditioning_stats = {}
         if getattr(self.FLAGS, "use_pseudo_last_prior", False):
             if getattr(self.FLAGS, "pseudo_last_prior_mode", "cross_section") == "cross_section" and not self.FLAGS.use_sdf_mlp:
                 raise ValueError("The cross-section pseudo-last prior requires use_sdf_mlp=True")
@@ -252,6 +269,118 @@ class GShellTetsGeometry(torch.nn.Module):
             'v_msdf': v_msdf,
         }
 
+    def _resolve_bottom_msdf_anchor_y(
+        self,
+        sdf: torch.Tensor,
+        grid_points_world: torch.Tensor,
+    ):
+        canonical_y_bottom = float(self.bottom_msdf_slab_info["canonical_y_bottom"])
+        canonical_y_top = float(self.bottom_msdf_slab_info["canonical_y_top"])
+        anchor_mode = str(getattr(self.FLAGS, "bottom_msdf_anchor_mode", "canonical_grid_bottom"))
+        anchor_stats = {
+            "anchor_mode": anchor_mode,
+            "anchor_y": canonical_y_bottom,
+            "solid_point_count": 0,
+            "anchor_quantile": float(getattr(self.FLAGS, "bottom_msdf_anchor_quantile", 0.995)),
+            "anchor_fallback_used": 0.0,
+        }
+
+        if anchor_mode == "canonical_grid_bottom":
+            return canonical_y_bottom, anchor_stats
+
+        if anchor_mode == "canonical_fixed_y":
+            anchor_y = float(getattr(self.FLAGS, "bottom_msdf_anchor_y", canonical_y_bottom))
+            anchor_y = min(max(anchor_y, canonical_y_top), canonical_y_bottom)
+            anchor_stats["anchor_y"] = anchor_y
+            return anchor_y, anchor_stats
+
+        if anchor_mode == "sdf_solid_quantile":
+            solid_mask = sdf.reshape(-1) > 0
+            solid_point_count = int(solid_mask.sum().item())
+            anchor_stats["solid_point_count"] = solid_point_count
+            if solid_point_count == 0:
+                anchor_stats["anchor_fallback_used"] = 1.0
+                return canonical_y_bottom, anchor_stats
+
+            solid_y = grid_points_world.reshape(-1, 3)[:, 1][solid_mask]
+            quantile = float(anchor_stats["anchor_quantile"])
+            anchor_y = float(torch.quantile(solid_y, quantile).item())
+            anchor_y = min(max(anchor_y, canonical_y_top), canonical_y_bottom)
+            anchor_stats["anchor_y"] = anchor_y
+            return anchor_y, anchor_stats
+
+        raise ValueError(f"Unknown bottom_msdf_anchor_mode: {anchor_mode}")
+
+    def _condition_bottom_band_msdf_for_marching(
+        self,
+        raw_msdf: torch.Tensor,
+        sdf: torch.Tensor,
+        grid_points_world: torch.Tensor,
+    ):
+        canonical_y_bottom = float(self.bottom_msdf_slab_info["canonical_y_bottom"])
+        canonical_height = float(self.bottom_msdf_slab_info["canonical_height"])
+        stats = {
+            "enabled": 0.0,
+            "canonical_y_bottom": canonical_y_bottom,
+            "canonical_height": canonical_height,
+            "anchor_mode": str(getattr(self.FLAGS, "bottom_msdf_anchor_mode", "canonical_grid_bottom")),
+            "anchor_y": canonical_y_bottom,
+            "solid_point_count": 0,
+            "anchor_quantile": float(getattr(self.FLAGS, "bottom_msdf_anchor_quantile", 0.995)),
+            "anchor_fallback_used": 0.0,
+            "full_count": 0,
+            "blend_count": 0,
+            "changed_count": 0,
+            "active_point_count": 0,
+        }
+
+        if not getattr(self.FLAGS, "use_bottom_msdf_conditioning", False):
+            return raw_msdf, stats
+
+        margin = float(getattr(self.FLAGS, "bottom_msdf_margin", 0.01))
+        protect_height = float(getattr(self.FLAGS, "bottom_msdf_protect_height", 0.012))
+        blend_height = float(getattr(self.FLAGS, "bottom_msdf_blend_height", 0.008))
+        anchor_y, anchor_stats = self._resolve_bottom_msdf_anchor_y(
+            sdf=sdf,
+            grid_points_world=grid_points_world,
+        )
+        stats.update(anchor_stats)
+
+        raw_msdf_flat = raw_msdf.reshape(-1)
+        grid_y_coords = grid_points_world.reshape(-1, 3)[:, 1]
+        distance_up_from_bottom = raw_msdf_flat.new_tensor(anchor_y) - grid_y_coords
+
+        full_mask = distance_up_from_bottom <= protect_height
+        blend_mask = (
+            (distance_up_from_bottom > protect_height)
+            & (distance_up_from_bottom <= protect_height + blend_height)
+        )
+
+        weights = torch.zeros_like(raw_msdf_flat)
+        weights[full_mask] = 1.0
+        if blend_height > 0.0 and torch.any(blend_mask):
+            fade_progress = (distance_up_from_bottom[blend_mask] - protect_height) / blend_height
+            weights[blend_mask] = 1.0 - fade_progress.clamp(0.0, 1.0)
+
+        safe_positive_msdf = raw_msdf_flat.clamp(min=margin)
+        conditioned_msdf_flat = (
+            weights * safe_positive_msdf
+            + (1.0 - weights) * raw_msdf_flat
+        )
+        conditioned_msdf = conditioned_msdf_flat.reshape_as(raw_msdf)
+
+        full_count = int(full_mask.sum().item())
+        blend_count = int(blend_mask.sum().item())
+        changed_count = int((conditioned_msdf_flat != raw_msdf_flat).sum().item())
+
+        stats["enabled"] = 1.0
+        stats["full_count"] = full_count
+        stats["blend_count"] = blend_count
+        stats["changed_count"] = changed_count
+        stats["active_point_count"] = full_count + blend_count
+
+        return conditioned_msdf, stats
+
     def getMesh(self, material, iteration=None):
         v_deformed = self.verts + self.max_displacement * self.deform
         if self.FLAGS.use_sdf_mlp:
@@ -266,7 +395,14 @@ class GShellTetsGeometry(torch.nn.Module):
             msdf = self.msdf
 
         v_deformed = v_deformed + self.offset
-        msdf_for_marching = msdf
+        (
+            msdf_for_marching,
+            self.last_bottom_msdf_conditioning_stats,
+        ) = self._condition_bottom_band_msdf_for_marching(
+            raw_msdf=msdf,
+            sdf=sdf,
+            grid_points_world=v_deformed,
+        )
 
         verts, faces, uvs, uv_idx, v_tng, extra = self.gshell_tets(
             v_deformed, sdf, msdf_for_marching, self.indices)
@@ -402,12 +538,12 @@ class GShellTetsGeometry(torch.nn.Module):
             eps = 1e-3
             open_scale = self.FLAGS.msdf_reg_open_scale
             close_scale = self.FLAGS.msdf_reg_close_scale
-            eps = torch.tensor([eps]).cuda()
 
             if open_scale > 0:
+                mesh_msdf = opt_mesh_dict['msdf'].reshape(-1)
                 mesh_msdf_reg_loss = open_scale * mesh_msdf_regscale * F.huber_loss(
-                    opt_mesh_dict['msdf'].clamp(min=-eps).squeeze(), 
-                    -eps.expand(opt_mesh_dict['msdf'].size(0)), 
+                    mesh_msdf.clamp(min=-eps),
+                    torch.full_like(mesh_msdf, -eps),
                     reduction='sum'
                 )
             else:
@@ -422,12 +558,13 @@ class GShellTetsGeometry(torch.nn.Module):
                     visible_boundary_mask = visible_boundary_mask.bool()
 
                 boundary_msdf = opt_mesh_dict['msdf_boundary']
-                boundary_msdf = boundary_msdf[visible_boundary_mask]
-                mesh_msdf_reg_loss += close_scale * mesh_msdf_regscale * F.huber_loss(
-                    boundary_msdf.clamp(max=eps).squeeze(), 
-                    eps.expand(boundary_msdf.size(0)), 
-                    reduction='sum'
-                )
+                boundary_msdf = boundary_msdf[visible_boundary_mask].reshape(-1)
+                if boundary_msdf.numel() > 0:
+                    mesh_msdf_reg_loss += close_scale * mesh_msdf_regscale * F.huber_loss(
+                        boundary_msdf.clamp(max=eps),
+                        torch.full_like(boundary_msdf, eps),
+                        reduction='sum'
+                    )
         else:
             mesh_msdf_reg_loss = torch.tensor(0., device=img_loss.device)
 
