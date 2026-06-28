@@ -1,0 +1,21 @@
+name: GShell_env
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pytorch=1.13.1=py3.10_cuda11.7_cudnn8.5.0_0
+  - torchvision=0.14.1=py310_cu117
+  - torchaudio=0.13.1=py310_cu117
+  - pytorch-cuda=11.7
+  - numpy=1.26.4
+  - mkl=2022.1.0
+  - cuda-nvcc=11.7
+  - cuda-libraries-dev=11.7
+  - cuda-cudart-dev=11.7
+  - gcc_linux-64=11.4.0
+  - gxx_linux-64=11.4.0
+  - pandas>=1.2.0
+  - tectonic
