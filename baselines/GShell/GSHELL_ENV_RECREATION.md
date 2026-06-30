@@ -57,6 +57,17 @@ There is also one package-compatibility pin that matters in practice:
 
 The rebuilt env initially drifted to `numpy 2.2.6`, which broke `kaolin 0.15.0`. The checked-in script now forces the final `numpy/scipy` pair back to the versions that were verified against the live working env.
 
+There is one more non-Python dependency that matters for the synthetic evaluation tooling:
+
+- standalone `Blender 4.2.21 LTS`
+
+The live `GShell_env` contains Blender as a bundled binary under:
+
+- `opt/blender-4.2.21-linux-x64/`
+- with `bin/blender` symlinked into the env
+
+The rebuild script now restores that layout too. It first tries to reuse a local archive if one already exists, and otherwise falls back to the official Blender download URL for that exact version.
+
 ## Recommended Rebuild Path
 
 Use the checked-in script:
@@ -140,6 +151,7 @@ In the tested rebuilt env, the following also succeeded:
 - import of `dataset.dataset_nerf_colmap`
 - import of `geometry.gshell_tets_geometry`
 - `python train_gshelltet_polycam.py --help` from both `FootShellGaussian` and `baselines/GShell`
+- `blender --version`
 
 Expected core versions:
 

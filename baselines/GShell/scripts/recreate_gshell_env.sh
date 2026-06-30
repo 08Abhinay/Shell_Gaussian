@@ -9,6 +9,11 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 ENV_PREFIX="$ROOT_DIR/GShell_env"
 INSTALL_EXTRAS=1
 CACHE_ROOT="${SHELL_GAUSSIAN_CACHE_ROOT:-/data/abelde}"
+BLENDER_VERSION="4.2.21"
+BLENDER_DIR_NAME="blender-${BLENDER_VERSION}-linux-x64"
+BLENDER_ARCHIVE="${BLENDER_DIR_NAME}.tar.xz"
+BLENDER_URL="${BLENDER_URL:-https://download.blender.org/release/Blender4.2/${BLENDER_ARCHIVE}}"
+BLENDER_ARCHIVE_SOURCE="${BLENDER_ARCHIVE_SOURCE:-$ROOT_DIR/GShell_env/opt/${BLENDER_ARCHIVE}}"
 NVDR_TMP=""
 TCNN_TMP=""
 
@@ -71,6 +76,49 @@ setup_build_environment() {
     export GSHELL_REPO_ROOT="$ROOT_DIR"
 }
 
+download_file() {
+    local url="$1"
+    local output_path="$2"
+
+    if command -v curl >/dev/null 2>&1; then
+        curl -L "$url" -o "$output_path"
+        return
+    fi
+
+    if command -v wget >/dev/null 2>&1; then
+        wget -O "$output_path" "$url"
+        return
+    fi
+
+    echo "Neither curl nor wget is available to download: $url" >&2
+    exit 1
+}
+
+install_blender_bundle() {
+    local opt_dir="$ENV_PREFIX/opt"
+    local archive_path="$opt_dir/$BLENDER_ARCHIVE"
+    local blender_root="$opt_dir/$BLENDER_DIR_NAME"
+
+    mkdir -p "$opt_dir"
+
+    if [[ ! -f "$archive_path" ]]; then
+        if [[ -f "$BLENDER_ARCHIVE_SOURCE" ]]; then
+            cp "$BLENDER_ARCHIVE_SOURCE" "$archive_path"
+        else
+            download_file "$BLENDER_URL" "$archive_path"
+        fi
+    fi
+
+    if [[ ! -x "$blender_root/blender" ]]; then
+        tar -xJf "$archive_path" -C "$opt_dir"
+    fi
+
+    ln -sfn "$blender_root/blender" "$ENV_PREFIX/bin/blender"
+    ln -sfn "$blender_root/blender-launcher" "$ENV_PREFIX/bin/blender-launcher"
+    ln -sfn "$blender_root/blender-softwaregl" "$ENV_PREFIX/bin/blender-softwaregl"
+    ln -sfn "$blender_root/blender-thumbnailer" "$ENV_PREFIX/bin/blender-thumbnailer"
+}
+
 patch_mkl_activation_hooks() {
     local activate="$ENV_PREFIX/etc/conda/activate.d/libblas_mkl_activate.sh"
     local deactivate="$ENV_PREFIX/etc/conda/deactivate.d/libblas_mkl_deactivate.sh"
@@ -117,6 +165,7 @@ export _GSHELL_OLD_CUDAHOSTCXX="\${CUDAHOSTCXX-}"
 export _GSHELL_OLD_LIBRARY_PATH="\${LIBRARY_PATH-}"
 export _GSHELL_OLD_LD_LIBRARY_PATH="\${LD_LIBRARY_PATH-}"
 export _GSHELL_OLD_LDFLAGS="\${LDFLAGS-}"
+export _GSHELL_OLD_BLENDER="\${BLENDER-}"
 
 export GSHELL_ENV_PREFIX="$ENV_PREFIX"
 export GSHELL_CACHE_ROOT="$CACHE_ROOT"
@@ -136,6 +185,7 @@ export CUDAHOSTCXX="$ENV_PREFIX/bin/x86_64-conda-linux-gnu-g++"
 export LIBRARY_PATH="/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:$ENV_PREFIX/lib\${_GSHELL_OLD_LIBRARY_PATH:+:\$_GSHELL_OLD_LIBRARY_PATH}"
 export LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:$ENV_PREFIX/lib\${_GSHELL_OLD_LD_LIBRARY_PATH:+:\$_GSHELL_OLD_LD_LIBRARY_PATH}"
 export LDFLAGS="-L/usr/lib/x86_64-linux-gnu -L/lib/x86_64-linux-gnu -L$ENV_PREFIX/lib\${_GSHELL_OLD_LDFLAGS:+ \$_GSHELL_OLD_LDFLAGS}"
+export BLENDER="$ENV_PREFIX/bin/blender"
 EOF
 
     cat > "$deact_dir/gshell_env_vars.sh" <<'EOF'
@@ -167,6 +217,7 @@ restore_or_unset CUDAHOSTCXX _GSHELL_OLD_CUDAHOSTCXX
 restore_or_unset LIBRARY_PATH _GSHELL_OLD_LIBRARY_PATH
 restore_or_unset LD_LIBRARY_PATH _GSHELL_OLD_LD_LIBRARY_PATH
 restore_or_unset LDFLAGS _GSHELL_OLD_LDFLAGS
+restore_or_unset BLENDER _GSHELL_OLD_BLENDER
 
 unset GSHELL_ENV_PREFIX
 unset GSHELL_CACHE_ROOT
@@ -293,6 +344,8 @@ git clone --recursive --branch v2.0 --depth 1 https://github.com/NVlabs/tiny-cud
     "$PYTHON_BIN" setup.py install --no-networks
 )
 
+install_blender_bundle
+
 if [[ "$INSTALL_EXTRAS" -eq 1 ]]; then
     "$PYTHON_BIN" -m pip install \
         addict==2.4.0 \
@@ -340,6 +393,9 @@ for pkg in ["kaolin", "nvdiffrast", "tinycudann", "xatlas"]:
 print("render plugins import successfully")
 PY
 
+"$ENV_PREFIX/bin/blender" --version | head -n 2
+
 echo
 echo "GShell env created at: $ENV_PREFIX"
 echo "After activation, repo-specific CUDA/cache vars are set automatically."
+echo "Blender is available at: $ENV_PREFIX/bin/blender"
