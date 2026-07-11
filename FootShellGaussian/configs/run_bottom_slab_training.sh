@@ -19,12 +19,17 @@ if [[ -z "${MODE}" ]]; then
 fi
 shift
 
-DATASET_ROOT="${GSHELL_DATASET_ROOT:-/data/abelde/datasets/processed/gshell_shoes_size_metadata}"
-CONFIG_PATH="${GSHELL_CONFIG:-${SCRIPT_DIR}/shoes_mc_bottom_slab_512.json}"
-OUT_ROOT="${GSHELL_OUT_ROOT:-${PROJECT_DIR}/output/bottom_slab}"
-ENV_DIR="${FOOTSHELL_ENV_DIR:-/data/abelde/projects/active/Shell_Gaussian/baselines/GShell/GShell_env}"
-MIN_FREE_MB="${MIN_FREE_MB:-51200}"
+DATASET_ROOT="${GSHELL_DATASET_ROOT:-/storage/Abhinay/home_ab5298/dataset/datasets/processed/gshell_shoes_size_metadata}"
+CONFIG_PATH="${GSHELL_CONFIG:-${SCRIPT_DIR}/shoes_mc_bottom_slab_fixed_anchor_009_512.json}"
+OUT_ROOT="${GSHELL_OUT_ROOT:-/storage/Abhinay/home_ab5298/Outputs/FootShellGaussian/bottom_slab_fixed_anchor_009}"
+ENV_DIR="${FOOTSHELL_ENV_DIR:-/home/ab5298/anaconda3/envs/shellgaussianenv}"
+CONDA_BASE="${CONDA_BASE:-/home/ab5298/anaconda3}"
+PYTHON_BIN="${PYTHON_BIN:-${ENV_DIR}/bin/python}"
+MIN_FREE_MB="${MIN_FREE_MB:-45000}"
+MAX_PARALLEL_JOBS="${MAX_PARALLEL_JOBS:-2}"
 SKIP_EXISTING="${SKIP_EXISTING:-1}"
+CACHE_ROOT="${CACHE_ROOT:-/storage/Abhinay/home_ab5298/Outputs/FootShellGaussian/.cache}"
+CONDA_PKGS_ROOT="${CONDA_PKGS_ROOT:-/storage/Abhinay/home_ab5298/Outputs/FootShellGaussian/.conda/pkgs}"
 
 timestamp() {
     date -u +"%Y-%m-%dT%H:%M:%SZ"
@@ -40,8 +45,13 @@ usage() {
     echo "  GSHELL_CONFIG=${CONFIG_PATH}"
     echo "  GSHELL_OUT_ROOT=${OUT_ROOT}"
     echo "  FOOTSHELL_ENV_DIR=${ENV_DIR}"
+    echo "  CONDA_BASE=${CONDA_BASE}"
+    echo "  PYTHON_BIN=${PYTHON_BIN}"
     echo "  MIN_FREE_MB=${MIN_FREE_MB}"
+    echo "  MAX_PARALLEL_JOBS=${MAX_PARALLEL_JOBS}"
     echo "  SKIP_EXISTING=${SKIP_EXISTING}"
+    echo "  CACHE_ROOT=${CACHE_ROOT}"
+    echo "  CONDA_PKGS_ROOT=${CONDA_PKGS_ROOT}"
 }
 
 activate_env() {
@@ -49,19 +59,27 @@ activate_env() {
         echo "Error: environment not found at ${ENV_DIR}" >&2
         exit 1
     fi
+    if [[ ! -x "${CONDA_BASE}/bin/conda" ]]; then
+        echo "Error: conda base not found at ${CONDA_BASE}" >&2
+        exit 1
+    fi
+
+    export PATH="${CONDA_BASE}/bin:${PATH}"
 
     # Conda activation scripts may read unset variables; keep the launcher strict
     # everywhere else, but relax nounset only around activation.
     set +u
-    eval "$(conda shell.bash hook)"
+    eval "$("${CONDA_BASE}/bin/conda" shell.bash hook)"
     conda activate "${ENV_DIR}"
     set -u
 
+    mkdir -p "${CACHE_ROOT}/huggingface" "${CACHE_ROOT}/torch" "${CACHE_ROOT}/xdg" "${CONDA_PKGS_ROOT}"
+
     export PATH="${ENV_DIR}/bin:${PATH}"
-    export HF_HOME="/data/abelde/.cache/huggingface"
-    export TORCH_HOME="/data/abelde/.cache/torch"
-    export XDG_CACHE_HOME="/data/abelde/.cache"
-    export CONDA_PKGS_DIRS="/data/abelde/.conda/pkgs"
+    export HF_HOME="${CACHE_ROOT}/huggingface"
+    export TORCH_HOME="${CACHE_ROOT}/torch"
+    export XDG_CACHE_HOME="${CACHE_ROOT}/xdg"
+    export CONDA_PKGS_DIRS="${CONDA_PKGS_ROOT}"
 
     local conda_gcc="${ENV_DIR}/bin/x86_64-conda-linux-gnu-gcc"
     local conda_gxx="${ENV_DIR}/bin/x86_64-conda-linux-gnu-g++"
@@ -78,7 +96,7 @@ activate_env() {
 }
 
 validate_config_is_clean_bottom_slab() {
-    python - "${CONFIG_PATH}" <<'PY'
+    "${PYTHON_BIN}" - "${CONFIG_PATH}" <<'PY'
 import json
 import sys
 
@@ -203,8 +221,12 @@ run_all() {
             "GSHELL_CONFIG=${CONFIG_PATH}"
             "GSHELL_OUT_ROOT=${OUT_ROOT}"
             "FOOTSHELL_ENV_DIR=${ENV_DIR}"
+            "CONDA_BASE=${CONDA_BASE}"
             "MIN_FREE_MB=${MIN_FREE_MB}"
+            "MAX_PARALLEL_JOBS=${MAX_PARALLEL_JOBS}"
             "SKIP_EXISTING=${SKIP_EXISTING}"
+            "CACHE_ROOT=${CACHE_ROOT}"
+            "CONDA_PKGS_ROOT=${CONDA_PKGS_ROOT}"
             "${SCRIPT_PATH}"
             all
             "${session_name}"
@@ -230,8 +252,12 @@ run_all() {
     echo "[$(timestamp)] CONFIG_PATH=${CONFIG_PATH}"
     echo "[$(timestamp)] OUT_ROOT=${OUT_ROOT}"
     echo "[$(timestamp)] ENV_DIR=${ENV_DIR}"
+    echo "[$(timestamp)] CONDA_BASE=${CONDA_BASE}"
     echo "[$(timestamp)] MIN_FREE_MB=${MIN_FREE_MB}"
+    echo "[$(timestamp)] MAX_PARALLEL_JOBS=${MAX_PARALLEL_JOBS}"
     echo "[$(timestamp)] SKIP_EXISTING=${SKIP_EXISTING}"
+    echo "[$(timestamp)] CACHE_ROOT=${CACHE_ROOT}"
+    echo "[$(timestamp)] CONDA_PKGS_ROOT=${CONDA_PKGS_ROOT}"
 
     local shoes=()
     if [[ ${#requested_shoes[@]} -gt 0 ]]; then
@@ -273,6 +299,14 @@ run_all() {
 
     busy_gpu_list() {
         echo "${pid_gpus}" | tr '|' '\n' | cut -d: -f2 | tr '\n' ' '
+    }
+
+    active_job_count() {
+        if [[ -z "${pids}" ]]; then
+            echo 0
+        else
+            printf '%s\n' "${pids}" | wc -w
+        fi
     }
 
     reap_finished() {
@@ -317,6 +351,10 @@ run_all() {
 
         while true; do
             reap_finished
+            if [[ "${MAX_PARALLEL_JOBS}" -gt 0 ]] && [[ "$(active_job_count)" -ge "${MAX_PARALLEL_JOBS}" ]]; then
+                sleep 30
+                continue
+            fi
             gpu_id="$(claim_gpu "$(busy_gpu_list)")" && break
             sleep 30
         done
@@ -327,6 +365,9 @@ run_all() {
             GSHELL_CONFIG="${CONFIG_PATH}" \
             GSHELL_OUT_ROOT="${OUT_ROOT}" \
             FOOTSHELL_ENV_DIR="${ENV_DIR}" \
+            CONDA_BASE="${CONDA_BASE}" \
+            CACHE_ROOT="${CACHE_ROOT}" \
+            CONDA_PKGS_ROOT="${CONDA_PKGS_ROOT}" \
             bash "${SCRIPT_PATH}" single "${shoe}" "${gpu_id}"
         ) &
         track_job "$!" "${shoe}" "${gpu_id}"

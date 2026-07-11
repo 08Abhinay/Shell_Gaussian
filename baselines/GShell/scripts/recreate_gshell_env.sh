@@ -119,6 +119,73 @@ install_blender_bundle() {
     ln -sfn "$blender_root/blender-thumbnailer" "$ENV_PREFIX/bin/blender-thumbnailer"
 }
 
+install_nvdiffrast() {
+    local source_dir="$1"
+    local python_bin="$2"
+    local torch_lib_dir=""
+    local build_lib_dir=""
+    local build_so=""
+    local -a object_files=()
+
+    torch_lib_dir="$("$python_bin" - <<'PY'
+import os
+import torch
+print(os.path.join(os.path.dirname(torch.__file__), "lib"))
+PY
+)"
+
+    (
+        cd "$source_dir"
+        "$python_bin" setup.py build_ext --inplace
+
+        build_lib_dir="$(find build -maxdepth 1 -type d -name 'lib.*' | head -n 1)"
+        if [[ -z "$build_lib_dir" ]]; then
+            echo "Could not find nvdiffrast build/lib directory" >&2
+            exit 1
+        fi
+
+        build_so="$(find "$build_lib_dir" -maxdepth 1 -type f -name '_nvdiffrast_c*.so' | head -n 1)"
+        if [[ -z "$build_so" ]]; then
+            echo "Could not find built nvdiffrast extension under: $build_lib_dir" >&2
+            exit 1
+        fi
+
+        mapfile -d '' object_files < <(find build -type f -name '*.o' -print0 | sort -z)
+        if [[ "${#object_files[@]}" -eq 0 ]]; then
+            echo "Could not find nvdiffrast object files to relink" >&2
+            exit 1
+        fi
+
+        # Torch's default setuptools link step can resolve libcudart from the
+        # system CUDA 12 install on this server. Re-linking from the already
+        # built objects pins the extension back to the env-local CUDA 11.7
+        # runtime that matches PyTorch 1.13.1.
+        "$CXX" \
+            -shared \
+            -Wl,-rpath,"$ENV_PREFIX/lib" \
+            -Wl,-rpath-link,"$ENV_PREFIX/lib" \
+            -L"$torch_lib_dir" \
+            -L"$ENV_PREFIX/lib" \
+            "${object_files[@]}" \
+            -lc10 \
+            -ltorch \
+            -ltorch_cpu \
+            -ltorch_python \
+            -lcudart \
+            -lc10_cuda \
+            -ltorch_cuda_cu \
+            -ltorch_cuda_cpp \
+            -o "$build_so"
+
+        if readelf -d "$build_so" | grep -q 'libcudart.so.12'; then
+            echo "nvdiffrast relink still resolved against CUDA 12 runtime" >&2
+            exit 1
+        fi
+
+        "$python_bin" setup.py install --skip-build
+    )
+}
+
 patch_mkl_activation_hooks() {
     local activate="$ENV_PREFIX/etc/conda/activate.d/libblas_mkl_activate.sh"
     local deactivate="$ENV_PREFIX/etc/conda/deactivate.d/libblas_mkl_deactivate.sh"
@@ -332,10 +399,7 @@ PYTHON_BIN="$ENV_PREFIX/bin/python"
 
 NVDR_TMP=$(mktemp -d "${TMPDIR:-/tmp}/nvdiffrast_v040.XXXXXX")
 git clone --branch v0.4.0 --depth 1 https://github.com/NVlabs/nvdiffrast.git "$NVDR_TMP"
-(
-    cd "$NVDR_TMP"
-    "$PYTHON_BIN" setup.py install
-)
+install_nvdiffrast "$NVDR_TMP" "$PYTHON_BIN"
 
 TCNN_TMP=$(mktemp -d "${TMPDIR:-/tmp}/tiny_cuda_nn_v20.XXXXXX")
 git clone --recursive --branch v2.0 --depth 1 https://github.com/NVlabs/tiny-cuda-nn.git "$TCNN_TMP"

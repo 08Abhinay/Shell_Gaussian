@@ -30,6 +30,23 @@ from .mlp import MLP
 # Regularizer
 ###############################################################################
 
+def resolve_tets_path(grid_res):
+    module_dir = os.path.dirname(__file__)
+    project_root = os.path.abspath(os.path.join(module_dir, "..", "..", ".."))
+    candidates = [
+        os.path.join(project_root, "FootShellGaussian", "data", "tets", f"{grid_res}_tets.npz"),
+        os.path.join(project_root, "baselines", "GShell", "data", "tets", f"{grid_res}_tets.npz"),
+        os.path.join(project_root, "data", "tets", f"{grid_res}_tets.npz"),
+        os.path.join(os.getcwd(), "data", "tets", f"{grid_res}_tets.npz"),
+    ]
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+    searched = "\n".join(f"  - {path}" for path in candidates)
+    raise FileNotFoundError(
+        f"Could not find tet grid file for resolution {grid_res}. Searched:\n{searched}"
+    )
+
 def compute_sdf_reg_loss(sdf, all_edges):
     sdf_f1x6x2 = sdf[all_edges.reshape(-1)].reshape(-1,2)
     mask = torch.sign(sdf_f1x6x2[...,0]) != torch.sign(sdf_f1x6x2[...,1])
@@ -56,10 +73,11 @@ class GShellTetsGeometry(torch.nn.Module):
             self.optix_ctx = ou.OptiXContext()
 
             if tet_init_file is None:
-                tets = np.load('data/tets/{}_tets.npz'.format(self.grid_res))
+                tet_init_file = resolve_tets_path(self.grid_res)
+                tets = np.load(tet_init_file)
             else:
                 tets = np.load(tet_init_file)
-            print(f'using resolution {self.grid_res}')
+            print(f'using resolution {self.grid_res} from {tet_init_file}')
             self.verts    = torch.tensor(tets['vertices'], dtype=torch.float32, device='cuda')
             self.original_verts = self.verts.clone() if extract_from_generative else None
             self.verts    = self.verts - self.verts.mean(dim=0)

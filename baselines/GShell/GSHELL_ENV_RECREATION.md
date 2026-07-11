@@ -47,7 +47,8 @@ The straightforward pip commands for those two packages do not work cleanly in a
 3. add the system driver-library paths at link time
    - otherwise `tiny-cuda-nn` fails on `cannot find -lcuda`
 4. install `nvdiffrast` and `tiny-cuda-nn` from cloned source trees
-   - `nvdiffrast` needs the classic `setup.py install` path here
+   - `nvdiffrast` needs the classic `setup.py` build/install path here
+   - on this server, the default setuptools link step can bind `nvdiffrast` to the system `libcudart.so.12`; the working rebuild re-links the built objects so the final extension stays on the env-local CUDA 11.7 runtime that matches `torch 1.13.1`
    - `tiny-cuda-nn` still expects `setup.py install --no-networks`, and modern pip no longer forwards that flag the old way
 
 There is also one package-compatibility pin that matters in practice:
