@@ -1,0 +1,139 @@
+{
+  "description": "Normalized external shoe assets produced by normalize_external_shoe_assets.py. Model choices and render metadata were copied from the original external-source manifest.",
+  "source_manifest": "/storage/Abhinay/Shell_Gaussian/FootShellGaussian/configs/external_source_all_shoes_render_manifest.json",
+  "normalized_source_root": "/storage/Abhinay/home_ab5298/dataset/datasets/external/source",
+  "shoes": [
+    {
+      "name": "Red_heals",
+      "model": "Red_heals/source/model.dae",
+      "source_axes": "auto"
+    },
+    {
+      "name": "adidas-yeezy-boost-350-v2-zyon",
+      "model": "adidas-yeezy-boost-350-v2-zyon/source/mob.fbx",
+      "source_axes": {
+        "length": "-Y",
+        "width": "X",
+        "up": "Z"
+      }
+    },
+    {
+      "name": "air-jordan-1",
+      "model": "air-jordan-1/source/sketchfab_shoe.fbx",
+      "source_axes": {
+        "length": "-Y",
+        "width": "X",
+        "up": "Z"
+      },
+      "selection": {
+        "mode": "axis-side",
+        "axis": "Y",
+        "side": "min",
+        "separate_loose_parts": true
+      }
+    },
+    {
+      "name": "aj-12-basketball-sneakers",
+      "model": "aj-12-basketball-sneakers/source/Sneakers.dae",
+      "source_axes": "auto"
+    },
+    {
+      "name": "crocs-bae-platform-punk-shoe-in-black",
+      "model": "crocs-bae-platform-punk-shoe-in-black/source/crocs.fbx",
+      "source_axes": "auto"
+    },
+    {
+      "name": "crocs-shoe-purple",
+      "model": "crocs-shoe-purple/source/model.fbx",
+      "source_axes": "auto"
+    },
+    {
+      "name": "female-gymnasts-shoes",
+      "model": "female-gymnasts-shoes/source/1513_03ab_naisvoimistelijan_varsikenka.obj",
+      "source_axes": "auto"
+    },
+    {
+      "name": "nike-air-jordan",
+      "model": "nike-air-jordan/source/model.glb",
+      "source_axes": {
+        "length": "-X",
+        "width": "Y",
+        "up": "Z"
+      },
+      "selection": {
+        "mode": "axis-side",
+        "axis": "Y",
+        "side": "min",
+        "separate_loose_parts": true
+      }
+    },
+    {
+      "name": "nike-air-zoom-pegasus-36",
+      "model": "nike-air-zoom-pegasus-36/source/model.dae",
+      "source_axes": "auto"
+    },
+    {
+      "name": "pb129-shoe-low",
+      "model": "pb129-shoe-low/source/PB129_shoe_low.obj",
+      "source_axes": "auto"
+    },
+    {
+      "name": "priest-karol-wojtyas-sports-shoes",
+      "model": "priest-karol-wojtyas-sports-shoes/source/sketchfab_96_X_Buty_sportowe_Karola_Wojtyly.FBX.fbx",
+      "source_axes": "auto"
+    },
+    {
+      "name": "reserved-shoe-sneakers-3d-scan",
+      "model": "reserved-shoe-sneakers-3d-scan/source/reserved.fbx",
+      "source_axes": "auto"
+    },
+    {
+      "name": "sandal-1",
+      "model": "sandal-1/source/sandal.obj",
+      "source_axes": "auto"
+    },
+    {
+      "name": "sandal-birk",
+      "model": "sandal-birk/source/Sandal.fbx",
+      "source_axes": "auto"
+    },
+    {
+      "name": "sandals-0001",
+      "model": "sandals-0001/source/firstTry.obj",
+      "source_axes": "auto"
+    },
+    {
+      "name": "scanned-adidas-sports-shoe",
+      "model": "scanned-adidas-sports-shoe/source/Mesh.obj",
+      "source_axes": "auto"
+    },
+    {
+      "name": "cipela-za-upload",
+      "model": "cipela-za-upload/source/cipela za upload.OBJ",
+      "source_axes": {
+        "length": "-X",
+        "width": "-Z",
+        "up": "-Y"
+      }
+    },
+    {
+      "name": "sneaker",
+      "model": "sneaker/source/COMPARATIVA LEO VS SPIDER.obj",
+      "source_axes": "auto"
+    },
+    {
+      "name": "sneakers-low-poly-downloadable",
+      "model": "sneakers-low-poly-downloadable/source/Sneakers.obj",
+      "source_axes": {
+        "length": "X",
+        "width": "Z",
+        "up": "Y"
+      }
+    },
+    {
+      "name": "unused-blue-vans-shoe",
+      "model": "unused-blue-vans-shoe/source/Blue_Vans_Shoe_SF.obj",
+      "source_axes": "auto"
+    }
+  ]
+}

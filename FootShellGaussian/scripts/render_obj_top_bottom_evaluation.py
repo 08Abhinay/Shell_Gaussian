@@ -29,13 +29,19 @@ import numpy as np
 from mathutils import Matrix, Vector
 
 
+SUPPORTED_MODEL_SUFFIXES = frozenset({".dae", ".fbx", ".glb", ".gltf", ".obj"})
+SUPPORTED_AXIS_TOKENS = frozenset({"X", "Y", "Z", "-X", "-Y", "-Z"})
+AXIS_INDEX_TO_NAME = {0: "X", 1: "Y", 2: "Z"}
+AXIS_NAME_TO_INDEX = {name: idx for idx, name in AXIS_INDEX_TO_NAME.items()}
 RESOLUTION_X = 1536
 RESOLUTION_Y = 1024
 FOV_X_DEG = 22.5
 SAMPLES = 64
 CAMERA_RADIUS = 1.0
 FIT_MARGIN = 1.1
-BACKGROUND_GRAY = 92.0 / 255.0
+BACKGROUND_GRAY = 1.0
+COMPOSITE_BACKGROUND_VALUE = 4.0
+WORLD_BACKGROUND_STRENGTH = 1.0
 VAL_STRIDE = 6
 MULTI_ELEVATIONS_DEG = (-25.0, -5.0, 20.0, 45.0, 65.0)
 VIEWS_PER_RING = 36
@@ -77,11 +83,78 @@ def _argv_after_double_dash() -> list[str]:
     return argv[argv.index("--") + 1 :]
 
 
-def load_manifest(path: Path) -> dict[str, Any]:
+def validate_selection_cfg(selection_cfg: dict[str, Any], shoe_name: str) -> None:
+    mode = selection_cfg.get("mode")
+    if mode not in {"axis-min", "axis-side"}:
+        raise ValueError(f"{shoe_name}: unsupported selection mode {mode!r}")
+
+    axis = str(selection_cfg.get("axis", "Y")).upper()
+    if axis not in {"X", "Y", "Z"}:
+        raise ValueError(f"{shoe_name}: unsupported selection axis {axis!r}")
+
+    if mode == "axis-side":
+        side = str(selection_cfg.get("side", "min")).lower()
+        if side not in {"min", "max"}:
+            raise ValueError(f"{shoe_name}: unsupported selection side {side!r}")
+
+    separate = selection_cfg.get("separate_loose_parts", False)
+    if not isinstance(separate, bool):
+        raise ValueError(f"{shoe_name}: separate_loose_parts must be a boolean")
+
+
+def validate_manifest(payload: dict[str, Any], source_root: Path) -> None:
+    seen_names: set[str] = set()
+    for idx, shoe_cfg in enumerate(payload["shoes"]):
+        if not isinstance(shoe_cfg, dict):
+            raise ValueError(f"Manifest shoe entry {idx} must be an object")
+
+        shoe_name = str(shoe_cfg.get("name", "")).strip()
+        if not shoe_name:
+            raise ValueError(f"Manifest shoe entry {idx} is missing a non-empty name")
+        if shoe_name in seen_names:
+            raise ValueError(f"Manifest contains duplicate shoe name: {shoe_name}")
+        seen_names.add(shoe_name)
+
+        model_rel = shoe_cfg.get("model")
+        if not isinstance(model_rel, str) or not model_rel.strip():
+            raise ValueError(f"{shoe_name}: model must be a non-empty string")
+        model_path = source_root / model_rel
+        if model_path.suffix.lower() not in SUPPORTED_MODEL_SUFFIXES:
+            raise ValueError(
+                f"{shoe_name}: unsupported model suffix {model_path.suffix!r}; "
+                f"supported: {sorted(SUPPORTED_MODEL_SUFFIXES)}"
+            )
+        if not model_path.is_file():
+            raise FileNotFoundError(f"{shoe_name}: model file not found: {model_path}")
+
+        source_axes = shoe_cfg.get("source_axes", "auto")
+        if isinstance(source_axes, str):
+            if source_axes != "auto":
+                raise ValueError(f"{shoe_name}: source_axes string must be 'auto' when provided as text")
+        elif isinstance(source_axes, dict):
+            for axis_name in ("length", "width", "up"):
+                axis_value = source_axes.get(axis_name)
+                if not isinstance(axis_value, str) or axis_value not in SUPPORTED_AXIS_TOKENS:
+                    raise ValueError(
+                        f"{shoe_name}: source_axes.{axis_name} must be one of "
+                        f"{sorted(SUPPORTED_AXIS_TOKENS)}"
+                    )
+        else:
+            raise ValueError(f"{shoe_name}: source_axes must be either an object or 'auto'")
+
+        selection_cfg = shoe_cfg.get("selection")
+        if selection_cfg is not None:
+            if not isinstance(selection_cfg, dict):
+                raise ValueError(f"{shoe_name}: selection must be an object when provided")
+            validate_selection_cfg(selection_cfg, shoe_name)
+
+
+def load_manifest(path: Path, source_root: Path) -> dict[str, Any]:
     with path.open("r") as f:
         payload = json.load(f)
     if "shoes" not in payload or not isinstance(payload["shoes"], list):
         raise ValueError(f"Manifest must contain a shoes list: {path}")
+    validate_manifest(payload, source_root)
     return payload
 
 
@@ -105,6 +178,10 @@ def reset_scene() -> None:
     scene.eevee.taa_render_samples = SAMPLES
     scene.use_nodes = True
     scene.view_layers["ViewLayer"].use_pass_z = True
+    scene.view_settings.view_transform = "Standard"
+    scene.view_settings.look = "None"
+    scene.view_settings.exposure = 0.0
+    scene.view_settings.gamma = 1.0
     world = scene.world or bpy.data.worlds.new("World")
     scene.world = world
     if world.node_tree is None:
@@ -112,7 +189,7 @@ def reset_scene() -> None:
     bg = world.node_tree.nodes.get("Background")
     if bg is not None:
         bg.inputs[0].default_value = (BACKGROUND_GRAY, BACKGROUND_GRAY, BACKGROUND_GRAY, 1.0)
-        bg.inputs[1].default_value = 1.0
+        bg.inputs[1].default_value = WORLD_BACKGROUND_STRENGTH
 
 
 def import_model(model_path: Path) -> list[bpy.types.Object]:
@@ -120,6 +197,10 @@ def import_model(model_path: Path) -> list[bpy.types.Object]:
     before = {obj.name for obj in bpy.data.objects}
     if suffix == ".fbx":
         bpy.ops.import_scene.fbx(filepath=str(model_path), automatic_bone_orientation=True)
+    elif suffix == ".dae":
+        if not hasattr(bpy.ops.wm, "collada_import"):
+            raise RuntimeError("This Blender build does not expose wm.collada_import for .dae assets")
+        bpy.ops.wm.collada_import(filepath=str(model_path))
     elif suffix in {".glb", ".gltf"}:
         bpy.ops.import_scene.gltf(filepath=str(model_path))
     elif suffix == ".obj":
@@ -130,6 +211,8 @@ def import_model(model_path: Path) -> list[bpy.types.Object]:
     else:
         raise ValueError(f"Unsupported model format: {model_path}")
 
+    relink_missing_images(model_path)
+
     imported = [obj for obj in bpy.data.objects if obj.name not in before]
     mesh_objects = [obj for obj in imported if obj.type == "MESH"]
     if not mesh_objects:
@@ -137,6 +220,44 @@ def import_model(model_path: Path) -> list[bpy.types.Object]:
     if not mesh_objects:
         raise RuntimeError(f"No mesh objects imported from {model_path}")
     return mesh_objects
+
+
+def relink_missing_images(model_path: Path) -> None:
+    search_roots: list[Path] = []
+    for root in (model_path.parent, model_path.parent.parent):
+        if root.is_dir() and root not in search_roots:
+            search_roots.append(root)
+
+    if not search_roots:
+        return
+
+    indexed: dict[str, Path] = {}
+    for root in search_roots:
+        for path in root.rglob("*"):
+            if path.is_file() and path.suffix.lower() in {
+                ".png",
+                ".jpg",
+                ".jpeg",
+                ".tif",
+                ".tiff",
+                ".bmp",
+                ".webp",
+                ".exr",
+            }:
+                indexed.setdefault(path.name.lower(), path)
+
+    for image in bpy.data.images:
+        resolved = Path(bpy.path.abspath(image.filepath))
+        if resolved.is_file():
+            continue
+        replacement = indexed.get(Path(image.filepath).name.lower())
+        if replacement is None:
+            continue
+        image.filepath = str(replacement)
+        try:
+            image.reload()
+        except RuntimeError:
+            continue
 
 
 def deselect_all() -> None:
@@ -175,6 +296,136 @@ def source_axes_matrix(source_axes: dict[str, str]) -> np.ndarray:
         ],
         axis=0,
     )
+
+
+def axis_token(axis_name: str, sign: float) -> str:
+    return axis_name if sign >= 0.0 else f"-{axis_name}"
+
+
+def all_vertex_coords_world(objects: list[bpy.types.Object]) -> np.ndarray:
+    chunks: list[np.ndarray] = []
+    for obj in objects:
+        if not obj.data.vertices:
+            continue
+        verts_world = np.array([list(obj.matrix_world @ v.co) for v in obj.data.vertices], dtype=np.float64)
+        if verts_world.size > 0:
+            chunks.append(verts_world)
+    if not chunks:
+        raise RuntimeError("No mesh vertices available for source axis inference")
+    return np.concatenate(chunks, axis=0)
+
+
+def slice_vertices(coords: np.ndarray, axis_index: int, side: str, ratio: float = 0.08) -> np.ndarray:
+    axis_values = coords[:, axis_index]
+    axis_min = float(axis_values.min())
+    axis_max = float(axis_values.max())
+    extent = max(axis_max - axis_min, 1e-8)
+    margin = max(extent * ratio, 1e-5)
+    if side == "min":
+        mask = axis_values <= axis_min + margin
+        if not np.any(mask):
+            order = np.argsort(axis_values)
+            return coords[order[: min(len(order), 32)]]
+    else:
+        mask = axis_values >= axis_max - margin
+        if not np.any(mask):
+            order = np.argsort(axis_values)
+            return coords[order[-min(len(order), 32) :]]
+    return coords[mask]
+
+
+def projected_slice_area(points: np.ndarray, axis_indices: tuple[int, int]) -> float:
+    if points.size == 0:
+        return 0.0
+    projected = points[:, axis_indices]
+    if len(projected) >= 10:
+        lo = np.quantile(projected, 0.05, axis=0)
+        hi = np.quantile(projected, 0.95, axis=0)
+    else:
+        lo = projected.min(axis=0)
+        hi = projected.max(axis=0)
+    span = np.maximum(hi - lo, 1e-6)
+    return float(span[0] * span[1])
+
+
+def infer_auto_source_axes(mesh_objects: list[bpy.types.Object]) -> tuple[dict[str, str], dict[str, Any]]:
+    coords = all_vertex_coords_world(mesh_objects)
+    bbox_min = coords.min(axis=0)
+    bbox_max = coords.max(axis=0)
+    extents = bbox_max - bbox_min
+
+    axis_order = np.argsort(extents)
+    up_index = int(axis_order[0])
+    width_index = int(axis_order[1])
+    length_index = int(axis_order[2])
+
+    up_name = AXIS_INDEX_TO_NAME[up_index]
+    width_name = AXIS_INDEX_TO_NAME[width_index]
+    length_name = AXIS_INDEX_TO_NAME[length_index]
+
+    up_projection_axes = tuple(idx for idx in range(3) if idx != up_index)
+    up_min_slice = slice_vertices(coords, up_index, "min")
+    up_max_slice = slice_vertices(coords, up_index, "max")
+    up_min_area = projected_slice_area(up_min_slice, up_projection_axes)
+    up_max_area = projected_slice_area(up_max_slice, up_projection_axes)
+    up_sign = 1.0 if up_min_area >= up_max_area else -1.0
+
+    length_projection_axes = (width_index, up_index)
+    length_min_slice = slice_vertices(coords, length_index, "min")
+    length_max_slice = slice_vertices(coords, length_index, "max")
+    length_min_area = projected_slice_area(length_min_slice, length_projection_axes)
+    length_max_area = projected_slice_area(length_max_slice, length_projection_axes)
+    length_sign = 1.0 if length_max_area <= length_min_area else -1.0
+
+    length_token = axis_token(length_name, length_sign)
+    up_token = axis_token(up_name, up_sign)
+    width_positive = axis_token(width_name, 1.0)
+    width_negative = axis_token(width_name, -1.0)
+    if np.linalg.det(source_axes_matrix({"length": length_token, "width": width_positive, "up": up_token})) > 0.0:
+        width_token = width_positive
+    else:
+        width_token = width_negative
+
+    resolved = {
+        "length": length_token,
+        "width": width_token,
+        "up": up_token,
+    }
+    summary = {
+        "mode": "auto",
+        "bbox_min": bbox_min.tolist(),
+        "bbox_max": bbox_max.tolist(),
+        "bbox_extent": extents.tolist(),
+        "extent_rank": {
+            "length_axis": length_name,
+            "width_axis": width_name,
+            "up_axis": up_name,
+        },
+        "slice_area_heuristics": {
+            "up_min_area": up_min_area,
+            "up_max_area": up_max_area,
+            "length_min_area": length_min_area,
+            "length_max_area": length_max_area,
+        },
+        "resolved_source_axes": resolved,
+    }
+    return resolved, summary
+
+
+def resolve_source_axes(
+    mesh_objects: list[bpy.types.Object],
+    shoe_cfg: dict[str, Any],
+) -> tuple[dict[str, str], dict[str, Any]]:
+    source_axes_cfg = shoe_cfg.get("source_axes", "auto")
+    if source_axes_cfg == "auto":
+        return infer_auto_source_axes(mesh_objects)
+    if isinstance(source_axes_cfg, dict):
+        resolved = dict(source_axes_cfg)
+        return resolved, {
+            "mode": "provided",
+            "resolved_source_axes": resolved,
+        }
+    raise ValueError(f"{shoe_cfg['name']}: unsupported source_axes config {source_axes_cfg!r}")
 
 
 def flip_mesh_normals(obj: bpy.types.Object) -> None:
@@ -288,17 +539,29 @@ def apply_component_selection(
 
     records = component_records(work_objects)
     mode = selection_cfg.get("mode")
-    if mode != "axis-min":
-        raise ValueError(f"Unsupported selection mode: {mode}")
-
     axis_name = str(selection_cfg.get("axis", "Y")).upper()
     axis_index = {"X": 0, "Y": 1, "Z": 2}[axis_name]
     mins = np.array([row["bbox_min"][axis_index] for row in records], dtype=np.float64)
-    global_min = float(mins.min())
     maxs = np.array([row["bbox_max"][axis_index] for row in records], dtype=np.float64)
     extent = float(maxs.max() - mins.min())
     threshold = max(extent * 1e-7, 1e-7)
-    keep_mask = np.abs(mins - global_min) <= threshold
+    side = None
+    pivot = None
+
+    if mode == "axis-min":
+        global_min = float(mins.min())
+        keep_mask = np.abs(mins - global_min) <= threshold
+    elif mode == "axis-side":
+        centers = np.array([row["center"][axis_index] for row in records], dtype=np.float64)
+        side = str(selection_cfg.get("side", "min")).lower()
+        pivot = float(0.5 * (mins.min() + maxs.max()))
+        if side == "min":
+            keep_mask = centers <= pivot + threshold
+        else:
+            keep_mask = centers >= pivot - threshold
+    else:
+        raise ValueError(f"Unsupported selection mode: {mode}")
+
     keep_indices = np.flatnonzero(keep_mask)
     if keep_indices.size == 0:
         raise RuntimeError("Component selection removed every component")
@@ -313,6 +576,8 @@ def apply_component_selection(
         "mode": mode,
         "separate_loose_parts": separate,
         "selection_axis": axis_name,
+        "selection_side": side,
+        "selection_pivot": pivot,
         "selection_threshold": threshold,
         "component_index": int(keep_indices[0]),
         "component_count_before_selection": len(records),
@@ -367,7 +632,8 @@ def canonicalize_geometry(
     shoe_cfg: dict[str, Any],
 ) -> dict[str, Any]:
     apply_object_transforms(mesh_objects)
-    axis_mat = source_axes_matrix(shoe_cfg["source_axes"])
+    resolved_source_axes, source_axes_summary = resolve_source_axes(mesh_objects, shoe_cfg)
+    axis_mat = source_axes_matrix(resolved_source_axes)
     apply_axis_transform(mesh_objects, axis_mat)
 
     selected_objects, selection_summary = apply_component_selection(
@@ -398,6 +664,8 @@ def canonicalize_geometry(
 
     return {
         "objects": mesh_objects_after,
+        "resolved_source_axes": resolved_source_axes,
+        "source_axes_summary": source_axes_summary,
         "source_axes_matrix": axis_mat,
         "raw_bbox_min": bbox_min_raw,
         "raw_bbox_max": bbox_max_raw,
@@ -507,7 +775,7 @@ def render_image_and_depth(
     width, height = rgba_img.size[:]
     rgba = np.array(rgba_img.pixels[:], dtype=np.float32).reshape(height, width, 4)
     alpha = rgba[..., 3:4]
-    rgb = rgba[..., :3] * alpha + BACKGROUND_GRAY * (1.0 - alpha)
+    rgb = rgba[..., :3] * alpha + COMPOSITE_BACKGROUND_VALUE * (1.0 - alpha)
     mask = (alpha[..., 0] > 1e-4).astype(np.float32)
 
     save_float_image(
@@ -686,6 +954,33 @@ def copy_frame_assets(src_root: Path, dst_root: Path, src_frame: RenderedFrame, 
     return payload
 
 
+def compat_frame_payload(frame: dict[str, Any], split_prefix: str) -> dict[str, Any]:
+    payload = dict(frame)
+    payload["file_path"] = f"{split_prefix}/{frame['file_path']}"
+    if "invdepth_path" in frame:
+        payload["invdepth_path"] = f"{split_prefix}/{frame['invdepth_path']}"
+    if "all_file_path" in frame:
+        payload["all_file_path"] = f"multi_elevation_360/all/{frame['all_file_path']}"
+    if "all_invdepth_path" in frame:
+        payload["all_invdepth_path"] = f"multi_elevation_360/all/{frame['all_invdepth_path']}"
+    return payload
+
+
+def write_compat_transforms(shoe_root: Path, train_frames: list[dict[str, Any]], val_frames: list[dict[str, Any]]) -> dict[str, Any]:
+    train_payload = [compat_frame_payload(frame, "multi_elevation_360/train") for frame in train_frames]
+    test_payload = [compat_frame_payload(frame, "multi_elevation_360/val") for frame in val_frames]
+    train_path = shoe_root / "transforms_train.json"
+    test_path = shoe_root / "transforms_test.json"
+    write_frame_json(train_path, train_payload)
+    write_frame_json(test_path, test_payload)
+    return {
+        "transforms_train": str(train_path),
+        "transforms_test": str(test_path),
+        "train_count": len(train_payload),
+        "test_count": len(test_payload),
+    }
+
+
 def write_splits(output_root: Path, frames: list[RenderedFrame], render_invdepth: bool) -> dict[str, Any]:
     all_dir = output_root / "all"
     write_frame_json(all_dir / "transforms.json", [frame_to_payload(frame) for frame in frames])
@@ -712,10 +1007,12 @@ def write_splits(output_root: Path, frames: list[RenderedFrame], render_invdepth
 
     write_frame_json(train_dir / "transforms.json", train_frames)
     write_frame_json(val_dir / "transforms.json", val_frames)
+    compat_summary = write_compat_transforms(output_root.parent, train_frames, val_frames)
     return {
         "train_count": len(train_frames),
         "val_count": len(val_frames),
         "val_stride": VAL_STRIDE,
+        "compatibility": compat_summary,
     }
 
 
@@ -736,6 +1033,8 @@ def root_summary_row(
         "turntable_dir": str(shoe_root / "turntable"),
         "top_to_bottom_dir": str(shoe_root / "top_to_bottom"),
         "multi_elevation_360_dir": str(shoe_root / "multi_elevation_360"),
+        "transforms_train_json": str(shoe_root / "transforms_train.json"),
+        "transforms_test_json": str(shoe_root / "transforms_test.json"),
         "canonical_extent_x": float(extent[0]),
         "canonical_extent_y": float(extent[1]),
         "canonical_extent_z": float(extent[2]),
@@ -774,9 +1073,11 @@ def render_one_shoe(shoe_cfg: dict[str, Any], args: argparse.Namespace) -> dict[
             "margin": FIT_MARGIN,
         },
         "source_axes": {
-            "length_to_canonical_x": shoe_cfg["source_axes"]["length"],
-            "width_to_canonical_y": shoe_cfg["source_axes"]["width"],
-            "up_to_canonical_z": shoe_cfg["source_axes"]["up"],
+            "requested": shoe_cfg.get("source_axes", "auto"),
+            "length_to_canonical_x": canonical["resolved_source_axes"]["length"],
+            "width_to_canonical_y": canonical["resolved_source_axes"]["width"],
+            "up_to_canonical_z": canonical["resolved_source_axes"]["up"],
+            "resolution": canonical["source_axes_summary"],
         },
         "mesh": canonical["mesh_summary"],
         "component_selection": canonical["component_selection"],
@@ -794,6 +1095,7 @@ def render_one_shoe(shoe_cfg: dict[str, Any], args: argparse.Namespace) -> dict[
         "turntable": None,
         "top_to_bottom": None,
         "multi_elevation_360": summary,
+        "compatibility": summary["split"]["compatibility"],
     }
     json_dump(shoe_root / "synthetic_canonicalization.json", canonicalization_payload)
     return {
@@ -818,8 +1120,11 @@ def write_root_summaries(output_root: Path, rows: list[dict[str, Any]]) -> None:
 
 def main() -> None:
     args = parse_args()
-    manifest = load_manifest(args.manifest)
+    manifest = load_manifest(args.manifest, args.source_root)
     selected = set(args.shoe or [])
+    unknown_selected = sorted(selected - {str(shoe_cfg["name"]) for shoe_cfg in manifest["shoes"]})
+    if unknown_selected:
+        raise SystemExit(f"Selected shoe(s) not found in manifest: {', '.join(unknown_selected)}")
 
     rows: list[dict[str, Any]] = []
     errors: list[str] = []

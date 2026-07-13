@@ -1,5 +1,20 @@
 {
-  "description": "External shoe assets rendered into a canonical synthetic dataset. Source axes map into raw canonical X=length, Y=width, Z=up.",
+  "description": "Template manifest for FAB shoe assets rendered into the standardized FootShellGaussian evaluation dataset. Paths are relative to the FAB source root passed to the generation script.",
+  "example_shoe": {
+    "name": "example-fab-shoe",
+    "model": "example-fab-shoe/source/model.glb",
+    "source_axes": {
+      "length": "-Y",
+      "width": "X",
+      "up": "Z"
+    },
+    "selection": {
+      "mode": "axis-side",
+      "axis": "Y",
+      "side": "min",
+      "separate_loose_parts": true
+    }
+  },
   "shoes": [
     {
       "name": "adidas-yeezy-boost-350-v2-zyon",

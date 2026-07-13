@@ -6,6 +6,7 @@ Primary entry points:
 
 - `run_final_pipeline.sh`: orchestrate the downstream shoe pipeline stages from GShell training through alignment and pseudo-last generation.
 - `render_obj_top_bottom_evaluation.py`: render external shoe assets into the legacy evaluation dataset layout from Blender.
+- `run_fab_evaluation_dataset_generation.py`: render FAB shoe assets into a new processed evaluation root and validate the generated splits.
 
 Core helpers kept in this folder:
 
