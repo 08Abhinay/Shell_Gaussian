@@ -45,6 +45,18 @@ WORLD_BACKGROUND_STRENGTH = 1.0
 VAL_STRIDE = 6
 MULTI_ELEVATIONS_DEG = (-25.0, -5.0, 20.0, 45.0, 65.0)
 VIEWS_PER_RING = 36
+AUTO_SELECTION_PROBE_VIEWS = (
+    (20.0, 0.0),
+    (20.0, 60.0),
+    (20.0, 120.0),
+    (20.0, 180.0),
+    (20.0, 240.0),
+    (20.0, 300.0),
+)
+PROBE_MASK_DOWNSAMPLE = 4
+PROBE_MIN_COMPONENT_PIXELS = 64
+PROBE_LARGE_COMPONENT_RATIO = 0.08
+PROBE_MIN_VERTEX_RATIO = 0.2
 
 
 @dataclass
@@ -72,6 +84,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--shoe", action="append", default=None, help="Render only this shoe name.")
     parser.add_argument("--render-invdepth", action="store_true")
+    parser.add_argument(
+        "--selection-debug-dir",
+        type=Path,
+        default=None,
+        help="Optional directory for keeping auto-selection probe renders and reports.",
+    )
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args(_argv_after_double_dash())
 
@@ -163,6 +181,49 @@ def json_dump(path: Path, payload: Any) -> None:
     with path.open("w") as f:
         json.dump(payload, f, indent=2)
         f.write("\n")
+
+
+def clone_shoe_cfg_with_selection(
+    shoe_cfg: dict[str, Any],
+    selection_cfg: dict[str, Any] | None,
+) -> dict[str, Any]:
+    cloned = dict(shoe_cfg)
+    if selection_cfg is None:
+        cloned.pop("selection", None)
+    else:
+        cloned["selection"] = dict(selection_cfg)
+    return cloned
+
+
+def selection_cfg_label(selection_cfg: dict[str, Any] | None) -> str:
+    if selection_cfg is None:
+        return "no_split"
+    mode = str(selection_cfg["mode"])
+    axis = str(selection_cfg.get("axis", "")).upper()
+    side = str(selection_cfg.get("side", "")).lower()
+    pieces = [mode]
+    if axis:
+        pieces.append(axis)
+    if side:
+        pieces.append(side)
+    if selection_cfg.get("separate_loose_parts", False):
+        pieces.append("loose")
+    return "_".join(pieces)
+
+
+def auto_selection_candidates() -> list[dict[str, Any] | None]:
+    candidates: list[dict[str, Any] | None] = [None]
+    for axis_name in ("X", "Y", "Z"):
+        for side in ("min", "max"):
+            candidates.append(
+                {
+                    "mode": "axis-side",
+                    "axis": axis_name,
+                    "side": side,
+                    "separate_loose_parts": True,
+                }
+            )
+    return candidates
 
 
 def reset_scene() -> None:
@@ -613,6 +674,28 @@ def scale_objects(objects: list[bpy.types.Object], scale: float) -> None:
     bpy.context.view_layer.update()
 
 
+def bake_objects_to_world(objects: list[bpy.types.Object]) -> list[bpy.types.Object]:
+    """Convert object-local mesh coordinates into world coordinates.
+
+    GLB imports often preserve a node hierarchy. After loose-part separation, moving
+    ``obj.location`` can be parent-local instead of world-local, which breaks the
+    centering assumption used by the camera-fit math.
+    """
+    baked: list[bpy.types.Object] = []
+    for obj in objects:
+        world_matrix = obj.matrix_world.copy()
+        det = float(world_matrix.to_3x3().determinant())
+        obj.parent = None
+        obj.matrix_world = Matrix.Identity(4)
+        obj.data.transform(world_matrix)
+        if det < 0.0:
+            flip_mesh_normals(obj)
+        obj.data.update()
+        baked.append(obj)
+    bpy.context.view_layer.update()
+    return baked
+
+
 def normalization_scale(bbox_min: np.ndarray, bbox_max: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, float]:
     centered_min = bbox_min.copy()
     centered_max = bbox_max.copy()
@@ -640,6 +723,7 @@ def canonicalize_geometry(
         [obj for obj in bpy.context.scene.objects if obj.type == "MESH"],
         shoe_cfg.get("selection"),
     )
+    selected_objects = bake_objects_to_world(selected_objects)
 
     bbox_min_raw, bbox_max_raw = scene_bbox(selected_objects)
     center = 0.5 * (bbox_min_raw + bbox_max_raw)
@@ -804,6 +888,226 @@ def render_image_and_depth(
         bpy.data.images.remove(depth_img)
 
     bpy.data.images.remove(rgba_img)
+
+
+def load_saved_mask(mask_path: Path) -> np.ndarray:
+    mask_img = bpy.data.images.load(str(mask_path), check_existing=False)
+    width, height = mask_img.size[:]
+    rgba = np.array(mask_img.pixels[:], dtype=np.float32).reshape(height, width, 4)
+    bpy.data.images.remove(mask_img)
+    return rgba[..., 0] > 0.5
+
+
+def count_large_mask_components(mask: np.ndarray) -> int:
+    sampled = np.ascontiguousarray(mask[::PROBE_MASK_DOWNSAMPLE, ::PROBE_MASK_DOWNSAMPLE] > 0)
+    total_foreground = int(sampled.sum())
+    if total_foreground == 0:
+        return 0
+
+    min_area = max(PROBE_MIN_COMPONENT_PIXELS, int(total_foreground * PROBE_LARGE_COMPONENT_RATIO))
+    height, width = sampled.shape
+    seen = np.zeros_like(sampled, dtype=bool)
+    large_components = 0
+
+    ys, xs = np.nonzero(sampled)
+    for y, x in zip(ys.tolist(), xs.tolist()):
+        if seen[y, x]:
+            continue
+        stack = [(y, x)]
+        seen[y, x] = True
+        area = 0
+        while stack:
+            cy, cx = stack.pop()
+            area += 1
+            for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                ny = cy + dy
+                nx = cx + dx
+                if 0 <= ny < height and 0 <= nx < width and sampled[ny, nx] and not seen[ny, nx]:
+                    seen[ny, nx] = True
+                    stack.append((ny, nx))
+        if area >= min_area:
+            large_components += 1
+    return large_components
+
+
+def summarize_probe_mask(mask: np.ndarray) -> dict[str, Any]:
+    return {
+        "foreground_ratio": float(mask.mean()),
+        "large_component_count": int(count_large_mask_components(mask)),
+        "touches_border": bool(mask[0].any() or mask[-1].any() or mask[:, 0].any() or mask[:, -1].any()),
+    }
+
+
+def kept_component_records(selection_summary: dict[str, Any]) -> list[dict[str, Any]]:
+    name_to_record = {
+        str(row["name"]): row
+        for row in selection_summary.get("components_before_selection", [])
+    }
+    records = []
+    for name in selection_summary.get("kept_component_names", []):
+        record = name_to_record.get(str(name))
+        if record is not None:
+            records.append(record)
+    return records
+
+
+def probe_candidate_report(
+    shoe_name: str,
+    source_model: Path,
+    shoe_cfg: dict[str, Any],
+    selection_cfg: dict[str, Any] | None,
+    selection_debug_dir: Path | None,
+) -> dict[str, Any]:
+    candidate_label = selection_cfg_label(selection_cfg)
+    probe_debug_dir = None
+    if selection_debug_dir is not None:
+        probe_debug_dir = selection_debug_dir / shoe_name / candidate_label
+        if probe_debug_dir.exists():
+            shutil.rmtree(probe_debug_dir)
+        probe_debug_dir.mkdir(parents=True, exist_ok=True)
+
+    probe_root = probe_debug_dir or Path(tempfile.mkdtemp(prefix=f"{shoe_name}_{candidate_label}_probe_"))
+    try:
+        reset_scene()
+        mesh_objects = import_model(source_model)
+        probe_cfg = clone_shoe_cfg_with_selection(shoe_cfg, selection_cfg)
+        canonical = canonicalize_geometry(mesh_objects, probe_cfg)
+        selection_summary = canonical["component_selection"]
+        kept_records = kept_component_records(selection_summary)
+        total_vertices = sum(int(row.get("vertices", 0)) for row in selection_summary.get("components_before_selection", []))
+        kept_vertices = sum(int(row.get("vertices", 0)) for row in kept_records)
+        vertex_ratio = float(kept_vertices / total_vertices) if total_vertices > 0 else 1.0
+
+        ensure_camera()
+        configure_depth_output(probe_root)
+        camera = bpy.context.scene.camera
+
+        view_summaries = []
+        for probe_index, (elevation_deg, azimuth_deg) in enumerate(AUTO_SELECTION_PROBE_VIEWS):
+            probe_name = f"probe_{probe_index:02d}"
+            image_path = probe_root / f"{probe_name}.jpg"
+            mask_path = probe_root / f"{probe_name}.png"
+            eye = orbit_eye(CAMERA_RADIUS, azimuth_deg, elevation_deg)
+            c2w = c2w_from_eye(eye)
+            render_image_and_depth(camera, c2w, probe_root, image_path, mask_path, None)
+            mask = load_saved_mask(mask_path)
+            view_summary = summarize_probe_mask(mask)
+            view_summary["elevation_deg"] = float(elevation_deg)
+            view_summary["azimuth_deg"] = float(azimuth_deg)
+            view_summary["image_path"] = str(image_path) if probe_debug_dir is not None else None
+            view_summary["mask_path"] = str(mask_path) if probe_debug_dir is not None else None
+            view_summaries.append(view_summary)
+
+        multi_component_views = sum(int(view["large_component_count"] > 1) for view in view_summaries)
+        border_touch_views = sum(int(view["touches_border"]) for view in view_summaries)
+        max_large_components = max((int(view["large_component_count"]) for view in view_summaries), default=0)
+        min_foreground_ratio = min((float(view["foreground_ratio"]) for view in view_summaries), default=0.0)
+        avg_foreground_ratio = float(np.mean([float(view["foreground_ratio"]) for view in view_summaries])) if view_summaries else 0.0
+
+        passed = (
+            max_large_components == 1
+            and multi_component_views == 0
+            and border_touch_views == 0
+            and min_foreground_ratio > 0.0
+        )
+        if selection_cfg is not None:
+            passed = passed and vertex_ratio >= PROBE_MIN_VERTEX_RATIO
+
+        report = {
+            "candidate": candidate_label,
+            "selection": selection_cfg,
+            "passed": bool(passed),
+            "component_count_before_selection": int(selection_summary.get("component_count_before_selection", 0)),
+            "kept_component_count": int(selection_summary.get("kept_component_count", 0)),
+            "kept_vertex_ratio": vertex_ratio,
+            "probe": {
+                "view_count": len(view_summaries),
+                "multi_component_views": int(multi_component_views),
+                "border_touch_views": int(border_touch_views),
+                "max_large_component_count": int(max_large_components),
+                "min_foreground_ratio": min_foreground_ratio,
+                "avg_foreground_ratio": avg_foreground_ratio,
+                "views": view_summaries,
+            },
+        }
+        if probe_debug_dir is not None:
+            report["debug_dir"] = str(probe_debug_dir)
+            json_dump(probe_debug_dir / "probe_summary.json", report)
+        return report
+    finally:
+        if probe_debug_dir is None:
+            shutil.rmtree(probe_root, ignore_errors=True)
+
+
+def resolve_selection_for_render(
+    shoe_cfg: dict[str, Any],
+    source_model: Path,
+    selection_debug_dir: Path | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    requested_selection = shoe_cfg.get("selection")
+    if requested_selection is not None:
+        return dict(shoe_cfg), {
+            "mode": "explicit",
+            "requested_selection": requested_selection,
+            "resolved_selection": requested_selection,
+            "chosen_candidate": selection_cfg_label(requested_selection),
+            "auto_probe": None,
+        }
+
+    candidate_reports: list[dict[str, Any]] = []
+    no_split_report = probe_candidate_report(
+        str(shoe_cfg["name"]),
+        source_model,
+        shoe_cfg,
+        None,
+        selection_debug_dir,
+    )
+    candidate_reports.append(no_split_report)
+    if no_split_report["passed"]:
+        return clone_shoe_cfg_with_selection(shoe_cfg, None), {
+            "mode": "auto_keep_all",
+            "requested_selection": None,
+            "resolved_selection": None,
+            "chosen_candidate": no_split_report["candidate"],
+            "auto_probe": {
+                "candidates": candidate_reports,
+            },
+        }
+
+    chosen_report = None
+    for selection_cfg in auto_selection_candidates()[1:]:
+        report = probe_candidate_report(
+            str(shoe_cfg["name"]),
+            source_model,
+            shoe_cfg,
+            selection_cfg,
+            selection_debug_dir,
+        )
+        candidate_reports.append(report)
+        if report["passed"]:
+            chosen_report = report
+            break
+
+    if chosen_report is None:
+        return clone_shoe_cfg_with_selection(shoe_cfg, None), {
+            "mode": "auto_fallback_no_split",
+            "requested_selection": None,
+            "resolved_selection": None,
+            "chosen_candidate": no_split_report["candidate"],
+            "auto_probe": {
+                "candidates": candidate_reports,
+            },
+        }
+
+    return clone_shoe_cfg_with_selection(shoe_cfg, chosen_report["selection"]), {
+        "mode": "auto_split",
+        "requested_selection": None,
+        "resolved_selection": chosen_report["selection"],
+        "chosen_candidate": chosen_report["candidate"],
+        "auto_probe": {
+            "candidates": candidate_reports,
+        },
+    }
 
 
 def save_float_image(rgb: np.ndarray, path: Path, file_format: str, alpha_value: float) -> None:
@@ -1055,9 +1359,15 @@ def render_one_shoe(shoe_cfg: dict[str, Any], args: argparse.Namespace) -> dict[
         shutil.rmtree(shoe_root)
     shoe_root.mkdir(parents=True, exist_ok=True)
 
+    resolved_shoe_cfg, selection_resolution = resolve_selection_for_render(
+        shoe_cfg,
+        source_model,
+        args.selection_debug_dir,
+    )
+
     reset_scene()
     mesh_objects = import_model(source_model)
-    canonical = canonicalize_geometry(mesh_objects, shoe_cfg)
+    canonical = canonicalize_geometry(mesh_objects, resolved_shoe_cfg)
     frames, summary = render_multi_elevation_dataset(shoe_name, shoe_root, args.render_invdepth)
 
     canonicalization_payload = {
@@ -1080,6 +1390,7 @@ def render_one_shoe(shoe_cfg: dict[str, Any], args: argparse.Namespace) -> dict[
             "resolution": canonical["source_axes_summary"],
         },
         "mesh": canonical["mesh_summary"],
+        "selection_resolution": selection_resolution,
         "component_selection": canonical["component_selection"],
         "raw_bbox": {
             "min": canonical["raw_bbox_min"].tolist(),

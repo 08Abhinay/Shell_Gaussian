@@ -104,12 +104,20 @@ For FlexiCubes + G-Shell, run
 #### Hat data
 
 ```
-  python train_gshelltet_polycam.py --config config/polycam_mc_128.json --trainset_path $TRAINSET_PATH --o $OUTPUT_PATH
+  python train_gshelltet_polycam.py --config config/polycam_mc_128.json --trainset_path $TRAINSET_PATH --testset_path $TESTSET_PATH --o $OUTPUT_PATH
 ```
 
 ```
-  python train_gshelltet_polycam.py --config config/polycam_mc_128.json --trainset_path $TRAINSET_PATH --o $OUTPUT_PATH
+  python train_gshelltet_polycam.py --config config/polycam_mc_128.json --train-transforms-json $TRAIN_TRANSFORMS_JSON --validate-transforms-json $VALIDATE_TRANSFORMS_JSON --o $OUTPUT_PATH
 ```
+
+The local shell wrappers in `scripts/train_shoe.sh` and `scripts/train_all_shoes_tmux.sh` also support passing these JSON choices from environment variables:
+
+- `GSHELL_TRAINER=polycam`
+- `GSHELL_TRAIN_TRANSFORMS_JSON=...`
+- `GSHELL_VALIDATE_TRANSFORMS_JSON=...`
+
+See [REPRODUCTION.md](REPRODUCTION.md) for the shoe-dataset commands used in this repo.
 
 #### On config files
 

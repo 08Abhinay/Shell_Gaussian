@@ -11,10 +11,31 @@ REQUESTED_SHOES=("${@+"$@"}")
 SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TRAIN_SCRIPT="${PROJECT_DIR}/scripts/train_shoe.sh"
-DATASET_ROOT="${GSHELL_DATASET_ROOT:-/data/abelde/datasets/processed/gshell_shoes}"
-CONFIG_PATH="${GSHELL_CONFIG:-${PROJECT_DIR}/configs/shoes_mc_normfix.json}"
-OUT_SUFFIX="${GSHELL_OUT_SUFFIX:-_normfix}"
-OUTPUT_ROOT="${GSHELL_OUTPUT_ROOT:-${PROJECT_DIR}/output}"
+LOCAL_ENV_DIR="/storage/Abhinay/home_ab5298/anaconda3/envs/shellgaussianenv"
+LOCAL_DATASET_ROOT="/storage/Abhinay/home_ab5298/dataset/datasets/processed/fab_evaluation_final"
+
+if [ -d "${LOCAL_DATASET_ROOT}" ]; then
+    DEFAULT_CONDA_ENV="${LOCAL_ENV_DIR}"
+    DEFAULT_DATASET_ROOT="${LOCAL_DATASET_ROOT}"
+    DEFAULT_CONFIG_PATH="${PROJECT_DIR}/configs/shoes_mc_normfix_512_768_depth.json"
+    DEFAULT_OUT_SUFFIX="_depth"
+    DEFAULT_OUTPUT_ROOT="${PROJECT_DIR}/output/fab_evaluation_final_depth"
+else
+    DEFAULT_CONDA_ENV=""
+    DEFAULT_DATASET_ROOT="/data/abelde/datasets/processed/gshell_shoes"
+    DEFAULT_CONFIG_PATH="${PROJECT_DIR}/configs/shoes_mc_normfix_512_768.json"
+    DEFAULT_OUT_SUFFIX="_normfix"
+    DEFAULT_OUTPUT_ROOT="${PROJECT_DIR}/output"
+fi
+
+DATASET_ROOT="${GSHELL_DATASET_ROOT:-${DEFAULT_DATASET_ROOT}}"
+CONFIG_PATH="${GSHELL_CONFIG:-${DEFAULT_CONFIG_PATH}}"
+OUT_SUFFIX="${GSHELL_OUT_SUFFIX:-${DEFAULT_OUT_SUFFIX}}"
+OUTPUT_ROOT="${GSHELL_OUTPUT_ROOT:-${DEFAULT_OUTPUT_ROOT}}"
+CONDA_ENV="${GSHELL_CONDA_ENV:-${DEFAULT_CONDA_ENV}}"
+TRAINER_MODE="${GSHELL_TRAINER:-auto}"
+TRAIN_TRANSFORMS_JSON="${GSHELL_TRAIN_TRANSFORMS_JSON:-}"
+VALIDATE_TRANSFORMS_JSON="${GSHELL_VALIDATE_TRANSFORMS_JSON:-}"
 SKIP_EXISTING="${SKIP_EXISTING:-1}"
 
 timestamp() {
@@ -95,6 +116,10 @@ if [[ "${INSIDE_BATCH_TMUX:-0}" != "1" ]]; then
         "GSHELL_CONFIG=${CONFIG_PATH}"
         "GSHELL_OUT_SUFFIX=${OUT_SUFFIX}"
         "GSHELL_OUTPUT_ROOT=${OUTPUT_ROOT}"
+        "GSHELL_CONDA_ENV=${CONDA_ENV}"
+        "GSHELL_TRAINER=${TRAINER_MODE}"
+        "GSHELL_TRAIN_TRANSFORMS_JSON=${TRAIN_TRANSFORMS_JSON}"
+        "GSHELL_VALIDATE_TRANSFORMS_JSON=${VALIDATE_TRANSFORMS_JSON}"
         "SKIP_EXISTING=${SKIP_EXISTING}"
         "MIN_FREE_MB=${MIN_FREE_MB}"
         "MAX_PARALLEL_JOBS=${MAX_PARALLEL_JOBS}"
@@ -129,6 +154,10 @@ echo "[$(timestamp)] DATASET_ROOT=${DATASET_ROOT}"
 echo "[$(timestamp)] CONFIG_PATH=${CONFIG_PATH}"
 echo "[$(timestamp)] OUT_SUFFIX=${OUT_SUFFIX}"
 echo "[$(timestamp)] OUTPUT_ROOT=${OUTPUT_ROOT}"
+echo "[$(timestamp)] CONDA_ENV=${CONDA_ENV:-default}"
+echo "[$(timestamp)] TRAINER_MODE=${TRAINER_MODE}"
+echo "[$(timestamp)] TRAIN_TRANSFORMS_JSON=${TRAIN_TRANSFORMS_JSON:-auto}"
+echo "[$(timestamp)] VALIDATE_TRANSFORMS_JSON=${VALIDATE_TRANSFORMS_JSON:-auto}"
 echo "[$(timestamp)] SKIP_EXISTING=${SKIP_EXISTING}"
 
 if [[ ${#REQUESTED_SHOES[@]} -gt 0 ]]; then
@@ -238,6 +267,10 @@ for shoe in "${SHOES[@]}"; do
         GSHELL_CONFIG="${CONFIG_PATH}" \
         GSHELL_OUT_SUFFIX="${OUT_SUFFIX}" \
         GSHELL_OUTPUT_ROOT="${OUTPUT_ROOT}" \
+        GSHELL_CONDA_ENV="${CONDA_ENV}" \
+        GSHELL_TRAINER="${TRAINER_MODE}" \
+        GSHELL_TRAIN_TRANSFORMS_JSON="${TRAIN_TRANSFORMS_JSON}" \
+        GSHELL_VALIDATE_TRANSFORMS_JSON="${VALIDATE_TRANSFORMS_JSON}" \
         bash "${TRAIN_SCRIPT}" "${shoe}" "${GPU_ID}"
     ) &
     track_job "$!" "${shoe}" "${GPU_ID}"

@@ -600,8 +600,10 @@ if __name__ == "__main__":
     parser.add_argument('--msdf_reg_close_scale', type=float, default=3e-4)
     parser.add_argument('--eikonal_scale', type=float, default=5e-3)
     parser.add_argument('--sdf_regularizer', type=float, default=0.2)
-    parser.add_argument('--trainset_path', type=str)
+    parser.add_argument('--trainset_path', type=str, default='')
     parser.add_argument('--testset_path', type=str, default='')
+    parser.add_argument('--train-transforms-json', type=str, default='')
+    parser.add_argument('--validate-transforms-json', type=str, default='')
 
     FLAGS = parser.parse_args()
     FLAGS.mtl_override        = None        # Override material of model
@@ -699,8 +701,22 @@ if __name__ == "__main__":
     # ==============================================================================================
     data_root = FLAGS.trainset_path
     validate_root = FLAGS.testset_path if FLAGS.testset_path else data_root
-    dataset_train    = DatasetNERF(os.path.join(data_root, 'transforms.json'), FLAGS, examples=int(1e6))
-    dataset_validate = DatasetNERF(os.path.join(validate_root, 'transforms.json'), FLAGS)
+
+    if FLAGS.train_transforms_json:
+        train_transforms_json = FLAGS.train_transforms_json
+    else:
+        assert data_root, "Either --trainset_path or --train-transforms-json must be provided"
+        train_transforms_json = os.path.join(data_root, 'transforms.json')
+
+    if FLAGS.validate_transforms_json:
+        validate_transforms_json = FLAGS.validate_transforms_json
+    elif validate_root:
+        validate_transforms_json = os.path.join(validate_root, 'transforms.json')
+    else:
+        validate_transforms_json = train_transforms_json
+
+    dataset_train    = DatasetNERF(train_transforms_json, FLAGS, examples=int(1e6))
+    dataset_validate = DatasetNERF(validate_transforms_json, FLAGS)
 
 
     # ==============================================================================================

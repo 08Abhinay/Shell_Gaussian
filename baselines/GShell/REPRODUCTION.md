@@ -234,7 +234,7 @@ The current turntable dataset root is:
 /data/abelde/datasets/processed/gshell_shoes
 ```
 
-Each shoe folder is expected to look like:
+The legacy Polycam/COLMAP shoe layout is:
 
 ```text
 <shoe_name>/
@@ -242,6 +242,16 @@ Each shoe folder is expected to look like:
   mask/
   transforms.json
   turntable_canonicalization.json
+```
+
+The evaluation renderer used in this repo can also produce a split-json layout:
+
+```text
+<shoe_name>/
+  image/
+  mask/
+  transforms_train.json
+  transforms_test.json
 ```
 
 If you use a depth-enabled config, the dataset must also contain:
@@ -257,6 +267,17 @@ If you use second-layer depth, it must also contain:
 ```
 
 GShell will fail on startup if depth is enabled in the config but those files are missing.
+
+Wrapper behavior:
+
+- `scripts/train_shoe.sh` and `scripts/train_all_shoes_tmux.sh` default to `GSHELL_TRAINER=auto`
+- in `auto` mode:
+  - `transforms_train.json` + `transforms_test.json` -> `train_gshelltet_synthetic.py`
+  - `transforms.json` -> `train_gshelltet_polycam.py`
+- if you want the Polycam trainer to consume split-json shoes, force:
+  - `GSHELL_TRAINER=polycam`
+  - `GSHELL_TRAIN_TRANSFORMS_JSON=transforms_train.json`
+  - `GSHELL_VALIDATE_TRANSFORMS_JSON=transforms_test.json`
 
 ## 8. Configs we currently use
 
@@ -300,6 +321,31 @@ GSHELL_CONFIG=/data/abelde/projects/active/Shell_Gaussian/baselines/GShell/confi
 GSHELL_OUT_SUFFIX=_turntable \
 GSHELL_OUTPUT_ROOT=/data/abelde/projects/active/Shell_Gaussian/baselines/GShell/output/final/gshell \
 bash scripts/train_shoe.sh Adidas-Yeezy-Boost-350-V2-Desert-Sage-Infant 0
+```
+
+Current local default on `/storage/Abhinay`:
+
+- if `/storage/Abhinay/home_ab5298/dataset/datasets/processed/fab_evaluation_final` exists, the wrappers default to:
+  - dataset root: `/storage/Abhinay/home_ab5298/dataset/datasets/processed/fab_evaluation_final`
+  - env: `/storage/Abhinay/home_ab5298/anaconda3/envs/shellgaussianenv`
+  - config: `configs/shoes_mc_normfix_512_768_depth.json`
+  - output root: `output/fab_evaluation_final_depth`
+
+So the minimal local single-shoe command is:
+
+```bash
+cd /storage/Abhinay/Shell_Gaussian/baselines/GShell
+bash scripts/train_shoe.sh air-jordan-1 3
+```
+
+If the shoe folder uses `transforms_train.json` / `transforms_test.json` but you still want the Polycam trainer, force the JSON names from the shell layer:
+
+```bash
+cd /storage/Abhinay/Shell_Gaussian/baselines/GShell
+GSHELL_TRAINER=polycam \
+GSHELL_TRAIN_TRANSFORMS_JSON=transforms_train.json \
+GSHELL_VALIDATE_TRANSFORMS_JSON=transforms_test.json \
+bash scripts/train_shoe.sh air-jordan-1 3
 ```
 
 The training log is written to:
@@ -356,6 +402,27 @@ GSHELL_OUT_SUFFIX=_turntable_depth \
 GSHELL_OUTPUT_ROOT=/data/abelde/projects/active/Shell_Gaussian/baselines/GShell/output/final/gshell \
 bash scripts/train_all_shoes_tmux.sh final_gshell_depth_batch
 ```
+
+Reproduction command for the split-json FAB evaluation dataset on this machine, forced through the Polycam trainer on GPU `3`:
+
+```bash
+cd /storage/Abhinay/Shell_Gaussian/baselines/GShell
+GSHELL_TRAINER=polycam \
+GSHELL_TRAIN_TRANSFORMS_JSON=transforms_train.json \
+GSHELL_VALIDATE_TRANSFORMS_JSON=transforms_test.json \
+ALLOWED_GPUS=3 \
+MAX_PARALLEL_JOBS=1 \
+MIN_FREE_MB=40000 \
+bash scripts/train_all_shoes_tmux.sh \
+  fab_eval_polycam_gpu3_smoke \
+  air-jordan-1 \
+  birkenstock_arizona_sandal
+```
+
+Notes:
+
+- the tmux wrappers forward `GSHELL_TRAINER`, `GSHELL_TRAIN_TRANSFORMS_JSON`, and `GSHELL_VALIDATE_TRANSFORMS_JSON` into each per-shoe job
+- this keeps the JSON choice outside the Python trainer so you can decide, from the shell layer, whether train and validation should come from the same `transforms.json` or different JSON files
 
 The launcher will print the tmux session name and batch log path. Attach with:
 
@@ -616,6 +683,15 @@ Train one shoe:
 
 ```bash
 cd /data/abelde/projects/active/Shell_Gaussian/baselines/GShell
+bash scripts/train_shoe.sh <SHOE_NAME> <GPU_ID>
+```
+
+Force the Polycam trainer with explicit train/validate JSONs:
+
+```bash
+GSHELL_TRAINER=polycam \
+GSHELL_TRAIN_TRANSFORMS_JSON=<TRAIN_JSON> \
+GSHELL_VALIDATE_TRANSFORMS_JSON=<VALIDATE_JSON> \
 bash scripts/train_shoe.sh <SHOE_NAME> <GPU_ID>
 ```
 
