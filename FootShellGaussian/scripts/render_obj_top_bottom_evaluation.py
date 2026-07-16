@@ -57,6 +57,10 @@ PROBE_MASK_DOWNSAMPLE = 4
 PROBE_MIN_COMPONENT_PIXELS = 64
 PROBE_LARGE_COMPONENT_RATIO = 0.08
 PROBE_MIN_VERTEX_RATIO = 0.2
+BLENDER_RENDER_POSE_CONVENTION = "blender_raw_c2w_opengl_camera"
+GSHELL_SAVED_POSE_CONVENTION = "gshell_legacy_saved_c2w"
+INVDEPTH_STORAGE_ORIGIN = "top_left"
+MIN_INVDEPTH_MASK_IOU = 0.98
 
 
 @dataclass
@@ -181,6 +185,31 @@ def json_dump(path: Path, payload: Any) -> None:
     with path.open("w") as f:
         json.dump(payload, f, indent=2)
         f.write("\n")
+
+
+def rotate_x_matrix(angle: float) -> np.ndarray:
+    """Match the legacy GShell dataset-export rotation convention."""
+    s, c = math.sin(angle), math.cos(angle)
+    mat = np.eye(4, dtype=np.float64)
+    mat[1, 1] = c
+    mat[1, 2] = s
+    mat[2, 1] = -s
+    mat[2, 2] = c
+    return mat
+
+
+GSHELL_DATASET_ROTATION = rotate_x_matrix(-math.pi / 2.0)
+
+
+def blender_c2w_to_gshell_saved_transform(c2w: np.ndarray) -> np.ndarray:
+    """Convert a raw Blender c2w pose into the legacy GShell on-disk format."""
+    return GSHELL_DATASET_ROTATION @ c2w
+
+
+def binary_mask_iou(lhs: np.ndarray, rhs: np.ndarray) -> float:
+    intersection = np.logical_and(lhs, rhs).sum()
+    union = np.logical_or(lhs, rhs).sum()
+    return float(intersection / union) if union else 1.0
 
 
 def clone_shoe_cfg_with_selection(
@@ -883,6 +912,18 @@ def render_image_and_depth(
         valid = np.isfinite(depth) & (depth > 0.0) & (mask > 0.5)
         invdepth = np.zeros_like(depth, dtype=np.float32)
         invdepth[valid] = 1.0 / np.maximum(depth[valid], 1e-8)
+
+        # Blender image buffers use a bottom-left origin, while JPEG/PNG and
+        # NumPy arrays consumed by DatasetNERF use a top-left image origin.
+        invdepth = np.flipud(invdepth).copy()
+        mask_top_left = np.flipud(mask)
+        alignment_iou = binary_mask_iou(invdepth > 0.0, mask_top_left > 0.5)
+        if alignment_iou < MIN_INVDEPTH_MASK_IOU:
+            raise RuntimeError(
+                f"Inverse-depth/mask alignment failed for {image_path.name}: "
+                f"IoU={alignment_iou:.6f}, expected >= {MIN_INVDEPTH_MASK_IOU:.2f}"
+            )
+
         invdepth_path.parent.mkdir(parents=True, exist_ok=True)
         np.save(invdepth_path, invdepth.astype(np.float32))
         bpy.data.images.remove(depth_img)
@@ -1164,19 +1205,20 @@ def render_multi_elevation_dataset(
             for azimuth_index in range(VIEWS_PER_RING):
                 azimuth_deg = 90.0 - 10.0 * azimuth_index
                 eye = orbit_eye(CAMERA_RADIUS, azimuth_deg, elevation_deg)
-                c2w = c2w_from_eye(eye)
+                c2w_blender = c2w_from_eye(eye)
+                c2w_saved = blender_c2w_to_gshell_saved_transform(c2w_blender)
 
                 basename = f"img{frame_idx:03d}"
                 image_path = image_dir / f"{basename}.jpg"
                 mask_path = mask_dir / f"{basename}.png"
                 invdepth_path = invdepth_dir / f"{basename}.npy" if render_invdepth else None
-                render_image_and_depth(camera, c2w, temp_dir, image_path, mask_path, invdepth_path)
+                render_image_and_depth(camera, c2w_blender, temp_dir, image_path, mask_path, invdepth_path)
 
                 frames.append(
                     RenderedFrame(
                         file_path=f"image/{basename}.jpg",
                         camera_angle_x=math.radians(FOV_X_DEG),
-                        transform_matrix=c2w.tolist(),
+                        transform_matrix=c2w_saved.tolist(),
                         ring_index=ring_index,
                         azimuth_index=azimuth_index,
                         elevation_deg=float(elevation_deg),
@@ -1198,6 +1240,10 @@ def render_multi_elevation_dataset(
         "image_dir": str(image_dir),
         "mask_dir": str(mask_dir),
         "invdepth_dir": str(invdepth_dir) if render_invdepth else None,
+        "render_pose_convention": BLENDER_RENDER_POSE_CONVENTION,
+        "saved_pose_convention": GSHELL_SAVED_POSE_CONVENTION,
+        "invdepth_storage_origin": INVDEPTH_STORAGE_ORIGIN if render_invdepth else None,
+        "minimum_invdepth_mask_iou": MIN_INVDEPTH_MASK_IOU if render_invdepth else None,
         "split": split_summary,
     }
     json_dump(output_root / "multi_elevation_summary.json", summary)
@@ -1205,7 +1251,14 @@ def render_multi_elevation_dataset(
 
 
 def write_frame_json(path: Path, frames: list[dict[str, Any]]) -> None:
-    json_dump(path, {"frames": frames})
+    json_dump(
+        path,
+        {
+            "frames": frames,
+            "render_pose_convention": BLENDER_RENDER_POSE_CONVENTION,
+            "pose_convention": GSHELL_SAVED_POSE_CONVENTION,
+        },
+    )
 
 
 def frame_to_payload(frame: RenderedFrame) -> dict[str, Any]:
@@ -1381,6 +1434,10 @@ def render_one_shoe(shoe_cfg: dict[str, Any], args: argparse.Namespace) -> dict[
             "samples": SAMPLES,
             "camera_radius": CAMERA_RADIUS,
             "margin": FIT_MARGIN,
+            "render_pose_convention": BLENDER_RENDER_POSE_CONVENTION,
+            "saved_pose_convention": GSHELL_SAVED_POSE_CONVENTION,
+            "invdepth_storage_origin": INVDEPTH_STORAGE_ORIGIN if args.render_invdepth else None,
+            "minimum_invdepth_mask_iou": MIN_INVDEPTH_MASK_IOU if args.render_invdepth else None,
         },
         "source_axes": {
             "requested": shoe_cfg.get("source_axes", "auto"),
