@@ -133,10 +133,12 @@ fi
 mkdir -p "$LOG_DIR"
 
 export CUDA_VISIBLE_DEVICES="$GPU_ID"
-export HF_HOME="/data/abelde/.cache/huggingface"
-export TORCH_HOME="/data/abelde/.cache/torch"
-export XDG_CACHE_HOME="/data/abelde/.cache"
-export CONDA_PKGS_DIRS="/data/abelde/.conda/pkgs"
+GSHELL_CACHE_ROOT="${GSHELL_CACHE_ROOT:-/storage/Abhinay/home_ab5298/.cache}"
+export HF_HOME="${HF_HOME:-${GSHELL_CACHE_ROOT}/huggingface}"
+export TORCH_HOME="${TORCH_HOME:-${GSHELL_CACHE_ROOT}/torch}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-${GSHELL_CACHE_ROOT}}"
+export CONDA_PKGS_DIRS="${CONDA_PKGS_DIRS:-${GSHELL_CACHE_ROOT}/conda/pkgs}"
+mkdir -p "$HF_HOME" "$TORCH_HOME" "$XDG_CACHE_HOME" "$CONDA_PKGS_DIRS"
 if [ -f "/storage/Abhinay/home_ab5298/anaconda3/etc/profile.d/conda.sh" ]; then
     # Prefer the shared conda install available on this machine.
     source /storage/Abhinay/home_ab5298/anaconda3/etc/profile.d/conda.sh
