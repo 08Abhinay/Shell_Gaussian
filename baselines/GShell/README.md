@@ -119,6 +119,80 @@ The local shell wrappers in `scripts/train_shoe.sh` and `scripts/train_all_shoes
 
 See [REPRODUCTION.md](REPRODUCTION.md) for the shoe-dataset commands used in this repo.
 
+#### FAB evaluation: tight-grid reconstruction
+
+The Blender-rendered FAB evaluation set is normalized near the origin with a
+maximum object coordinate of approximately `0.1065`. The tight-grid experiment
+uses `mesh_scale=0.32`, giving a tetrahedral domain of `[-0.16, 0.16]` on each
+axis, and initializes the SDF with `sphere_init_norm=0.13`. All other training
+settings match `configs/shoes_mc_normfix_512_768_depth.json`.
+
+Run the two-shoe pilot with the Polycam trainer on physical GPUs 2 and 3:
+
+```bash
+GSHELL_CONFIG=/storage/Abhinay/Shell_Gaussian/baselines/GShell/configs/shoes_mc_normfix_tightgrid_128_512_768_depth.json \
+GSHELL_OUTPUT_ROOT=/storage/Abhinay/Shell_Gaussian/baselines/GShell/output/fab_evaluation_tight128_diverse \
+GSHELL_OUT_SUFFIX=_depth_polycam_pose_depthfix_tight128 \
+GSHELL_TRAINER=polycam \
+SKIP_EXISTING=0 \
+ALLOWED_GPUS=2,3 \
+MAX_PARALLEL_JOBS=2 \
+MIN_FREE_MB=40000 \
+bash /storage/Abhinay/Shell_Gaussian/baselines/GShell/scripts/train_all_shoes_tmux.sh \
+  fab_eval_tight128_pilot_gpu23 \
+  nike-air-jordan \
+  red_high-heel_shoes
+```
+
+The launcher creates a detached tmux session and records its batch log under
+`fab_evaluation_tight128_diverse/batch_runs/`. Monitor the run with:
+
+```bash
+tmux attach -t fab_eval_tight128_pilot_gpu23
+```
+
+To compare tetrahedral resolution while keeping the tightened domain fixed,
+run the same pilot with `gshell_grid=256`:
+
+```bash
+GSHELL_CONFIG=/storage/Abhinay/Shell_Gaussian/baselines/GShell/configs/shoes_mc_normfix_tightgrid_256_512_768_depth.json \
+GSHELL_OUTPUT_ROOT=/storage/Abhinay/Shell_Gaussian/baselines/GShell/output/fab_evaluation_tight256_diverse \
+GSHELL_OUT_SUFFIX=_depth_polycam_pose_depthfix_tight256 \
+GSHELL_TRAINER=polycam \
+SKIP_EXISTING=0 \
+ALLOWED_GPUS=2,3 \
+MAX_PARALLEL_JOBS=2 \
+MIN_FREE_MB=40000 \
+bash /storage/Abhinay/Shell_Gaussian/baselines/GShell/scripts/train_all_shoes_tmux.sh \
+  fab_eval_tight256_pilot_gpu23 \
+  nike-air-jordan \
+  red_high-heel_shoes
+```
+
+The `128` and `256` tight-grid configs otherwise have identical training,
+regularization, rendering, and depth-supervision settings.
+
+After the pilot passes, run the remaining diverse categories in the same output
+root:
+
+```bash
+GSHELL_CONFIG=/storage/Abhinay/Shell_Gaussian/baselines/GShell/configs/shoes_mc_normfix_tightgrid_128_512_768_depth.json \
+GSHELL_OUTPUT_ROOT=/storage/Abhinay/Shell_Gaussian/baselines/GShell/output/fab_evaluation_tight128_diverse \
+GSHELL_OUT_SUFFIX=_depth_polycam_pose_depthfix_tight128 \
+GSHELL_TRAINER=polycam \
+SKIP_EXISTING=0 \
+ALLOWED_GPUS=2,3 \
+MAX_PARALLEL_JOBS=2 \
+MIN_FREE_MB=40000 \
+bash /storage/Abhinay/Shell_Gaussian/baselines/GShell/scripts/train_all_shoes_tmux.sh \
+  fab_eval_tight128_diverse_rest_gpu23 \
+  female-gymnasts-shoes \
+  nike_air_zoom_pegasus_36 \
+  birkenstock_arizona_sandal \
+  crocs-shoe-purple \
+  cipela-za-upload
+```
+
 #### On config files
 
 You may consider modify the following, depending on your demand:
