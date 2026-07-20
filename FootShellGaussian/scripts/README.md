@@ -5,8 +5,10 @@ This folder is intentionally kept small around the current shoe pipeline.
 Primary entry points:
 
 - `run_final_pipeline.sh`: orchestrate the downstream shoe pipeline stages from GShell training through alignment and pseudo-last generation.
-- `render_obj_top_bottom_evaluation.py`: render external shoe assets into the legacy evaluation dataset layout from Blender.
-- `run_fab_evaluation_dataset_generation.py`: render FAB shoe assets into a new processed evaluation root and validate the generated splits.
+
+External evaluation-dataset preprocessing is intentionally centralized at
+`../../dataset_tools/golden_set_evaluation/pipeline.py`; it no longer lives in
+this training/application scripts directory.
 
 Core helpers kept in this folder:
 

@@ -49,9 +49,22 @@ Per shoe, the raw layout is expected to be:
     points3D.txt
 ```
 
+The same adapter also accepts the compact external-evaluation layout:
+
+```text
+<shoe_name>/
+  undistorted/
+    images/
+    masks/
+    sparse/0/
+      cameras.txt
+      images.txt
+      points3D.txt
+```
+
 The current one-step exporter is:
 
-- [../../tools/gshell/export_turntable_to_gshell_canonical.py](../../tools/gshell/export_turntable_to_gshell_canonical.py)
+- [../../dataset_tools/golden_set_evaluation/gshell_adapter.py](../../dataset_tools/golden_set_evaluation/gshell_adapter.py)
 
 That script replaced the older two-step flow:
 
@@ -60,11 +73,11 @@ That script replaced the older two-step flow:
 
 It does all of this in one pass:
 
-- reads raw COLMAP cameras and poses
+- reads cameras and poses from either supported COLMAP layout
 - converts them into GShell `transforms.json`
 - applies the deterministic turntable phase alignment so `img01.jpg` lands at the chosen canonical angle
-- symlinks `images/` to `image/`
-- symlinks `masks/` to `mask/`
+- physically copies the selected source images to `image/`
+- physically copies the selected source masks to `mask/`
 - writes `turntable_canonicalization.json`
 - optionally attaches `invdepth/`
 - optionally writes size-normalization metadata
@@ -82,7 +95,7 @@ To create it from the raw `golden_set`:
 ```bash
 cd /data/abelde/projects/active/Shell_Gaussian
 
-python tools/gshell/export_turntable_to_gshell_canonical.py \
+python dataset_tools/golden_set_evaluation/gshell_adapter.py \
   --input-dir /data/abelde/datasets/raw/golden_set \
   --output-dir /data/abelde/datasets/processed/gshell_shoes \
   --reference-frame img01.jpg \
@@ -93,7 +106,7 @@ python tools/gshell/export_turntable_to_gshell_canonical.py \
 Notes:
 
 - this does **not** modify the raw dataset
-- `image/` and `mask/` in the processed dataset are symlinks back to the raw data
+- `image/` and `mask/` in the processed dataset are physical copies
 - the per-shoe transform canonicalization is recorded in `turntable_canonicalization.json`
 
 If you want to process only a subset:
@@ -101,7 +114,7 @@ If you want to process only a subset:
 ```bash
 cd /data/abelde/projects/active/Shell_Gaussian
 
-python tools/gshell/export_turntable_to_gshell_canonical.py \
+python dataset_tools/golden_set_evaluation/gshell_adapter.py \
   --input-dir /data/abelde/datasets/raw/golden_set \
   --output-dir /data/abelde/datasets/processed/gshell_shoes \
   --shoe Adidas-Yeezy-Boost-350-V2-Desert-Sage-Infant \
@@ -156,7 +169,7 @@ Reproduction command:
 ```bash
 cd /data/abelde/projects/active/Shell_Gaussian
 
-python tools/gshell/export_turntable_to_gshell_canonical.py \
+python dataset_tools/golden_set_evaluation/gshell_adapter.py \
   --input-dir /data/abelde/datasets/raw/golden_set \
   --output-dir /data/abelde/datasets/processed/gshell_shoes_size_metadata \
   --reference-frame img01.jpg \
@@ -182,11 +195,11 @@ Example:
 ```bash
 cd /data/abelde/projects/active/Shell_Gaussian
 
-python tools/gshell/export_turntable_to_gshell_canonical.py \
+python dataset_tools/golden_set_evaluation/gshell_adapter.py \
   --input-dir /data/abelde/datasets/raw/golden_set \
   --output-dir /data/abelde/datasets/processed/gshell_shoes \
   --invdepth-source-root /some/root/with/<shoe>/invdepth \
-  --invdepth-mode symlink \
+  --invdepth-mode copy \
   --overwrite
 ```
 

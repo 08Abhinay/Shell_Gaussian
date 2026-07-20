@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Export raw turntable COLMAP shoes directly to canonical GShell format.
+"""Export legacy or compact COLMAP shoe scenes to canonical GShell format.
 
-Input layout per shoe:
+Supported input layouts per shoe:
     <input_root>/<shoe>/
       images/
       masks/
@@ -10,13 +10,19 @@ Input layout per shoe:
         images.txt
         points3D.txt
 
+or the compact evaluation layout:
+    <input_root>/<shoe>/
+      undistorted/images/
+      undistorted/masks/
+      undistorted/sparse/0/{cameras,images,points3D}.txt
+
 Output layout per shoe:
     <output_root>/<shoe>/
-      image -> <input_root>/<shoe>/images
-      mask -> <input_root>/<shoe>/masks
+      image/  (physical copy of input images)
+      mask/   (physical copy of input masks)
       transforms.json
       turntable_canonicalization.json
-      invdepth -> <invdepth_source_root>/<shoe>/invdepth  (optional)
+      invdepth/                                           (optional copy)
       invdepth_summary.json                              (optional)
 
 This combines the old two-step path:
@@ -32,7 +38,6 @@ import argparse
 import csv
 import json
 import math
-import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,7 +46,6 @@ from typing import Any, Sequence
 import numpy as np
 
 
-KEY_FRAME_NAMES = ("img01.jpg", "img10.jpg", "img19.jpg", "img28.jpg")
 OPENCV_TO_OPENGL_CAMERA = np.diag([1.0, -1.0, -1.0, 1.0])
 
 
@@ -70,6 +74,14 @@ class InitialSceneData:
     canonical_points_pre_yaw: np.ndarray
 
 
+@dataclass(frozen=True)
+class SceneLayout:
+    name: str
+    images: Path
+    masks: Path
+    model: Path
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -96,7 +108,17 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Ignore sparse points for normalization for this shoe. May be repeated.",
     )
-    parser.add_argument("--reference-frame", default="img01.jpg")
+    parser.add_argument(
+        "--reference-frame",
+        default=None,
+        help="Frame used to fix turntable phase; defaults to the first registered frame.",
+    )
+    parser.add_argument(
+        "--expected-frame-count",
+        type=int,
+        default=None,
+        help="Optional strict registered-frame count (180 for the evaluation set).",
+    )
     parser.add_argument("--target-angle-deg", type=float, default=90.0)
     parser.add_argument(
         "--invdepth-source-root",
@@ -106,8 +128,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--invdepth-mode",
-        choices=("symlink", "copy"),
-        default="symlink",
+        choices=("copy",),
+        default="copy",
         help="How to attach optional invdepth folders.",
     )
     parser.add_argument(
@@ -345,8 +367,17 @@ def angle_map(frames: list[dict[str, Any]], scene_name: str) -> dict[str, float]
     }
 
 
-def key_angle_map(angles: dict[str, float]) -> dict[str, float | None]:
-    return {name: angles.get(name) for name in KEY_FRAME_NAMES}
+def key_frame_names(frames: list[dict[str, Any]]) -> tuple[str, ...]:
+    if not frames:
+        return ()
+    indices = sorted({0, len(frames) // 4, len(frames) // 2, 3 * len(frames) // 4})
+    return tuple(frame_basename(frames[index]) for index in indices)
+
+
+def key_angle_map(
+    angles: dict[str, float], frames: list[dict[str, Any]]
+) -> dict[str, float | None]:
+    return {name: angles.get(name) for name in key_frame_names(frames)}
 
 
 def median_step_deg(angles: dict[str, float], frames: list[dict[str, Any]]) -> float:
@@ -380,17 +411,6 @@ def rotation_stats(frames: list[dict[str, Any]], scene_name: str) -> dict[str, f
     }
 
 
-def relink_path(source: Path, target: Path, overwrite: bool, is_dir: bool = True) -> None:
-    if target.exists() or target.is_symlink():
-        if not overwrite:
-            raise FileExistsError(f"Output exists; pass --overwrite: {target}")
-        if target.is_symlink() or target.is_file():
-            target.unlink()
-        else:
-            shutil.rmtree(target)
-    os.symlink(source.resolve(), target, target_is_directory=is_dir)
-
-
 def copy_or_link_dir(source: Path, target: Path, mode: str, overwrite: bool) -> None:
     if target.exists() or target.is_symlink():
         if not overwrite:
@@ -399,30 +419,57 @@ def copy_or_link_dir(source: Path, target: Path, mode: str, overwrite: bool) -> 
             target.unlink()
         else:
             shutil.rmtree(target)
-    if mode == "symlink":
-        os.symlink(source.resolve(), target, target_is_directory=True)
-    elif mode == "copy":
+    if mode == "copy":
         shutil.copytree(source, target)
     else:
         raise ValueError(f"Unknown copy/link mode: {mode}")
+
+
+def resolve_scene_layout(shoe_dir: Path) -> SceneLayout:
+    layouts = (
+        SceneLayout(
+            name="compact_undistorted",
+            images=shoe_dir / "undistorted" / "images",
+            masks=shoe_dir / "undistorted" / "masks",
+            model=shoe_dir / "undistorted" / "sparse" / "0",
+        ),
+        SceneLayout(
+            name="legacy_raw_colmap",
+            images=shoe_dir / "images",
+            masks=shoe_dir / "masks",
+            model=shoe_dir / "colmap",
+        ),
+    )
+    for layout in layouts:
+        if (
+            layout.images.is_dir()
+            and layout.masks.is_dir()
+            and (layout.model / "cameras.txt").is_file()
+            and (layout.model / "images.txt").is_file()
+        ):
+            return layout
+    raise FileNotFoundError(f"No supported COLMAP scene layout found: {shoe_dir}")
 
 
 def resolve_shoe_dirs(input_dir: Path, shoe_names: list[str] | None) -> list[Path]:
     if shoe_names:
         shoe_dirs = [input_dir / name for name in shoe_names]
     else:
-        shoe_dirs = sorted(
-            path for path in input_dir.iterdir()
-            if path.is_dir() and (path / "colmap" / "cameras.txt").exists()
-        )
-    missing = [
-        path for path in shoe_dirs
-        if not (path / "images").is_dir()
-        or not (path / "masks").is_dir()
-        or not (path / "colmap" / "images.txt").is_file()
-    ]
+        shoe_dirs = []
+        for path in sorted(candidate for candidate in input_dir.iterdir() if candidate.is_dir()):
+            try:
+                resolve_scene_layout(path)
+            except FileNotFoundError:
+                continue
+            shoe_dirs.append(path)
+    missing = []
+    for path in shoe_dirs:
+        try:
+            resolve_scene_layout(path)
+        except FileNotFoundError:
+            missing.append(path)
     if missing:
-        raise FileNotFoundError("Invalid raw shoe dirs: " + ", ".join(str(path) for path in missing))
+        raise FileNotFoundError("Invalid COLMAP shoe dirs: " + ", ".join(str(path) for path in missing))
     return shoe_dirs
 
 
@@ -435,9 +482,10 @@ def build_initial_payload(
     shoe_dir: Path,
     camera_only_shoes: set[str],
 ) -> InitialSceneData:
-    cameras = parse_colmap_cameras(shoe_dir / "colmap" / "cameras.txt")
-    entries = parse_colmap_images(shoe_dir / "colmap" / "images.txt")
-    points_path = shoe_dir / "colmap" / "points3D.txt"
+    layout = resolve_scene_layout(shoe_dir)
+    cameras = parse_colmap_cameras(layout.model / "cameras.txt")
+    entries = parse_colmap_images(layout.model / "images.txt")
+    points_path = layout.model / "points3D.txt"
     scene_points = parse_points_xyz(points_path) if points_path.exists() else np.zeros((0, 3), dtype=np.float64)
     c2ws = [colmap_image_to_c2w(entry) for entry in entries]
     points_for_norm = np.zeros((0, 3), dtype=np.float64) if shoe_dir.name in camera_only_shoes else scene_points
@@ -457,6 +505,7 @@ def build_initial_payload(
         )
 
     export_info = {
+        "source_layout": layout.name,
         "colmap_camera_count": len(cameras),
         "frame_count": len(frames),
         "normalization_source": "cameras" if shoe_dir.name in camera_only_shoes else "points+cameras",
@@ -521,11 +570,11 @@ def canonicalize_payload(
             "raw_z_rotation_matrix": yaw,
         },
         "before": {
-            "key_frame_angles_deg": key_angle_map(before_angles),
+            "key_frame_angles_deg": key_angle_map(before_angles, frames),
             "median_frame_step_deg": median_step_deg(before_angles, frames),
         },
         "after": {
-            "key_frame_angles_deg": key_angle_map(after_angles),
+            "key_frame_angles_deg": key_angle_map(after_angles, after_frames),
             "median_frame_step_deg": median_step_deg(after_angles, after_frames),
         },
         "validation": validation,
@@ -542,7 +591,7 @@ def canonicalize_payload(
         "rotation_det_max": validation["after_rotation_stats"]["rotation_det_max"],
         "rotation_orthonormal_error_max": validation["after_rotation_stats"]["rotation_orthonormal_error_max"],
     }
-    for name in KEY_FRAME_NAMES:
+    for name in key_frame_names(frames):
         stem = Path(name).stem
         row_bits[f"before_{stem}_angle_deg"] = before_angles.get(name)
         row_bits[f"after_{stem}_angle_deg"] = after_angles.get(name)
@@ -660,7 +709,11 @@ def compute_category_aware_size_normalization(
     return row_bits
 
 
-def validate_output_scene(output_scene: Path, payload: dict[str, Any]) -> dict[str, Any]:
+def validate_output_scene(
+    output_scene: Path,
+    payload: dict[str, Any],
+    expected_frame_count: int | None,
+) -> dict[str, Any]:
     frames = payload["frames"]
     image_ok = (output_scene / "image").exists()
     mask_ok = (output_scene / "mask").exists()
@@ -671,9 +724,11 @@ def validate_output_scene(output_scene: Path, payload: dict[str, Any]) -> dict[s
         paths_ok = paths_ok and image_path.exists() and mask_path.exists()
     return {
         "frame_count": len(frames),
-        "frame_count_is_36": len(frames) == 36,
-        "image_symlink_valid": image_ok,
-        "mask_symlink_valid": mask_ok,
+        "frame_count_is_expected": (
+            expected_frame_count is None or len(frames) == expected_frame_count
+        ),
+        "image_dir_valid": image_ok,
+        "mask_dir_valid": mask_ok,
         "frame_image_mask_paths_valid": paths_ok,
     }
 
@@ -727,16 +782,18 @@ def write_scene(
             raise FileExistsError(f"Output scene exists; pass --overwrite: {output_scene}")
         shutil.rmtree(output_scene)
     output_scene.mkdir(parents=True, exist_ok=True)
-    relink_path(shoe_dir / "images", output_scene / "image", overwrite=True, is_dir=True)
-    relink_path(shoe_dir / "masks", output_scene / "mask", overwrite=True, is_dir=True)
+    layout = resolve_scene_layout(shoe_dir)
+    copy_or_link_dir(layout.images, output_scene / "image", "copy", overwrite=True)
+    copy_or_link_dir(layout.masks, output_scene / "mask", "copy", overwrite=True)
 
     metadata["source_scene"] = str(shoe_dir)
+    metadata["source_layout"] = layout.name
     metadata["output_scene"] = str(output_scene)
     with (output_scene / "transforms.json").open("w") as f:
         json.dump(to_jsonable(payload), f, indent=2)
         f.write("\n")
 
-    validation = validate_output_scene(output_scene, payload)
+    validation = validate_output_scene(output_scene, payload, args.expected_frame_count)
     metadata["validation"]["postwrite"] = validation
     with (output_scene / "turntable_canonicalization.json").open("w") as f:
         json.dump(to_jsonable(metadata), f, indent=2)
@@ -752,10 +809,11 @@ def export_scene(
     boot_shoes: set[str],
 ) -> dict[str, Any]:
     initial_scene = build_initial_payload(shoe_dir, camera_only_shoes)
+    reference_frame = args.reference_frame or frame_basename(initial_scene.payload["frames"][0])
     payload, metadata, row_bits = canonicalize_payload(
         initial_scene.payload,
         shoe_dir.name,
-        args.reference_frame,
+        reference_frame,
         float(args.target_angle_deg),
     )
     size_row_bits = compute_category_aware_size_normalization(
@@ -775,9 +833,12 @@ def export_scene(
     if args.dry_run:
         postwrite = {
             "frame_count": len(payload["frames"]),
-            "frame_count_is_36": len(payload["frames"]) == 36,
-            "image_symlink_valid": None,
-            "mask_symlink_valid": None,
+            "frame_count_is_expected": (
+                args.expected_frame_count is None
+                or len(payload["frames"]) == args.expected_frame_count
+            ),
+            "image_dir_valid": None,
+            "mask_dir_valid": None,
             "frame_image_mask_paths_valid": None,
         }
         invdepth = {"status": "dry_run", "attached": False}
@@ -796,7 +857,7 @@ def export_scene(
         status = "failed"
     if not args.dry_run and not all(
         bool(postwrite[key])
-        for key in ("frame_count_is_36", "image_symlink_valid", "mask_symlink_valid", "frame_image_mask_paths_valid")
+        for key in ("frame_count_is_expected", "image_dir_valid", "mask_dir_valid", "frame_image_mask_paths_valid")
     ):
         status = "failed"
 
@@ -808,12 +869,12 @@ def export_scene(
         "output_scene": str(output_scene),
         "transforms_json": str(output_scene / "transforms.json"),
         "turntable_canonicalization_json": str(output_scene / "turntable_canonicalization.json"),
-        "reference_frame": args.reference_frame,
+        "reference_frame": reference_frame,
         "target_angle_deg": float(args.target_angle_deg),
         **row_bits,
-        "frame_count_is_36": postwrite["frame_count_is_36"],
-        "image_symlink_valid": postwrite["image_symlink_valid"],
-        "mask_symlink_valid": postwrite["mask_symlink_valid"],
+        "frame_count_is_expected": postwrite["frame_count_is_expected"],
+        "image_dir_valid": postwrite["image_dir_valid"],
+        "mask_dir_valid": postwrite["mask_dir_valid"],
         "frame_image_mask_paths_valid": postwrite["frame_image_mask_paths_valid"],
         "invdepth_status": invdepth["status"],
         "invdepth_attached": invdepth["attached"],
@@ -835,6 +896,7 @@ def aggregate_summary(rows: list[dict[str, Any]], args: argparse.Namespace) -> d
         },
         "settings": {
             "reference_frame": args.reference_frame,
+            "expected_frame_count": args.expected_frame_count,
             "target_angle_deg": float(args.target_angle_deg),
             "invdepth_source_root": str(args.invdepth_source_root) if args.invdepth_source_root else None,
             "invdepth_mode": args.invdepth_mode,
@@ -843,7 +905,7 @@ def aggregate_summary(rows: list[dict[str, Any]], args: argparse.Namespace) -> d
             "boot_shoes": sorted(args.boot_shoe or []),
         },
         "all_rotations_passed": all(bool(row.get("rotations_passed")) for row in rows),
-        "all_frame_counts_36": all(bool(row.get("frame_count_is_36")) for row in rows),
+        "all_frame_counts_expected": all(bool(row.get("frame_count_is_expected")) for row in rows),
         "all_invdepth_attached_when_requested": (
             all(bool(row.get("invdepth_attached")) for row in rows)
             if args.invdepth_source_root
@@ -915,7 +977,7 @@ def main() -> None:
         if row["status"] == "ok":
             print(
                 "  ok "
-                f"img01 {float(row['before_reference_angle_deg']):.2f}"
+                f"img001 {float(row['before_reference_angle_deg']):.2f}"
                 f" -> {float(row['after_reference_angle_deg']):.2f} deg "
                 f"(yaw {float(row['delta_yaw_deg']):+.2f}); "
                 f"invdepth={row['invdepth_status']}"

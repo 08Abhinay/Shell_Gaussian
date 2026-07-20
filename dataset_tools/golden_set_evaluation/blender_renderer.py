@@ -1,26 +1,22 @@
 #!/usr/bin/env python3
-"""Render external shoe assets into the legacy evaluation dataset layout.
+"""Render canonical RGB images and masks from external shoe assets.
 
 This script is intended to be executed through Blender:
 
-    blender --background --python render_obj_top_bottom_evaluation.py -- ...
+    blender --background --python blender_renderer.py -- ...
 
-It reconstructs the behavior of the previously deleted helper used for
-generating the synthetic external evaluation shoes. The recovered
-implementation focuses on the mode that the pipeline actually used in
-practice: ``multi_elevation_360``.
+Use ``pipeline.py render`` as the public entry point. This worker deliberately
+writes no camera transforms, depth maps, train/validation splits, or summaries.
 """
 
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import math
 import os
 import shutil
 import tempfile
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -38,11 +34,13 @@ RESOLUTION_Y = 1024
 FOV_X_DEG = 22.5
 SAMPLES = 64
 CAMERA_RADIUS = 1.0
-FIT_MARGIN = 1.1
+RING_RADII = (1.0, 1.0, 1.0, 1.25, 1.5)
+REFERENCE_HORIZONTAL_OCCUPANCY = 0.84
+BORDER_MARGIN_FRACTION = 0.02
+CONSERVATIVE_FIT_RELAXATION = 1.15
 BACKGROUND_GRAY = 1.0
 COMPOSITE_BACKGROUND_VALUE = 4.0
 WORLD_BACKGROUND_STRENGTH = 1.0
-VAL_STRIDE = 6
 MULTI_ELEVATIONS_DEG = (-25.0, -5.0, 20.0, 45.0, 65.0)
 VIEWS_PER_RING = 36
 AUTO_SELECTION_PROBE_VIEWS = (
@@ -57,22 +55,6 @@ PROBE_MASK_DOWNSAMPLE = 4
 PROBE_MIN_COMPONENT_PIXELS = 64
 PROBE_LARGE_COMPONENT_RATIO = 0.08
 PROBE_MIN_VERTEX_RATIO = 0.2
-BLENDER_RENDER_POSE_CONVENTION = "blender_raw_c2w_opengl_camera"
-GSHELL_SAVED_POSE_CONVENTION = "gshell_legacy_saved_c2w"
-INVDEPTH_STORAGE_ORIGIN = "top_left"
-MIN_INVDEPTH_MASK_IOU = 0.98
-
-
-@dataclass
-class RenderedFrame:
-    file_path: str
-    camera_angle_x: float
-    transform_matrix: list[list[float]]
-    ring_index: int
-    azimuth_index: int
-    elevation_deg: float
-    azimuth_deg: float
-    invdepth_path: str | None
 
 
 def parse_args() -> argparse.Namespace:
@@ -80,14 +62,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
-    parser.add_argument(
-        "--mode",
-        default="multi_elevation_360",
-        choices=["multi_elevation_360"],
-        help="Recovered renderer currently supports the historical mode used by the pipeline.",
-    )
     parser.add_argument("--shoe", action="append", default=None, help="Render only this shoe name.")
-    parser.add_argument("--render-invdepth", action="store_true")
     parser.add_argument(
         "--selection-debug-dir",
         type=Path,
@@ -187,31 +162,6 @@ def json_dump(path: Path, payload: Any) -> None:
         f.write("\n")
 
 
-def rotate_x_matrix(angle: float) -> np.ndarray:
-    """Match the legacy GShell dataset-export rotation convention."""
-    s, c = math.sin(angle), math.cos(angle)
-    mat = np.eye(4, dtype=np.float64)
-    mat[1, 1] = c
-    mat[1, 2] = s
-    mat[2, 1] = -s
-    mat[2, 2] = c
-    return mat
-
-
-GSHELL_DATASET_ROTATION = rotate_x_matrix(-math.pi / 2.0)
-
-
-def blender_c2w_to_gshell_saved_transform(c2w: np.ndarray) -> np.ndarray:
-    """Convert a raw Blender c2w pose into the legacy GShell on-disk format."""
-    return GSHELL_DATASET_ROTATION @ c2w
-
-
-def binary_mask_iou(lhs: np.ndarray, rhs: np.ndarray) -> float:
-    intersection = np.logical_and(lhs, rhs).sum()
-    union = np.logical_or(lhs, rhs).sum()
-    return float(intersection / union) if union else 1.0
-
-
 def clone_shoe_cfg_with_selection(
     shoe_cfg: dict[str, Any],
     selection_cfg: dict[str, Any] | None,
@@ -266,8 +216,9 @@ def reset_scene() -> None:
     scene.render.image_settings.color_mode = "RGBA"
     scene.render.image_settings.file_format = "PNG"
     scene.eevee.taa_render_samples = SAMPLES
-    scene.use_nodes = True
-    scene.view_layers["ViewLayer"].use_pass_z = True
+    # The raw dataset needs only Blender's combined RGBA render. Keeping the
+    # compositor disabled avoids carrying over depth/compositor state.
+    scene.use_nodes = False
     scene.view_settings.view_transform = "Standard"
     scene.view_settings.look = "None"
     scene.view_settings.exposure = 0.0
@@ -725,17 +676,91 @@ def bake_objects_to_world(objects: list[bpy.types.Object]) -> list[bpy.types.Obj
     return baked
 
 
-def normalization_scale(bbox_min: np.ndarray, bbox_max: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, float]:
+def bbox_corners(bbox_min: np.ndarray, bbox_max: np.ndarray) -> np.ndarray:
+    return np.array(
+        [
+            [x, y, z]
+            for x in (bbox_min[0], bbox_max[0])
+            for y in (bbox_min[1], bbox_max[1])
+            for z in (bbox_min[2], bbox_max[2])
+        ],
+        dtype=np.float64,
+    )
+
+
+def projected_bounds(
+    points: np.ndarray,
+    c2w: np.ndarray,
+    scale: float,
+) -> tuple[float, float, float, float]:
+    points_h = np.concatenate(
+        [points * float(scale), np.ones((points.shape[0], 1), dtype=np.float64)],
+        axis=1,
+    )
+    camera_points = points_h @ np.linalg.inv(c2w).T
+    depth = -camera_points[:, 2]
+    if np.any(depth <= 1e-8):
+        return (-math.inf, math.inf, -math.inf, math.inf)
+    tan_x = math.tan(math.radians(FOV_X_DEG) * 0.5)
+    tan_y = tan_x * (RESOLUTION_Y / RESOLUTION_X)
+    u = 0.5 + camera_points[:, 0] / depth / (2.0 * tan_x)
+    v = 0.5 + camera_points[:, 1] / depth / (2.0 * tan_y)
+    return float(u.min()), float(u.max()), float(v.min()), float(v.max())
+
+
+def binary_search_scale(predicate: Any, upper: float) -> float:
+    low = 0.0
+    high = float(upper)
+    for _ in range(48):
+        middle = 0.5 * (low + high)
+        if predicate(middle):
+            low = middle
+        else:
+            high = middle
+    return low
+
+
+def production_camera_poses() -> list[np.ndarray]:
+    poses = []
+    for elevation_deg, radius in zip(MULTI_ELEVATIONS_DEG, RING_RADII):
+        for azimuth_index in range(VIEWS_PER_RING):
+            azimuth_deg = 90.0 - 10.0 * azimuth_index
+            poses.append(c2w_from_eye(orbit_eye(radius, azimuth_deg, elevation_deg)))
+    return poses
+
+
+def normalization_scale(
+    bbox_min: np.ndarray,
+    bbox_max: np.ndarray,
+    mesh_points: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, float, float]:
     centered_min = bbox_min.copy()
     centered_max = bbox_max.copy()
-    extent = centered_max - centered_min
-    half_extent = 0.5 * extent
-    sphere_radius = float(np.linalg.norm(half_extent))
-    half_fov_x = math.radians(FOV_X_DEG) * 0.5
-    tan_x = math.tan(half_fov_x)
-    tan_y = tan_x * (RESOLUTION_Y / RESOLUTION_X)
-    required_distance = FIT_MARGIN * sphere_radius / min(tan_x, tan_y)
-    scale = CAMERA_RADIUS / required_distance if required_distance > 0.0 else 1.0
+    corners = bbox_corners(centered_min, centered_max)
+    half_diagonal = float(np.linalg.norm(0.5 * (centered_max - centered_min)))
+    if half_diagonal <= 0.0:
+        return centered_min, centered_max, CAMERA_RADIUS, 1.0
+
+    upper = 0.98 * min(RING_RADII) / half_diagonal
+    reference_pose = production_camera_poses()[0]
+
+    def reference_width_fits(candidate_scale: float) -> bool:
+        u_min, u_max, _, _ = projected_bounds(mesh_points, reference_pose, candidate_scale)
+        return u_max - u_min <= REFERENCE_HORIZONTAL_OCCUPANCY
+
+    target_scale = binary_search_scale(reference_width_fits, upper)
+    margin = BORDER_MARGIN_FRACTION
+
+    def every_view_fits(candidate_scale: float) -> bool:
+        for pose in production_camera_poses():
+            u_min, u_max, v_min, v_max = projected_bounds(corners, pose, candidate_scale)
+            if min(u_min, v_min) < margin or max(u_max, v_max) > 1.0 - margin:
+                return False
+        return True
+
+    safe_scale = binary_search_scale(every_view_fits, upper)
+    scale = min(target_scale, safe_scale * CONSERVATIVE_FIT_RELAXATION)
+    required_distance = CAMERA_RADIUS / scale
     return centered_min, centered_max, required_distance, scale
 
 
@@ -743,7 +768,7 @@ def canonicalize_geometry(
     mesh_objects: list[bpy.types.Object],
     shoe_cfg: dict[str, Any],
 ) -> dict[str, Any]:
-    apply_object_transforms(mesh_objects)
+    mesh_objects = bake_objects_to_world(mesh_objects)
     resolved_source_axes, source_axes_summary = resolve_source_axes(mesh_objects, shoe_cfg)
     axis_mat = source_axes_matrix(resolved_source_axes)
     apply_axis_transform(mesh_objects, axis_mat)
@@ -758,8 +783,11 @@ def canonicalize_geometry(
     center = 0.5 * (bbox_min_raw + bbox_max_raw)
     translate_objects(selected_objects, -center)
     bbox_min_centered, bbox_max_centered = scene_bbox(selected_objects)
+    mesh_points_centered = all_vertex_coords_world(selected_objects)
     centered_min, centered_max, required_distance, scale = normalization_scale(
-        bbox_min_centered, bbox_max_centered
+        bbox_min_centered,
+        bbox_max_centered,
+        mesh_points_centered,
     )
     scale_objects(selected_objects, scale)
     bbox_min_scaled, bbox_max_scaled = scene_bbox(selected_objects)
@@ -790,7 +818,9 @@ def canonicalize_geometry(
             "bbox_max_before_scale": centered_max.tolist(),
             "bbox_extent_before_scale": (centered_max - centered_min).tolist(),
             "required_distance_before_scale": required_distance,
-            "target_camera_radius": CAMERA_RADIUS,
+            "camera_radii": list(RING_RADII),
+            "reference_horizontal_occupancy": REFERENCE_HORIZONTAL_OCCUPANCY,
+            "border_margin_fraction": BORDER_MARGIN_FRACTION,
             "scale": scale,
         },
         "component_selection": selection_summary,
@@ -811,22 +841,6 @@ def ensure_camera() -> bpy.types.Object:
     bpy.context.collection.objects.link(cam)
     scene.camera = cam
     return cam
-
-
-def configure_depth_output(temp_dir: Path) -> bpy.types.Node:
-    scene = bpy.context.scene
-    nt = scene.node_tree
-    for node in list(nt.nodes):
-        nt.nodes.remove(node)
-    render_layers = nt.nodes.new("CompositorNodeRLayers")
-    file_output = nt.nodes.new("CompositorNodeOutputFile")
-    file_output.base_path = str(temp_dir)
-    file_output.format.file_format = "OPEN_EXR"
-    file_output.format.color_mode = "RGB"
-    file_output.format.color_depth = "32"
-    file_output.file_slots[0].path = "depth_"
-    nt.links.new(render_layers.outputs["Depth"], file_output.inputs[0])
-    return file_output
 
 
 def c2w_from_eye(eye: np.ndarray, target: np.ndarray = np.zeros(3, dtype=np.float64)) -> np.ndarray:
@@ -863,23 +877,19 @@ def orbit_eye(radius: float, azimuth_deg: float, elevation_deg: float) -> np.nda
     )
 
 
-def render_image_and_depth(
+def render_image_and_mask(
     camera: bpy.types.Object,
     c2w: np.ndarray,
     temp_dir: Path,
     image_path: Path,
     mask_path: Path,
-    invdepth_path: Path | None,
 ) -> None:
     scene = bpy.context.scene
     camera.matrix_world = Matrix(c2w.tolist())
 
     rgba_path = temp_dir / "rgba.png"
-    depth_path = temp_dir / "depth_0001.exr"
     if rgba_path.exists():
         rgba_path.unlink()
-    if depth_path.exists():
-        depth_path.unlink()
 
     scene.render.filepath = str(rgba_path)
     bpy.ops.render.render(write_still=True)
@@ -890,6 +900,8 @@ def render_image_and_depth(
     alpha = rgba[..., 3:4]
     rgb = rgba[..., :3] * alpha + COMPOSITE_BACKGROUND_VALUE * (1.0 - alpha)
     mask = (alpha[..., 0] > 1e-4).astype(np.float32)
+    if mask[0].any() or mask[-1].any() or mask[:, 0].any() or mask[:, -1].any():
+        raise RuntimeError(f"Rendered shoe touches the image border: {image_path.name}")
 
     save_float_image(
         rgb,
@@ -902,31 +914,8 @@ def render_image_and_depth(
         mask_path,
         file_format="PNG",
         alpha_value=1.0,
+        color_mode="BW",
     )
-
-    if invdepth_path is not None:
-        if not depth_path.exists():
-            raise FileNotFoundError(f"Depth render did not produce {depth_path}")
-        depth_img = bpy.data.images.load(str(depth_path), check_existing=False)
-        depth = np.array(depth_img.pixels[:], dtype=np.float32).reshape(height, width, 4)[..., 0]
-        valid = np.isfinite(depth) & (depth > 0.0) & (mask > 0.5)
-        invdepth = np.zeros_like(depth, dtype=np.float32)
-        invdepth[valid] = 1.0 / np.maximum(depth[valid], 1e-8)
-
-        # Blender image buffers use a bottom-left origin, while JPEG/PNG and
-        # NumPy arrays consumed by DatasetNERF use a top-left image origin.
-        invdepth = np.flipud(invdepth).copy()
-        mask_top_left = np.flipud(mask)
-        alignment_iou = binary_mask_iou(invdepth > 0.0, mask_top_left > 0.5)
-        if alignment_iou < MIN_INVDEPTH_MASK_IOU:
-            raise RuntimeError(
-                f"Inverse-depth/mask alignment failed for {image_path.name}: "
-                f"IoU={alignment_iou:.6f}, expected >= {MIN_INVDEPTH_MASK_IOU:.2f}"
-            )
-
-        invdepth_path.parent.mkdir(parents=True, exist_ok=True)
-        np.save(invdepth_path, invdepth.astype(np.float32))
-        bpy.data.images.remove(depth_img)
 
     bpy.data.images.remove(rgba_img)
 
@@ -1020,7 +1009,6 @@ def probe_candidate_report(
         vertex_ratio = float(kept_vertices / total_vertices) if total_vertices > 0 else 1.0
 
         ensure_camera()
-        configure_depth_output(probe_root)
         camera = bpy.context.scene.camera
 
         view_summaries = []
@@ -1030,7 +1018,7 @@ def probe_candidate_report(
             mask_path = probe_root / f"{probe_name}.png"
             eye = orbit_eye(CAMERA_RADIUS, azimuth_deg, elevation_deg)
             c2w = c2w_from_eye(eye)
-            render_image_and_depth(camera, c2w, probe_root, image_path, mask_path, None)
+            render_image_and_mask(camera, c2w, probe_root, image_path, mask_path)
             mask = load_saved_mask(mask_path)
             view_summary = summarize_probe_mask(mask)
             view_summary["elevation_deg"] = float(elevation_deg)
@@ -1151,7 +1139,13 @@ def resolve_selection_for_render(
     }
 
 
-def save_float_image(rgb: np.ndarray, path: Path, file_format: str, alpha_value: float) -> None:
+def save_float_image(
+    rgb: np.ndarray,
+    path: Path,
+    file_format: str,
+    alpha_value: float,
+    color_mode: str = "RGB",
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     height, width, _ = rgb.shape
     rgba = np.concatenate(
@@ -1170,239 +1164,43 @@ def save_float_image(rgb: np.ndarray, path: Path, file_format: str, alpha_value:
     old_format = scene.render.image_settings.file_format
     old_color_mode = scene.render.image_settings.color_mode
     scene.render.image_settings.file_format = file_format
-    scene.render.image_settings.color_mode = "RGB"
+    scene.render.image_settings.color_mode = color_mode
     image.save_render(str(path), scene=scene)
     scene.render.image_settings.file_format = old_format
     scene.render.image_settings.color_mode = old_color_mode
     bpy.data.images.remove(image)
 
 
-def render_multi_elevation_dataset(
-    shoe_name: str,
-    shoe_root: Path,
-    render_invdepth: bool,
-) -> tuple[list[RenderedFrame], dict[str, Any]]:
-    output_root = shoe_root / "multi_elevation_360"
-    all_dir = output_root / "all"
-    image_dir = all_dir / "image"
-    mask_dir = all_dir / "mask"
-    invdepth_dir = all_dir / "invdepth"
-    if output_root.exists():
-        shutil.rmtree(output_root)
+def render_views(shoe_name: str, shoe_root: Path) -> int:
+    image_dir = shoe_root / "images"
+    mask_dir = shoe_root / "masks"
     image_dir.mkdir(parents=True, exist_ok=True)
     mask_dir.mkdir(parents=True, exist_ok=True)
-    if render_invdepth:
-        invdepth_dir.mkdir(parents=True, exist_ok=True)
 
     temp_dir = Path(tempfile.mkdtemp(prefix=f"{shoe_name}_render_"))
     try:
         ensure_camera()
-        configure_depth_output(temp_dir)
         camera = bpy.context.scene.camera
-        frames: list[RenderedFrame] = []
-        frame_idx = 1
-        for ring_index, elevation_deg in enumerate(MULTI_ELEVATIONS_DEG):
+        frame_index = 1
+        for elevation_deg, radius in zip(MULTI_ELEVATIONS_DEG, RING_RADII):
             for azimuth_index in range(VIEWS_PER_RING):
                 azimuth_deg = 90.0 - 10.0 * azimuth_index
-                eye = orbit_eye(CAMERA_RADIUS, azimuth_deg, elevation_deg)
-                c2w_blender = c2w_from_eye(eye)
-                c2w_saved = blender_c2w_to_gshell_saved_transform(c2w_blender)
-
-                basename = f"img{frame_idx:03d}"
-                image_path = image_dir / f"{basename}.jpg"
-                mask_path = mask_dir / f"{basename}.png"
-                invdepth_path = invdepth_dir / f"{basename}.npy" if render_invdepth else None
-                render_image_and_depth(camera, c2w_blender, temp_dir, image_path, mask_path, invdepth_path)
-
-                frames.append(
-                    RenderedFrame(
-                        file_path=f"image/{basename}.jpg",
-                        camera_angle_x=math.radians(FOV_X_DEG),
-                        transform_matrix=c2w_saved.tolist(),
-                        ring_index=ring_index,
-                        azimuth_index=azimuth_index,
-                        elevation_deg=float(elevation_deg),
-                        azimuth_deg=float(azimuth_deg),
-                        invdepth_path=f"invdepth/{basename}.npy" if render_invdepth else None,
-                    )
+                c2w = c2w_from_eye(orbit_eye(radius, azimuth_deg, elevation_deg))
+                basename = f"img{frame_index:03d}"
+                render_image_and_mask(
+                    camera,
+                    c2w,
+                    temp_dir,
+                    image_dir / f"{basename}.jpg",
+                    mask_dir / f"{basename}.png",
                 )
-                frame_idx += 1
+                frame_index += 1
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
-
-    split_summary = write_splits(output_root, frames, render_invdepth)
-    summary = {
-        "view_count": len(frames),
-        "camera_angle_x": math.radians(FOV_X_DEG),
-        "camera_radius": CAMERA_RADIUS,
-        "elevations_deg": list(MULTI_ELEVATIONS_DEG),
-        "views_per_ring": VIEWS_PER_RING,
-        "image_dir": str(image_dir),
-        "mask_dir": str(mask_dir),
-        "invdepth_dir": str(invdepth_dir) if render_invdepth else None,
-        "render_pose_convention": BLENDER_RENDER_POSE_CONVENTION,
-        "saved_pose_convention": GSHELL_SAVED_POSE_CONVENTION,
-        "invdepth_storage_origin": INVDEPTH_STORAGE_ORIGIN if render_invdepth else None,
-        "minimum_invdepth_mask_iou": MIN_INVDEPTH_MASK_IOU if render_invdepth else None,
-        "split": split_summary,
-    }
-    json_dump(output_root / "multi_elevation_summary.json", summary)
-    return frames, summary
+    return frame_index - 1
 
 
-def write_frame_json(path: Path, frames: list[dict[str, Any]]) -> None:
-    json_dump(
-        path,
-        {
-            "frames": frames,
-            "render_pose_convention": BLENDER_RENDER_POSE_CONVENTION,
-            "pose_convention": GSHELL_SAVED_POSE_CONVENTION,
-        },
-    )
-
-
-def frame_to_payload(frame: RenderedFrame) -> dict[str, Any]:
-    payload = {
-        "file_path": frame.file_path,
-        "camera_angle_x": frame.camera_angle_x,
-        "transform_matrix": frame.transform_matrix,
-        "ring_index": frame.ring_index,
-        "azimuth_index": frame.azimuth_index,
-        "elevation_deg": frame.elevation_deg,
-        "azimuth_deg": frame.azimuth_deg,
-    }
-    if frame.invdepth_path is not None:
-        payload["invdepth_path"] = frame.invdepth_path
-    return payload
-
-
-def copy_frame_assets(src_root: Path, dst_root: Path, src_frame: RenderedFrame, dst_index: int, render_invdepth: bool) -> dict[str, Any]:
-    basename = f"img{dst_index:03d}"
-    src_image = src_root / src_frame.file_path
-    src_mask = src_root / src_frame.file_path.replace("image/", "mask/").replace(".jpg", ".png")
-    dst_image_rel = f"image/{basename}.jpg"
-    dst_mask_rel = f"mask/{basename}.png"
-    dst_image = dst_root / dst_image_rel
-    dst_mask = dst_root / dst_mask_rel
-    dst_image.parent.mkdir(parents=True, exist_ok=True)
-    dst_mask.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src_image, dst_image)
-    shutil.copy2(src_mask, dst_mask)
-
-    payload = {
-        "file_path": dst_image_rel,
-        "camera_angle_x": src_frame.camera_angle_x,
-        "transform_matrix": src_frame.transform_matrix,
-        "ring_index": src_frame.ring_index,
-        "azimuth_index": src_frame.azimuth_index,
-        "elevation_deg": src_frame.elevation_deg,
-        "azimuth_deg": src_frame.azimuth_deg,
-        "all_file_path": src_frame.file_path,
-    }
-
-    if render_invdepth and src_frame.invdepth_path is not None:
-        src_inv = src_root / src_frame.invdepth_path
-        dst_inv_rel = f"invdepth/{basename}.npy"
-        dst_inv = dst_root / dst_inv_rel
-        dst_inv.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src_inv, dst_inv)
-        payload["invdepth_path"] = dst_inv_rel
-        payload["all_invdepth_path"] = src_frame.invdepth_path
-    return payload
-
-
-def compat_frame_payload(frame: dict[str, Any], split_prefix: str) -> dict[str, Any]:
-    payload = dict(frame)
-    payload["file_path"] = f"{split_prefix}/{frame['file_path']}"
-    if "invdepth_path" in frame:
-        payload["invdepth_path"] = f"{split_prefix}/{frame['invdepth_path']}"
-    if "all_file_path" in frame:
-        payload["all_file_path"] = f"multi_elevation_360/all/{frame['all_file_path']}"
-    if "all_invdepth_path" in frame:
-        payload["all_invdepth_path"] = f"multi_elevation_360/all/{frame['all_invdepth_path']}"
-    return payload
-
-
-def write_compat_transforms(shoe_root: Path, train_frames: list[dict[str, Any]], val_frames: list[dict[str, Any]]) -> dict[str, Any]:
-    train_payload = [compat_frame_payload(frame, "multi_elevation_360/train") for frame in train_frames]
-    test_payload = [compat_frame_payload(frame, "multi_elevation_360/val") for frame in val_frames]
-    train_path = shoe_root / "transforms_train.json"
-    test_path = shoe_root / "transforms_test.json"
-    write_frame_json(train_path, train_payload)
-    write_frame_json(test_path, test_payload)
-    return {
-        "transforms_train": str(train_path),
-        "transforms_test": str(test_path),
-        "train_count": len(train_payload),
-        "test_count": len(test_payload),
-    }
-
-
-def write_splits(output_root: Path, frames: list[RenderedFrame], render_invdepth: bool) -> dict[str, Any]:
-    all_dir = output_root / "all"
-    write_frame_json(all_dir / "transforms.json", [frame_to_payload(frame) for frame in frames])
-
-    train_dir = output_root / "train"
-    val_dir = output_root / "val"
-    if train_dir.exists():
-        shutil.rmtree(train_dir)
-    if val_dir.exists():
-        shutil.rmtree(val_dir)
-
-    train_frames: list[dict[str, Any]] = []
-    val_frames: list[dict[str, Any]] = []
-    train_idx = 1
-    val_idx = 1
-
-    for all_index, frame in enumerate(frames):
-        if all_index % VAL_STRIDE == 0:
-            val_frames.append(copy_frame_assets(all_dir, val_dir, frame, val_idx, render_invdepth))
-            val_idx += 1
-        else:
-            train_frames.append(copy_frame_assets(all_dir, train_dir, frame, train_idx, render_invdepth))
-            train_idx += 1
-
-    write_frame_json(train_dir / "transforms.json", train_frames)
-    write_frame_json(val_dir / "transforms.json", val_frames)
-    compat_summary = write_compat_transforms(output_root.parent, train_frames, val_frames)
-    return {
-        "train_count": len(train_frames),
-        "val_count": len(val_frames),
-        "val_stride": VAL_STRIDE,
-        "compatibility": compat_summary,
-    }
-
-
-def root_summary_row(
-    shoe_cfg: dict[str, Any],
-    shoe_root: Path,
-    canonicalization: dict[str, Any],
-    status: str,
-    error: str | None,
-) -> dict[str, Any]:
-    bbox_min = np.array(canonicalization["canonical_bbox"]["min"], dtype=np.float64)
-    bbox_max = np.array(canonicalization["canonical_bbox"]["max"], dtype=np.float64)
-    extent = bbox_max - bbox_min
-    row = {
-        "shoe": shoe_cfg["name"],
-        "status": status,
-        "model": str(canonicalization["source_model"]),
-        "turntable_dir": str(shoe_root / "turntable"),
-        "top_to_bottom_dir": str(shoe_root / "top_to_bottom"),
-        "multi_elevation_360_dir": str(shoe_root / "multi_elevation_360"),
-        "transforms_train_json": str(shoe_root / "transforms_train.json"),
-        "transforms_test_json": str(shoe_root / "transforms_test.json"),
-        "canonical_extent_x": float(extent[0]),
-        "canonical_extent_y": float(extent[1]),
-        "canonical_extent_z": float(extent[2]),
-        "scale": float(canonicalization["normalization"]["scale"]),
-    }
-    if error is not None:
-        row["error"] = error
-    return row
-
-
-def render_one_shoe(shoe_cfg: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+def render_one_shoe(shoe_cfg: dict[str, Any], args: argparse.Namespace) -> int:
     shoe_name = str(shoe_cfg["name"])
     source_model = args.source_root / shoe_cfg["model"]
     shoe_root = args.output_root / shoe_name
@@ -1412,7 +1210,7 @@ def render_one_shoe(shoe_cfg: dict[str, Any], args: argparse.Namespace) -> dict[
         shutil.rmtree(shoe_root)
     shoe_root.mkdir(parents=True, exist_ok=True)
 
-    resolved_shoe_cfg, selection_resolution = resolve_selection_for_render(
+    resolved_shoe_cfg, selection = resolve_selection_for_render(
         shoe_cfg,
         source_model,
         args.selection_debug_dir,
@@ -1421,69 +1219,11 @@ def render_one_shoe(shoe_cfg: dict[str, Any], args: argparse.Namespace) -> dict[
     reset_scene()
     mesh_objects = import_model(source_model)
     canonical = canonicalize_geometry(mesh_objects, resolved_shoe_cfg)
-    frames, summary = render_multi_elevation_dataset(shoe_name, shoe_root, args.render_invdepth)
-
-    canonicalization_payload = {
-        "shoe": shoe_name,
-        "source_model": str(source_model),
-        "renderer": {
-            "blender_version": bpy.app.version_string,
-            "engine": bpy.context.scene.render.engine,
-            "resolution": [RESOLUTION_X, RESOLUTION_Y],
-            "fov_x_deg": FOV_X_DEG,
-            "samples": SAMPLES,
-            "camera_radius": CAMERA_RADIUS,
-            "margin": FIT_MARGIN,
-            "render_pose_convention": BLENDER_RENDER_POSE_CONVENTION,
-            "saved_pose_convention": GSHELL_SAVED_POSE_CONVENTION,
-            "invdepth_storage_origin": INVDEPTH_STORAGE_ORIGIN if args.render_invdepth else None,
-            "minimum_invdepth_mask_iou": MIN_INVDEPTH_MASK_IOU if args.render_invdepth else None,
-        },
-        "source_axes": {
-            "requested": shoe_cfg.get("source_axes", "auto"),
-            "length_to_canonical_x": canonical["resolved_source_axes"]["length"],
-            "width_to_canonical_y": canonical["resolved_source_axes"]["width"],
-            "up_to_canonical_z": canonical["resolved_source_axes"]["up"],
-            "resolution": canonical["source_axes_summary"],
-        },
-        "mesh": canonical["mesh_summary"],
-        "selection_resolution": selection_resolution,
-        "component_selection": canonical["component_selection"],
-        "raw_bbox": {
-            "min": canonical["raw_bbox_min"].tolist(),
-            "max": canonical["raw_bbox_max"].tolist(),
-            "extent": (canonical["raw_bbox_max"] - canonical["raw_bbox_min"]).tolist(),
-        },
-        "canonical_bbox": {
-            "min": canonical["canonical_bbox_min"].tolist(),
-            "max": canonical["canonical_bbox_max"].tolist(),
-            "extent": (canonical["canonical_bbox_max"] - canonical["canonical_bbox_min"]).tolist(),
-        },
-        "normalization": canonical["normalization"],
-        "turntable": None,
-        "top_to_bottom": None,
-        "multi_elevation_360": summary,
-        "compatibility": summary["split"]["compatibility"],
-    }
-    json_dump(shoe_root / "synthetic_canonicalization.json", canonicalization_payload)
-    return {
-        "row": root_summary_row(shoe_cfg, shoe_root, canonicalization_payload, "ok", None),
-        "payload": canonicalization_payload,
-        "frames": frames,
-    }
-
-
-def write_root_summaries(output_root: Path, rows: list[dict[str, Any]]) -> None:
-    json_dump(output_root / "summary.json", {"rows": rows})
-    if not rows:
-        return
-    csv_path = output_root / "summary.csv"
-    fieldnames = sorted({key for row in rows for key in row.keys()})
-    with csv_path.open("w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow(row)
+    print(
+        f"[setup] {shoe_name}: selection={selection['chosen_candidate']}, "
+        f"axes={canonical['resolved_source_axes']}"
+    )
+    return render_views(shoe_name, shoe_root)
 
 
 def main() -> None:
@@ -1494,7 +1234,6 @@ def main() -> None:
     if unknown_selected:
         raise SystemExit(f"Selected shoe(s) not found in manifest: {', '.join(unknown_selected)}")
 
-    rows: list[dict[str, Any]] = []
     errors: list[str] = []
     args.output_root.mkdir(parents=True, exist_ok=True)
 
@@ -1504,23 +1243,13 @@ def main() -> None:
             continue
 
         try:
-            result = render_one_shoe(shoe_cfg, args)
-            rows.append(result["row"])
-            print(f"[ok] {shoe_name}")
+            view_count = render_one_shoe(shoe_cfg, args)
+            print(f"[ok] {shoe_name}: {view_count} images and masks")
         except Exception as exc:  # noqa: BLE001
             error = f"{type(exc).__name__}: {exc}"
-            rows.append(
-                {
-                    "shoe": shoe_name,
-                    "status": "failed",
-                    "model": str(args.source_root / shoe_cfg["model"]),
-                    "error": error,
-                }
-            )
             errors.append(f"{shoe_name}: {error}")
             print(f"[failed] {shoe_name}: {error}")
 
-    write_root_summaries(args.output_root, rows)
     if errors:
         raise SystemExit("Rendering failed for: " + "; ".join(errors))
 
