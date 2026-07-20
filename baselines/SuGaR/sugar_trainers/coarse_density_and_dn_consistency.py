@@ -8,7 +8,14 @@ from sugar_scene.gs_model import GaussianSplattingWrapper, fetchPly
 from sugar_scene.sugar_model import SuGaR
 from sugar_scene.sugar_optimizer import OptimizationParams, SuGaROptimizer
 from sugar_scene.sugar_densifier import SuGaRDensifier
-from sugar_utils.loss_utils import ssim, l1_loss, l2_loss
+from sugar_utils.loss_utils import (
+    ssim,
+    l1_loss,
+    l2_loss,
+    masked_l1_loss,
+    masked_l2_loss,
+    masked_ssim,
+)
 
 from rich.console import Console
 import time
@@ -113,7 +120,7 @@ def coarse_training_with_density_regularization_and_dn_consistency(args):
     freeze_gaussians = False
     initialize_from_trained_3dgs = True  # True or False
     if initialize_from_trained_3dgs:
-        prune_at_start = False
+        prune_at_start = getattr(args, "prune_at_start", False)
         start_pruning_threshold = 0.5
     no_rendering = freeze_gaussians
 
@@ -190,7 +197,7 @@ def coarse_training_with_density_regularization_and_dn_consistency(args):
         dn_consistency_factor = 0.05  # 0.1
 
     # Regularization
-    enforce_entropy_regularization = True
+    enforce_entropy_regularization = getattr(args, "entropy_regularization", True)
     if enforce_entropy_regularization:
         start_entropy_regularization_from = 7000
         end_entropy_regularization_at = 9000  # TODO: Change
@@ -339,6 +346,37 @@ def coarse_training_with_density_regularization_and_dn_consistency(args):
     
     use_eval_split = args.eval
     use_white_background = args.white_background
+    use_masks = getattr(args, "use_masks", False)
+    constrain_points_to_bbox = getattr(args, "constrain_points_to_bbox", False)
+    max_gaussian_scale_ratio = getattr(args, "max_gaussian_scale_ratio", None)
+
+    bbox_min_arg = getattr(args, "bboxmin", None)
+    bbox_max_arg = getattr(args, "bboxmax", None)
+    constraint_bbox_min = None
+    constraint_bbox_max = None
+    max_gaussian_scale = None
+    if bbox_min_arg not in (None, "None") or bbox_max_arg not in (None, "None"):
+        if bbox_min_arg in (None, "None") or bbox_max_arg in (None, "None"):
+            raise ValueError("Both bboxmin and bboxmax are required for coarse geometry constraints")
+        constraint_bbox_min = np.asarray(
+            [float(value) for value in bbox_min_arg.strip("()").split(",")], dtype=np.float32
+        )
+        constraint_bbox_max = np.asarray(
+            [float(value) for value in bbox_max_arg.strip("()").split(",")], dtype=np.float32
+        )
+        if constraint_bbox_min.shape != (3,) or constraint_bbox_max.shape != (3,):
+            raise ValueError("Coarse geometry constraints require 3D bboxmin/bboxmax")
+        if np.any(constraint_bbox_max <= constraint_bbox_min):
+            raise ValueError("Coarse geometry constraint bbox has non-positive extent")
+    if max_gaussian_scale_ratio is not None:
+        if constraint_bbox_min is None:
+            raise ValueError("max_gaussian_scale_ratio requires bboxmin/bboxmax")
+        if max_gaussian_scale_ratio <= 0:
+            raise ValueError("max_gaussian_scale_ratio must be positive")
+        max_gaussian_scale = float(
+            max_gaussian_scale_ratio
+            * np.linalg.norm(constraint_bbox_max - constraint_bbox_min)
+        )
     
     ply_path = os.path.join(source_path, "sparse/0/points3D.ply")
     
@@ -355,6 +393,11 @@ def coarse_training_with_density_regularization_and_dn_consistency(args):
     CONSOLE.print("SDF better normal factor:", sdf_better_normal_factor)
     CONSOLE.print("Eval split:", use_eval_split)
     CONSOLE.print("White background:", use_white_background)
+    CONSOLE.print("Use foreground masks:", use_masks)
+    CONSOLE.print("Entropy regularization:", enforce_entropy_regularization)
+    CONSOLE.print("Prune opacity < 0.5 at start:", prune_at_start)
+    CONSOLE.print("Constrain points to bbox:", constrain_points_to_bbox)
+    CONSOLE.print("Maximum Gaussian scale:", max_gaussian_scale)
     CONSOLE.print("---------------------------")
     
     # Setup device
@@ -484,6 +527,16 @@ def coarse_training_with_density_regularization_and_dn_consistency(args):
                 sugar.all_densities[...] = nerfmodel.gaussians._opacity.detach()
                 sugar._sh_coordinates_dc[...] = nerfmodel.gaussians._features_dc.detach()
                 sugar._sh_coordinates_rest[...] = nerfmodel.gaussians._features_rest.detach()
+
+    with torch.no_grad():
+        if constrain_points_to_bbox:
+            if constraint_bbox_min is None:
+                raise ValueError("constrain_points_to_bbox requires bboxmin/bboxmax")
+            minimum = torch.as_tensor(constraint_bbox_min, device=sugar.device)
+            maximum = torch.as_tensor(constraint_bbox_max, device=sugar.device)
+            sugar._points[...] = torch.maximum(torch.minimum(sugar._points, maximum), minimum)
+        if max_gaussian_scale is not None:
+            sugar._scales.clamp_(max=float(np.log(max_gaussian_scale)))
         
     CONSOLE.print(f'\nSuGaR model has been initialized.')
     CONSOLE.print(sugar)
@@ -541,12 +594,19 @@ def coarse_training_with_density_regularization_and_dn_consistency(args):
     
     # ====================Loss function====================
     if loss_function == 'l1':
-        loss_fn = l1_loss
+        def loss_fn(pred_rgb, gt_rgb, mask=None):
+            return masked_l1_loss(pred_rgb, gt_rgb, mask) if mask is not None else l1_loss(pred_rgb, gt_rgb)
     elif loss_function == 'l2':
-        loss_fn = l2_loss
+        def loss_fn(pred_rgb, gt_rgb, mask=None):
+            return masked_l2_loss(pred_rgb, gt_rgb, mask) if mask is not None else l2_loss(pred_rgb, gt_rgb)
     elif loss_function == 'l1+dssim':
-        def loss_fn(pred_rgb, gt_rgb):
-            return (1.0 - dssim_factor) * l1_loss(pred_rgb, gt_rgb) + dssim_factor * (1.0 - ssim(pred_rgb, gt_rgb))
+        def loss_fn(pred_rgb, gt_rgb, mask=None):
+            if mask is None:
+                return (1.0 - dssim_factor) * l1_loss(pred_rgb, gt_rgb) + dssim_factor * (1.0 - ssim(pred_rgb, gt_rgb))
+            return (
+                (1.0 - dssim_factor) * masked_l1_loss(pred_rgb, gt_rgb, mask)
+                + dssim_factor * (1.0 - masked_ssim(pred_rgb, gt_rgb, mask))
+            )
     CONSOLE.print(f'Using loss function: {loss_function}')
     
     
@@ -623,9 +683,15 @@ def coarse_training_with_density_regularization_and_dn_consistency(args):
                 gt_image = nerfmodel.get_gt_image(camera_indices=camera_indices)           
                 gt_rgb = gt_image.view(-1, sugar.image_height, sugar.image_width, 3)
                 gt_rgb = gt_rgb.transpose(-1, -2).transpose(-2, -3)
+                if use_masks:
+                    gt_mask = nerfmodel.get_gt_mask(camera_indices=camera_indices)
+                    gt_mask = gt_mask.view(-1, sugar.image_height, sugar.image_width, 1)
+                    gt_mask = gt_mask.permute(0, 3, 1, 2)
+                else:
+                    gt_mask = None
                     
                 # Compute loss 
-                loss = loss_fn(pred_rgb, gt_rgb)
+                loss = loss_fn(pred_rgb, gt_rgb, gt_mask)
                         
                 if enforce_entropy_regularization and iteration > start_entropy_regularization_from and iteration < end_entropy_regularization_at:
                     if iteration == start_entropy_regularization_from + 1:
@@ -647,13 +713,24 @@ def coarse_training_with_density_regularization_and_dn_consistency(args):
                     if iteration == start_dn_consistency_from + 1:
                         CONSOLE.print("\n---INFO---\nStarting depth-normal consistency.")
                     depth_img, normal_img = sugar.render_depth_and_normal(camera_indices=camera_indices.item())
-                    normal_error = depth_normal_consistency_loss(
-                        depth=depth_img[None],  # Shape is (1, height, width) 
-                        normal=normal_img.permute(2, 0, 1),  # Shape is (3, height, width)
-                        camera=nerfmodel.training_cameras.gs_cameras[camera_indices.item()],
-                        scale_rendered_normals=False,
-                        return_normal_maps=False,
-                    )
+                    if gt_mask is None:
+                        normal_error = depth_normal_consistency_loss(
+                            depth=depth_img[None],
+                            normal=normal_img.permute(2, 0, 1),
+                            camera=nerfmodel.training_cameras.gs_cameras[camera_indices.item()],
+                            scale_rendered_normals=False,
+                            return_normal_maps=False,
+                        )
+                    else:
+                        normal_error_map, _, _ = depth_normal_consistency_loss(
+                            depth=depth_img[None],
+                            normal=normal_img.permute(2, 0, 1),
+                            camera=nerfmodel.training_cameras.gs_cameras[camera_indices.item()],
+                            scale_rendered_normals=False,
+                            return_normal_maps=True,
+                        )
+                        foreground = gt_mask[0, 0]
+                        normal_error = (normal_error_map * foreground).sum() / foreground.sum().clamp_min(1.0)
                     loss = loss + dn_consistency_factor * normal_error
                 
                 # SuGaR regularization
@@ -872,6 +949,13 @@ def coarse_training_with_density_regularization_and_dn_consistency(args):
             
             # Optimization step
             optimizer.step()
+            with torch.no_grad():
+                if constrain_points_to_bbox:
+                    minimum = torch.as_tensor(constraint_bbox_min, device=sugar.device)
+                    maximum = torch.as_tensor(constraint_bbox_max, device=sugar.device)
+                    sugar._points[...] = torch.maximum(torch.minimum(sugar._points, maximum), minimum)
+                if max_gaussian_scale is not None:
+                    sugar._scales.clamp_(max=float(np.log(max_gaussian_scale)))
             optimizer.zero_grad(set_to_none = True)
             
             # Print loss

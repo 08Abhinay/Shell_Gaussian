@@ -30,7 +30,7 @@ def load_gs_cameras(source_path, gs_output_path, image_resolution=1,
         List of GSCameras: List of Gaussian Splatting cameras.
     """
     image_dir = os.path.join(source_path, 'images')
-    
+
     with open(gs_output_path + 'cameras.json') as f:
         unsorted_camera_transforms = json.load(f)
         
@@ -98,13 +98,7 @@ def load_gs_cameras(source_path, gs_output_path, image_resolution=1,
         image_path = os.path.join(image_dir,  name + extension)
         
         if load_gt_images:
-            image = Image.open(image_path)
-            if white_background:
-                im_data = np.array(image.convert("RGBA"))
-                bg = np.array([1,1,1])
-                norm_data = im_data / 255.0
-                arr = norm_data[:,:,:3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
-                image = Image.fromarray(np.array(arr*255.0, dtype=np.byte), "RGB")
+            image = Image.open(image_path).convert("RGBA")
             orig_w, orig_h = image.size
             downscale_factor = 1
             if image_resolution in [1, 2, 4, 8]:
@@ -114,12 +108,18 @@ def load_gs_cameras(source_path, gs_output_path, image_resolution=1,
                 additional_downscale_factor = max(orig_h, orig_w) / max_img_size
                 downscale_factor = additional_downscale_factor * downscale_factor
             resolution = round(orig_w/(downscale_factor)), round(orig_h/(downscale_factor))
-            resized_image_rgb = PILtoTorch(image, resolution)
-            gt_image = resized_image_rgb[:3, ...]
+            resized_image_rgba = PILtoTorch(image, resolution)
+            gt_alpha_mask = resized_image_rgba[3:4, ...]
+            background = torch.ones_like(resized_image_rgba[:3, ...]) if white_background else torch.zeros_like(resized_image_rgba[:3, ...])
+            gt_image = (
+                resized_image_rgba[:3, ...] * gt_alpha_mask
+                + background * (1.0 - gt_alpha_mask)
+            )
             
             image_height, image_width = None, None
         else:
             gt_image = None
+            gt_alpha_mask = None
             if image_resolution in [1, 2, 4, 8]:
                 downscale_factor = image_resolution
                 # resolution = round(orig_w/(image_resolution)), round(orig_h/(image_resolution))
@@ -129,7 +129,7 @@ def load_gs_cameras(source_path, gs_output_path, image_resolution=1,
             image_height, image_width = round(height/downscale_factor), round(width/downscale_factor)
         
         gs_camera = GSCamera(
-            colmap_id=id, image=gt_image, gt_alpha_mask=None,
+            colmap_id=id, image=gt_image, gt_alpha_mask=gt_alpha_mask,
             R=R, T=T, FoVx=fov_x, FoVy=fov_y,
             image_name=name, uid=id,
             image_height=image_height, image_width=image_width,)
@@ -196,9 +196,11 @@ class GSCamera(torch.nn.Module):
             self.image_height = self.original_image.shape[1]
 
             if gt_alpha_mask is not None:
-                self.original_image *= gt_alpha_mask.to(self.data_device)
+                self.gt_alpha_mask = gt_alpha_mask.clamp(0.0, 1.0).to(self.data_device)
             else:
-                self.original_image *= torch.ones((1, self.image_height, self.image_width), device=self.data_device)
+                self.gt_alpha_mask = torch.ones(
+                    (1, self.image_height, self.image_width), device=self.data_device
+                )
 
         self.zfar = 100.0  # TODO: Increase value
         self.znear = 0.01
@@ -543,4 +545,3 @@ class CamerasWrapper:
 
         radius = 1.1 * half_diagonal
         return radius
-    

@@ -1,6 +1,7 @@
 import sys
 sys.path.append('./gaussian_splatting')
 import os
+import json
 import torch
 import plotly.graph_objs as go
 from gaussian_splatting.scene.gaussian_model import GaussianModel
@@ -32,7 +33,7 @@ class ModelParams():
         self.data_device = "cuda"
         self.eval = False
     
-        
+
 class PipelineParams():
     """Parameters of the Gaussian Splatting pipeline.
     Largely inspired by the original implementation of the 3D Gaussian Splatting paper:
@@ -140,11 +141,29 @@ class GaussianSplattingWrapper:
         if eval_split:
             self.cam_list = []
             self.test_cam_list = []
-            for i, cam in enumerate(cam_list):
-                if i % eval_split_interval == 0:
-                    self.test_cam_list.append(cam)
-                else:
-                    self.cam_list.append(cam)
+            explicit_split = self._load_explicit_camera_split(source_path)
+            if explicit_split is not None:
+                train_names, test_names = explicit_split
+                camera_names = {cam.image_name for cam in cam_list}
+                missing_names = (train_names | test_names) - camera_names
+                unexpected_names = camera_names - (train_names | test_names)
+                if missing_names or unexpected_names:
+                    raise ValueError(
+                        "Explicit transforms split does not match cameras.json: "
+                        f"missing={sorted(missing_names)}, unexpected={sorted(unexpected_names)}"
+                    )
+                self.cam_list = [cam for cam in cam_list if cam.image_name in train_names]
+                self.test_cam_list = [cam for cam in cam_list if cam.image_name in test_names]
+                print(
+                    "Using explicit transforms_train/transforms_test membership: "
+                    f"{len(self.cam_list)} train / {len(self.test_cam_list)} test"
+                )
+            else:
+                for i, cam in enumerate(cam_list):
+                    if i % eval_split_interval == 0:
+                        self.test_cam_list.append(cam)
+                    else:
+                        self.cam_list.append(cam)
             # test_ns_cameras = convert_camera_from_gs_to_nerfstudio(self.test_cam_list)
             # self.test_cameras = NeRFCameras.from_ns_cameras(test_ns_cameras)
             self.test_cameras = CamerasWrapper(self.test_cam_list)
@@ -169,6 +188,30 @@ class GaussianSplattingWrapper:
             )
         
         self.background = torch.tensor(background, device='cuda', dtype=torch.float32)
+
+    @staticmethod
+    def _load_explicit_camera_split(source_path):
+        paths = {
+            "train": os.path.join(source_path, "transforms_train.json"),
+            "test": os.path.join(source_path, "transforms_test.json"),
+        }
+        if not all(os.path.isfile(path) for path in paths.values()):
+            return None
+
+        result = {}
+        for split, path in paths.items():
+            with open(path, encoding="utf-8") as handle:
+                payload = json.load(handle)
+            result[split] = {
+                os.path.basename(frame["file_path"].rstrip("/"))
+                for frame in payload.get("frames", [])
+            }
+        if not result["train"] or not result["test"]:
+            raise ValueError("Explicit transforms split must contain train and test frames")
+        overlap = result["train"] & result["test"]
+        if overlap:
+            raise ValueError(f"Explicit transforms split overlaps: {sorted(overlap)}")
+        return result["train"], result["test"]
 
     @property
     def device(self):
@@ -234,6 +277,13 @@ class GaussianSplattingWrapper:
         if to_cuda:
             gt_image = gt_image.cuda()
         return gt_image.permute(1, 2, 0)
+
+    def get_gt_mask(self, camera_indices:int, to_cuda=False):
+        """Return the alpha/foreground mask associated with a training image."""
+        gt_mask = self.cam_list[camera_indices].gt_alpha_mask
+        if to_cuda:
+            gt_mask = gt_mask.cuda()
+        return gt_mask.permute(1, 2, 0)
     
     def get_test_gt_image(self, camera_indices:int, to_cuda=False):
         """Returns the ground truth image corresponding to the test camera at the given index.
@@ -329,4 +379,3 @@ class GaussianSplattingWrapper:
 
             # fig.show()
             return fig
-        

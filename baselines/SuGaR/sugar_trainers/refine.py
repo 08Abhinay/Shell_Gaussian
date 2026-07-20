@@ -8,7 +8,14 @@ from sugar_scene.gs_model import GaussianSplattingWrapper, fetchPly
 from sugar_scene.sugar_model import SuGaR, convert_refined_sugar_into_gaussians
 from sugar_scene.sugar_optimizer import OptimizationParams, SuGaROptimizer
 from sugar_scene.sugar_densifier import SuGaRDensifier
-from sugar_utils.loss_utils import ssim, l1_loss, l2_loss
+from sugar_utils.loss_utils import (
+    ssim,
+    l1_loss,
+    l2_loss,
+    masked_l1_loss,
+    masked_l2_loss,
+    masked_ssim,
+)
 
 from rich.console import Console
 import time
@@ -282,6 +289,7 @@ def refined_training(args):
     
     use_eval_split = args.eval
     use_white_background = args.white_background
+    use_masks = getattr(args, "use_masks", False)
     
     export_ply_at_the_end = args.export_ply
     
@@ -303,6 +311,7 @@ def refined_training(args):
         CONSOLE.print("Foreground bounding box max:", fg_bbox_max)
     CONSOLE.print("Use eval split:", use_eval_split)
     CONSOLE.print("Use white background:", use_white_background)
+    CONSOLE.print("Use foreground masks:", use_masks)
     CONSOLE.print("Export ply at the end:", export_ply_at_the_end)
     CONSOLE.print("----------------------------")
     
@@ -497,12 +506,19 @@ def refined_training(args):
     
     # ====================Loss function====================
     if loss_function == 'l1':
-        loss_fn = l1_loss
+        def loss_fn(pred_rgb, gt_rgb, mask=None):
+            return masked_l1_loss(pred_rgb, gt_rgb, mask) if mask is not None else l1_loss(pred_rgb, gt_rgb)
     elif loss_function == 'l2':
-        loss_fn = l2_loss
+        def loss_fn(pred_rgb, gt_rgb, mask=None):
+            return masked_l2_loss(pred_rgb, gt_rgb, mask) if mask is not None else l2_loss(pred_rgb, gt_rgb)
     elif loss_function == 'l1+dssim':
-        def loss_fn(pred_rgb, gt_rgb):
-            return (1.0 - dssim_factor) * l1_loss(pred_rgb, gt_rgb) + dssim_factor * (1.0 - ssim(pred_rgb, gt_rgb))
+        def loss_fn(pred_rgb, gt_rgb, mask=None):
+            if mask is None:
+                return (1.0 - dssim_factor) * l1_loss(pred_rgb, gt_rgb) + dssim_factor * (1.0 - ssim(pred_rgb, gt_rgb))
+            return (
+                (1.0 - dssim_factor) * masked_l1_loss(pred_rgb, gt_rgb, mask)
+                + dssim_factor * (1.0 - masked_ssim(pred_rgb, gt_rgb, mask))
+            )
     CONSOLE.print(f'Using loss function: {loss_function}')
     
     
@@ -583,9 +599,15 @@ def refined_training(args):
                 gt_image = nerfmodel.get_gt_image(camera_indices=camera_indices)           
                 gt_rgb = gt_image.view(-1, sugar.image_height, sugar.image_width, 3)
                 gt_rgb = gt_rgb.transpose(-1, -2).transpose(-2, -3)
+                if use_masks:
+                    gt_mask = nerfmodel.get_gt_mask(camera_indices=camera_indices)
+                    gt_mask = gt_mask.view(-1, sugar.image_height, sugar.image_width, 1)
+                    gt_mask = gt_mask.permute(0, 3, 1, 2)
+                else:
+                    gt_mask = None
                     
                 # Compute loss 
-                loss = loss_fn(pred_rgb, gt_rgb)
+                loss = loss_fn(pred_rgb, gt_rgb, gt_mask)
                         
                 if enforce_entropy_regularization and iteration > start_entropy_regularization_from and iteration < end_entropy_regularization_at:
                     if iteration == start_entropy_regularization_from + 1:

@@ -2,6 +2,7 @@ import os
 import numpy as np
 import open3d as o3d
 import torch
+from PIL import Image
 from pytorch3d.renderer import RasterizationSettings, MeshRasterizer
 from pytorch3d.ops import knn_points
 from sugar_scene.gs_model import GaussianSplattingWrapper
@@ -23,7 +24,7 @@ def extract_mesh_from_coarse_sugar(args):
     low_opacity_gaussian_pruning_threshold = 0.5
 
     # Surface level extraction parameters
-    n_total_points = 10_000_000
+    n_total_points = getattr(args, "surface_point_budget", 10_000_000)
     use_gaussian_depth_for_surface_levels = False  # False until now
     surface_level_triangle_scale = 2.  # 2.
     # surface_level_triangle_scale = -2 * np.log(surface_level)
@@ -40,8 +41,8 @@ def extract_mesh_from_coarse_sugar(args):
     # Mesh computation parameters
     fg_bbox_factor = 1.  # 1.
     bg_bbox_factor = 4.  # 4.
-    poisson_depth = 10  # 10 for most real scenes. 6 or 7 work well for most synthetic scenes
-    vertices_density_quantile = 0.1  # 0.1 for most real scenes. 0. works well for most synthetic scenes
+    poisson_depth = getattr(args, "poisson_depth", 10)  # 10 real scenes; 6 or 7 synthetic scenes
+    vertices_density_quantile = getattr(args, "vertices_density_quantile", 0.1)  # 0 for most synthetic scenes
     decimate_mesh = True
     clean_mesh = True
     project_mesh_on_surface_points = args.project_mesh_on_surface_points
@@ -105,6 +106,10 @@ def extract_mesh_from_coarse_sugar(args):
     use_centers_to_extract_mesh = args.use_centers_to_extract_mesh
     use_marching_cubes = args.use_marching_cubes
     use_vanilla_3dgs = args.use_vanilla_3dgs
+    foreground_only = getattr(args, 'foreground_only', False)
+    use_masks = getattr(args, "use_masks", False)
+    filter_gaussians_by_bbox = getattr(args, "filter_gaussians_by_bbox", False)
+    white_background = getattr(args, "white_background", False)
             
     CONSOLE.print("-----Parameters-----")
     CONSOLE.print("Source path:", source_path)
@@ -120,6 +125,12 @@ def extract_mesh_from_coarse_sugar(args):
     CONSOLE.print("Use centers to extract mesh:", use_centers_to_extract_mesh)
     CONSOLE.print("Use marching cubes:", use_marching_cubes)
     CONSOLE.print("Use vanilla 3DGS:", use_vanilla_3dgs)
+    CONSOLE.print("Foreground-only extraction:", foreground_only)
+    CONSOLE.print("Use foreground masks:", use_masks)
+    CONSOLE.print("Filter Gaussian centers by bbox:", filter_gaussians_by_bbox)
+    CONSOLE.print("Surface point budget:", n_total_points)
+    CONSOLE.print("Poisson depth:", poisson_depth)
+    CONSOLE.print("Poisson density quantile:", vertices_density_quantile)
     CONSOLE.print("--------------------")
     
     # Set the GPU
@@ -134,6 +145,7 @@ def extract_mesh_from_coarse_sugar(args):
         load_gt_images=False,
         eval_split=use_train_test_split,
         eval_split_interval=n_skip_images_for_eval_split,
+        white_background=white_background,
         )
     
     CONSOLE.print(f'{len(nerfmodel.training_cameras)} training images detected.')
@@ -204,6 +216,21 @@ def extract_mesh_from_coarse_sugar(args):
         n_quantiles = 10
         for i in range(n_quantiles):
             CONSOLE.print(f'Quantile {i/n_quantiles}:', sugar.strengths.quantile(i/n_quantiles).item())
+
+        if filter_gaussians_by_bbox:
+            if not use_custom_bbox:
+                raise ValueError("filter_gaussians_by_bbox requires bboxmin/bboxmax")
+            bbox_min_tensor = torch.as_tensor(fg_bbox_min, device=sugar.device)
+            bbox_max_tensor = torch.as_tensor(fg_bbox_max, device=sugar.device)
+            keep_mask = (sugar.points >= bbox_min_tensor).all(dim=-1) & (
+                sugar.points <= bbox_max_tensor
+            ).all(dim=-1)
+            removed = int((~keep_mask).sum().item())
+            sugar.prune_points(keep_mask)
+            CONSOLE.print(
+                f"Filtered {removed} Gaussians whose centers were outside the foreground bbox; "
+                f"{sugar.n_points} remain."
+            )
             
     # Build the triangle soup that will be used for splatting
     # sugar.primitive_types = 'square'
@@ -253,6 +280,20 @@ def extract_mesh_from_coarse_sugar(args):
                             CONSOLE.print(f"Current point cloud for level {surface_level} has {len(surface_levels_outputs[surface_level]['points'])} points.")
                     
                     point_depth = cameras_to_use.p3d_cameras[cam_idx].get_world_to_view_transform().transform_points(sugar.points)[..., 2:].expand(-1, 3)
+                    frame_mask = None
+                    if use_masks:
+                        image_name = cameras_to_use.gs_cameras[cam_idx].image_name
+                        image_path = os.path.join(source_path, "images", image_name + ".png")
+                        with Image.open(image_path) as image_handle:
+                            alpha = image_handle.convert("RGBA").getchannel("A")
+                            if alpha.size != (sugar.image_width, sugar.image_height):
+                                alpha = alpha.resize(
+                                    (sugar.image_width, sugar.image_height),
+                                    resample=Image.Resampling.NEAREST,
+                                )
+                            frame_mask = torch.from_numpy(
+                                np.asarray(alpha, dtype=np.float32).copy() / 255.0
+                            ).to(sugar.device)
                     
                     # Render RGB image with Gaussian splatting
                     rgb = sugar.render_image_gaussian_rasterizer(
@@ -313,6 +354,12 @@ def extract_mesh_from_coarse_sugar(args):
                             
                             if use_fast_method:
                                 pixel_idx = frame_surface_level_outputs[surface_level]['pixel_idx']
+                                if frame_mask is not None:
+                                    foreground_pixels = frame_mask.reshape(-1)[pixel_idx] >= 0.5
+                                    img_surface_points = img_surface_points[foreground_pixels]
+                                    surface_gaussian_idx = surface_gaussian_idx[foreground_pixels]
+                                    img_surface_normals = img_surface_normals[foreground_pixels]
+                                    pixel_idx = pixel_idx[foreground_pixels]
                                 img_surface_colors = rgb.view(-1, 3)[pixel_idx]
                             else:
                                 empty_pixels = frame_surface_level_outputs[surface_level]['empty_pixels']
@@ -321,6 +368,8 @@ def extract_mesh_from_coarse_sugar(args):
                             img_surface_view_directions = torch.nn.functional.normalize(cameras_to_use.p3d_cameras[cam_idx].get_camera_center() - img_surface_points)
                             img_surface_pix_to_gaussians = surface_gaussian_idx.view(-1)
                             
+                            if len(img_surface_points) == 0:
+                                continue
                             idx = torch.randperm(len(img_surface_points), device=sugar.device)[:n_pts_per_frame]
                             
                             surface_levels_outputs[surface_level]['points'] = torch.cat([surface_levels_outputs[surface_level]['points'], img_surface_points[idx]], dim=0)
@@ -355,7 +404,9 @@ def extract_mesh_from_coarse_sugar(args):
 
                 points_idx = torch.arange(len(surface_points))
                 fg_mask = (surface_points[points_idx] > fg_bbox_min_tensor).all(dim=-1) * (surface_points[points_idx] < fg_bbox_max_tensor).all(dim=-1)
-                if center_bbox:
+                if foreground_only:
+                    bg_mask = torch.zeros_like(fg_mask, dtype=torch.bool)
+                elif center_bbox:
                     bg_mask = ((surface_points[points_idx] - _camera_average_xyz).abs().max(dim=-1)[0]
                                < bg_bbox_factor * _cameras_spatial_extent) * ~fg_mask
                 else:
@@ -483,15 +534,17 @@ def extract_mesh_from_coarse_sugar(args):
                         mesh_verts = torch.tensor(np.asarray(decimated_o3d_mesh.vertices), device=sugar.device, dtype=torch.float32)
                         mesh_faces = torch.tensor(np.asarray(decimated_o3d_mesh.triangles), device=sugar.device, dtype=torch.int64)
 
+                        projection_points = fg_points if foreground_only else surface_points
+                        projection_colors = fg_colors if foreground_only else surface_colors
                         proj_knn_idx = knn_points(
                             mesh_verts[None], 
-                            surface_points[None], 
+                            projection_points[None],
                             K=1,
                         ).idx[0][..., 0]
                         
-                        new_mesh_verts = surface_points[proj_knn_idx]
+                        new_mesh_verts = projection_points[proj_knn_idx]
                         new_mesh_faces = mesh_faces
-                        new_mesh_colors = surface_colors[proj_knn_idx]
+                        new_mesh_colors = projection_colors[proj_knn_idx]
                         
                         decimated_o3d_mesh = o3d.geometry.TriangleMesh()
                         decimated_o3d_mesh.vertices = o3d.utility.Vector3dVector(new_mesh_verts.cpu().numpy())
@@ -516,6 +569,8 @@ def extract_mesh_from_coarse_sugar(args):
                         ).replace(
                             'AA', str(decimation_target).replace('.', '')
                             )
+                    if foreground_only:
+                        sugar_mesh_path = sugar_mesh_path.replace('.ply', '_fgonly.ply')
                     sugar_mesh_path = os.path.join(mesh_output_dir, sugar_mesh_path)
                     o3d.io.write_triangle_mesh(sugar_mesh_path, decimated_o3d_mesh, write_triangle_uvs=True, write_vertex_colors=True, write_vertex_normals=True)
                     CONSOLE.print("Mesh saved at", sugar_mesh_path)
@@ -542,7 +597,10 @@ def extract_mesh_from_coarse_sugar(args):
 
                 points_idx = torch.arange(len(surface_points))
                 fg_mask = (surface_points[points_idx] > fg_bbox_min_tensor).all(dim=-1) * (surface_points[points_idx] < fg_bbox_max_tensor).all(dim=-1)
-                bg_mask = (surface_points[points_idx].abs().max(dim=-1)[0] < bg_bbox_factor * sugar.get_cameras_spatial_extent()) * ~fg_mask
+                if foreground_only:
+                    bg_mask = torch.zeros_like(fg_mask, dtype=torch.bool)
+                else:
+                    bg_mask = (surface_points[points_idx].abs().max(dim=-1)[0] < bg_bbox_factor * sugar.get_cameras_spatial_extent()) * ~fg_mask
 
                 fg_points = surface_points[points_idx][fg_mask]
                 fg_colors = surface_colors[points_idx][fg_mask]
@@ -649,6 +707,8 @@ def extract_mesh_from_coarse_sugar(args):
                     sugar_mesh_path = sugar_mesh_path.replace(
                             'AA', str(decimation_target).replace('.', '')
                             )
+                    if foreground_only:
+                        sugar_mesh_path = sugar_mesh_path.replace('.ply', '_fgonly.ply')
                     sugar_mesh_path = os.path.join(mesh_output_dir, sugar_mesh_path)
                     o3d.io.write_triangle_mesh(sugar_mesh_path, decimated_o3d_mesh, write_triangle_uvs=True, write_vertex_colors=True, write_vertex_normals=True)
                     CONSOLE.print("Mesh saved at", sugar_mesh_path)

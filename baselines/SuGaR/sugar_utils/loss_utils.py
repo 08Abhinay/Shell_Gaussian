@@ -20,6 +20,38 @@ def l1_loss(network_output, gt):
 def l2_loss(network_output, gt):
     return ((network_output - gt) ** 2).mean()
 
+def _expanded_mask(mask, reference):
+    """Return a float mask broadcastable over an RGB image batch."""
+    if mask is None:
+        return None
+    if mask.ndim == reference.ndim - 1:
+        mask = mask.unsqueeze(-3)
+    if mask.ndim != reference.ndim:
+        raise ValueError(
+            f"Mask/image dimensionality mismatch: {tuple(mask.shape)} vs {tuple(reference.shape)}"
+        )
+    if mask.shape[-3] not in (1, reference.shape[-3]):
+        raise ValueError(
+            f"Mask has {mask.shape[-3]} channels for an image with {reference.shape[-3]} channels"
+        )
+    return mask.to(device=reference.device, dtype=reference.dtype).clamp(0.0, 1.0)
+
+def masked_l1_loss(network_output, gt, mask):
+    mask = _expanded_mask(mask, network_output)
+    if mask is None:
+        return l1_loss(network_output, gt)
+    channel_factor = network_output.shape[-3] if mask.shape[-3] == 1 else 1
+    denominator = (mask.sum() * channel_factor).clamp_min(1.0)
+    return (torch.abs(network_output - gt) * mask).sum() / denominator
+
+def masked_l2_loss(network_output, gt, mask):
+    mask = _expanded_mask(mask, network_output)
+    if mask is None:
+        return l2_loss(network_output, gt)
+    channel_factor = network_output.shape[-3] if mask.shape[-3] == 1 else 1
+    denominator = (mask.sum() * channel_factor).clamp_min(1.0)
+    return (((network_output - gt) ** 2) * mask).sum() / denominator
+
 def gaussian(window_size, sigma):
     gauss = torch.Tensor([exp(-(x - window_size // 2) ** 2 / float(2 * sigma ** 2)) for x in range(window_size)])
     return gauss / gauss.sum()
@@ -40,7 +72,30 @@ def ssim(img1, img2, window_size=11, size_average=True):
 
     return _ssim(img1, img2, window, window_size, channel, size_average)
 
+def masked_ssim(img1, img2, mask, window_size=11):
+    """Compute SSIM only at pixels selected by a foreground mask."""
+    mask = _expanded_mask(mask, img1)
+    if mask is None:
+        return ssim(img1, img2, window_size=window_size)
+    channel = img1.size(-3)
+    window = create_window(window_size, channel)
+    if img1.is_cuda:
+        window = window.cuda(img1.get_device())
+    window = window.type_as(img1)
+    ssim_map = _ssim_map(img1, img2, window, window_size, channel)
+    channel_factor = channel if mask.shape[-3] == 1 else 1
+    denominator = (mask.sum() * channel_factor).clamp_min(1.0)
+    return (ssim_map * mask).sum() / denominator
+
 def _ssim(img1, img2, window, window_size, channel, size_average=True):
+    ssim_map = _ssim_map(img1, img2, window, window_size, channel)
+
+    if size_average:
+        return ssim_map.mean()
+    else:
+        return ssim_map.mean(1).mean(1).mean(1)
+
+def _ssim_map(img1, img2, window, window_size, channel):
     mu1 = F.conv2d(img1, window, padding=window_size // 2, groups=channel)
     mu2 = F.conv2d(img2, window, padding=window_size // 2, groups=channel)
 
@@ -57,7 +112,4 @@ def _ssim(img1, img2, window, window_size, channel, size_average=True):
 
     ssim_map = ((2 * mu1_mu2 + C1) * (2 * sigma12 + C2)) / ((mu1_sq + mu2_sq + C1) * (sigma1_sq + sigma2_sq + C2))
 
-    if size_average:
-        return ssim_map.mean()
-    else:
-        return ssim_map.mean(1).mean(1).mean(1)
+    return ssim_map

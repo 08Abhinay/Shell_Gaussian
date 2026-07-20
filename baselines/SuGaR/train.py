@@ -47,6 +47,28 @@ if __name__ == "__main__":
                         help='Max coordinates to use for foreground.')
     parser.add_argument('--center_bbox', type=str2bool, default=True, 
                         help='If True, center the bbox. Default is False.')
+    parser.add_argument('--foreground_only', type=str2bool, default=False,
+                        help='If True, discard geometry outside the foreground bbox during mesh extraction.')
+    parser.add_argument('--use_masks', type=str2bool, default=False,
+                        help='Use image alpha as a foreground mask for SuGaR losses and surface sampling.')
+    parser.add_argument('--entropy_regularization', type=str2bool, default=True,
+                        help='Enable coarse opacity entropy regularization.')
+    parser.add_argument('--prune_at_start', type=str2bool, default=False,
+                        help='Start coarse SuGaR only from vanilla Gaussians with opacity above 0.5.')
+    parser.add_argument('--constrain_points_to_bbox', type=str2bool, default=False,
+                        help='Keep coarse Gaussian centers inside bboxmin/bboxmax.')
+    parser.add_argument('--max_gaussian_scale_ratio', type=float, default=None,
+                        help='Cap each coarse Gaussian axis to this fraction of the foreground-box diagonal.')
+    parser.add_argument('--filter_gaussians_by_bbox', type=str2bool, default=False,
+                        help='Remove Gaussian centers outside the foreground box before surface sampling.')
+    parser.add_argument('--poisson_depth', type=int, default=10,
+                        help='Poisson reconstruction depth; 6 or 7 is recommended for synthetic scenes.')
+    parser.add_argument('--vertices_density_quantile', type=float, default=0.1,
+                        help='Poisson low-density vertex quantile; 0 is recommended for synthetic scenes.')
+    parser.add_argument('--surface_point_budget', type=int, default=10_000_000,
+                        help='Target number of pre-mask surface samples across cameras.')
+    parser.add_argument('--experiment_name', type=str, default=None,
+                        help='Optional output namespace under output/ for reproducible experiments.')
     
     # Parameters for refined SuGaR
     parser.add_argument('-g', '--gaussians_per_triangle', type=int, default=1, 
@@ -112,18 +134,38 @@ if __name__ == "__main__":
         print('Will export a UV-textured mesh as an .obj file.')
     if args.export_ply:
         print('Will export a ply file with the refined 3D Gaussians at the end of the training.')
+
+    scene_name = args.scene_path.rstrip('/').split('/')[-1]
+    if args.experiment_name:
+        experiment_root = f'./output/{args.experiment_name}'
+        coarse_output_dir = f'{experiment_root}/coarse/{scene_name}'
+        coarse_mesh_output_dir = f'{experiment_root}/coarse_mesh/{scene_name}'
+        refined_output_dir = f'{experiment_root}/refined/{scene_name}'
+        refined_mesh_output_dir = f'{experiment_root}/refined_mesh/{scene_name}'
+    else:
+        coarse_output_dir = None
+        coarse_mesh_output_dir = None
+        refined_output_dir = None
+        refined_mesh_output_dir = None
     
     # ----- Optimize coarse SuGaR -----
     coarse_args = AttrDict({
         'checkpoint_path': args.checkpoint_path,
         'scene_path': args.scene_path,
         'iteration_to_load': args.iteration_to_load,
-        'output_dir': None,
+        'output_dir': coarse_output_dir,
         'eval': args.eval,
         'estimation_factor': 0.2,
         'normal_factor': 0.2,
         'gpu': args.gpu,
         'white_background': args.white_background,
+        'bboxmin': args.bboxmin,
+        'bboxmax': args.bboxmax,
+        'use_masks': args.use_masks,
+        'entropy_regularization': args.entropy_regularization,
+        'prune_at_start': args.prune_at_start,
+        'constrain_points_to_bbox': args.constrain_points_to_bbox,
+        'max_gaussian_scale_ratio': args.max_gaussian_scale_ratio,
     })
     if args.regularization_type == 'sdf':
         coarse_sugar_path = coarse_training_with_sdf_regularization(coarse_args)
@@ -144,10 +186,17 @@ if __name__ == "__main__":
         'surface_level': args.surface_level,
         'decimation_target': args.n_vertices_in_mesh,
         'project_mesh_on_surface_points': args.project_mesh_on_surface_points,
-        'mesh_output_dir': None,
+        'mesh_output_dir': coarse_mesh_output_dir,
         'bboxmin': args.bboxmin,
         'bboxmax': args.bboxmax,
         'center_bbox': args.center_bbox,
+        'foreground_only': args.foreground_only,
+        'use_masks': args.use_masks,
+        'filter_gaussians_by_bbox': args.filter_gaussians_by_bbox,
+        'white_background': args.white_background,
+        'poisson_depth': args.poisson_depth,
+        'vertices_density_quantile': args.vertices_density_quantile,
+        'surface_point_budget': args.surface_point_budget,
         'gpu': args.gpu,
         'eval': args.eval,
         'use_centers_to_extract_mesh': False,
@@ -162,7 +211,7 @@ if __name__ == "__main__":
         'scene_path': args.scene_path,
         'checkpoint_path': args.checkpoint_path,
         'mesh_path': coarse_mesh_path,      
-        'output_dir': None,
+        'output_dir': refined_output_dir,
         'iteration_to_load': args.iteration_to_load,
         'normal_consistency_factor': 0.1,    
         'gaussians_per_triangle': args.gaussians_per_triangle,        
@@ -174,6 +223,7 @@ if __name__ == "__main__":
         'eval': args.eval,
         'gpu': args.gpu,
         'white_background': args.white_background,
+        'use_masks': args.use_masks,
     })
     refined_sugar_path = refined_training(refined_args)
     
@@ -185,7 +235,8 @@ if __name__ == "__main__":
             'iteration_to_load': args.iteration_to_load,
             'checkpoint_path': args.checkpoint_path,
             'refined_model_path': refined_sugar_path,
-            'mesh_output_dir': None,
+            'coarse_mesh_path': coarse_mesh_path,
+            'mesh_output_dir': refined_mesh_output_dir,
             'n_gaussians_per_surface_triangle': args.gaussians_per_triangle,
             'square_size': args.square_size,
             'eval': args.eval,
@@ -193,6 +244,6 @@ if __name__ == "__main__":
             'postprocess_mesh': args.postprocess_mesh,
             'postprocess_density_threshold': args.postprocess_density_threshold,
             'postprocess_iterations': args.postprocess_iterations,
+            'white_background': args.white_background,
         })
         refined_mesh_path = extract_mesh_and_texture_from_refined_sugar(refined_mesh_args)
-        

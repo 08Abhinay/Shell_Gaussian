@@ -1,5 +1,7 @@
-import os
 import argparse
+import os
+import subprocess
+import sys
 from sugar_utils.general_utils import str2bool
 
 
@@ -41,6 +43,20 @@ if __name__ == "__main__":
                         help='Max coordinates to use for foreground.')
     parser.add_argument('--center_bbox', type=str2bool, default=True, 
                         help='If True, center the bbox. Default is False.')
+    parser.add_argument('--foreground_only', type=str2bool, default=False,
+                        help='If True, discard geometry outside the foreground bbox during mesh extraction.')
+    parser.add_argument('--use_masks', type=str2bool, default=False,
+                        help='Use image alpha as a foreground mask for SuGaR optimization and extraction.')
+    parser.add_argument('--entropy_regularization', type=str2bool, default=True)
+    parser.add_argument('--prune_at_start', type=str2bool, default=False)
+    parser.add_argument('--constrain_points_to_bbox', type=str2bool, default=False)
+    parser.add_argument('--max_gaussian_scale_ratio', type=float, default=None)
+    parser.add_argument('--filter_gaussians_by_bbox', type=str2bool, default=False)
+    parser.add_argument('--poisson_depth', type=int, default=10)
+    parser.add_argument('--vertices_density_quantile', type=float, default=0.1)
+    parser.add_argument('--surface_point_budget', type=int, default=10_000_000)
+    parser.add_argument('--experiment_name', type=str, default=None,
+                        help='Optional output namespace under output/.')
     
     # Parameters for refined SuGaR
     parser.add_argument('-g', '--gaussians_per_triangle', type=int, default=1, 
@@ -110,20 +126,29 @@ if __name__ == "__main__":
     # Output directory for the vanilla 3DGS checkpoint
     if args.gs_output_dir is None:
         sep = os.path.sep
-        if len(args.scene_path.split(sep)[-1]) > 0:
+        scene_name = args.scene_path.rstrip(sep).split(sep)[-1]
+        if args.experiment_name:
+            gs_checkpoint_dir = os.path.join("output", args.experiment_name, "vanilla_gs", scene_name)
+        elif len(args.scene_path.split(sep)[-1]) > 0:
             gs_checkpoint_dir = os.path.join("output", "vanilla_gs", args.scene_path.split(sep)[-1])
         else:
             gs_checkpoint_dir = os.path.join("output", "vanilla_gs", args.scene_path.split(sep)[-2])
         gs_checkpoint_dir = gs_checkpoint_dir + sep
 
         # Trains a 3DGS scene for 7k iterations
-        white_background_str = '-w ' if args.white_background else ''
-        os.system(
-            f"CUDA_VISIBLE_DEVICES={args.gpu} python ./gaussian_splatting/train.py \
-                -s {args.scene_path} \
-                -m {gs_checkpoint_dir} \
-                {white_background_str}\
-                --iterations 7_000"
+        gs_command = [
+            sys.executable,
+            "./gaussian_splatting/train.py",
+            "-s", args.scene_path,
+            "-m", gs_checkpoint_dir,
+            "--iterations", "7000",
+        ]
+        if args.white_background:
+            gs_command.append("-w")
+        subprocess.run(
+            gs_command,
+            check=True,
+            env={**os.environ, "CUDA_VISIBLE_DEVICES": str(args.gpu)},
         )
     else:
         print("A vanilla 3DGS checkpoint was provided. Skipping the vanilla 3DGS optimization.")
@@ -131,31 +156,52 @@ if __name__ == "__main__":
         if gs_checkpoint_dir[-1] != os.path.sep:
             gs_checkpoint_dir += os.path.sep
     
-    # Runs the train.py python script with the given arguments
-    os.system(
-        f"python train.py \
-            -s {args.scene_path} \
-            -c {gs_checkpoint_dir} \
-            -i 7_000 \
-            -r {args.regularization_type} \
-            -l {args.surface_level} \
-            -v {args.n_vertices_in_mesh} \
-            --project_mesh_on_surface_points {args.project_mesh_on_surface_points} \
-            -g {args.gaussians_per_triangle} \
-            -f {args.refinement_iterations} \
-            --bboxmin {args.bboxmin} \
-            --bboxmax {args.bboxmax} \
-            --center_bbox {args.center_bbox} \
-            -t {args.export_obj} \
-            --square_size {args.square_size} \
-            --postprocess_mesh {args.postprocess_mesh} \
-            --postprocess_density_threshold {args.postprocess_density_threshold} \
-            --postprocess_iterations {args.postprocess_iterations} \
-            --export_ply {args.export_ply} \
-            --low_poly {args.low_poly} \
-            --high_poly {args.high_poly} \
-            --refinement_time {args.refinement_time} \
-            --eval {args.eval} \
-            --gpu {args.gpu} \
-            --white_background {args.white_background}"
+    # Use a checked argv list so child failures propagate to tmux and paths do
+    # not depend on shell quoting.
+    sugar_command = [
+            sys.executable,
+            "train.py",
+            "-s", args.scene_path,
+            "-c", gs_checkpoint_dir,
+            "-i", "7000",
+            "-r", args.regularization_type,
+            "-l", str(args.surface_level),
+            "-v", str(args.n_vertices_in_mesh),
+            "--project_mesh_on_surface_points", str(args.project_mesh_on_surface_points),
+            "-g", str(args.gaussians_per_triangle),
+            "-f", str(args.refinement_iterations),
+            f"--bboxmin={args.bboxmin}",
+            f"--bboxmax={args.bboxmax}",
+            "--center_bbox", str(args.center_bbox),
+            "--foreground_only", str(args.foreground_only),
+            "--use_masks", str(args.use_masks),
+            "--entropy_regularization", str(args.entropy_regularization),
+            "--prune_at_start", str(args.prune_at_start),
+            "--constrain_points_to_bbox", str(args.constrain_points_to_bbox),
+            "--filter_gaussians_by_bbox", str(args.filter_gaussians_by_bbox),
+            "--poisson_depth", str(args.poisson_depth),
+            "--vertices_density_quantile", str(args.vertices_density_quantile),
+            "--surface_point_budget", str(args.surface_point_budget),
+            "-t", str(args.export_obj),
+            "--square_size", str(args.square_size),
+            "--postprocess_mesh", str(args.postprocess_mesh),
+            "--postprocess_density_threshold", str(args.postprocess_density_threshold),
+            "--postprocess_iterations", str(args.postprocess_iterations),
+            "--export_ply", str(args.export_ply),
+            "--low_poly", str(args.low_poly),
+            "--high_poly", str(args.high_poly),
+            "--refinement_time", str(args.refinement_time),
+            "--eval", str(args.eval),
+            "--gpu", str(args.gpu),
+            "--white_background", str(args.white_background),
+        ]
+    if args.max_gaussian_scale_ratio is not None:
+        sugar_command.extend(
+            ["--max_gaussian_scale_ratio", str(args.max_gaussian_scale_ratio)]
+        )
+    if args.experiment_name is not None:
+        sugar_command.extend(["--experiment_name", args.experiment_name])
+    subprocess.run(
+        sugar_command,
+        check=True,
     )
