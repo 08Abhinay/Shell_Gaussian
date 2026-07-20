@@ -33,6 +33,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--width", type=int, default=768)
     parser.add_argument("--eps", type=float, default=1e-4)
     parser.add_argument("--chunk-size", type=int, default=262144)
+    parser.add_argument(
+        "--pose-convention",
+        choices=("blender-raw", "gshell-legacy-saved"),
+        default="blender-raw",
+        help=(
+            "Convention used by transform_matrix. GShell-compatible Blender datasets "
+            "store Rx(-90deg) @ c2w and require conversion back to raw Blender c2w "
+            "before ray casting."
+        ),
+    )
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--no-auto-flip", action="store_true")
     return parser.parse_args()
@@ -62,8 +72,28 @@ def make_scene(mesh_npz: Path) -> o3d.t.geometry.RaycastingScene:
     return scene
 
 
-def camera_rays(frame: dict[str, Any], height: int, width: int) -> tuple[np.ndarray, np.ndarray]:
+def rotate_x_matrix(angle: float) -> np.ndarray:
+    s, c = math.sin(angle), math.cos(angle)
+    matrix = np.eye(4, dtype=np.float32)
+    matrix[1, 1] = c
+    matrix[1, 2] = s
+    matrix[2, 1] = -s
+    matrix[2, 2] = c
+    return matrix
+
+
+GSHELL_DATASET_ROTATION = rotate_x_matrix(-math.pi / 2.0)
+
+
+def camera_rays(
+    frame: dict[str, Any],
+    height: int,
+    width: int,
+    pose_convention: str,
+) -> tuple[np.ndarray, np.ndarray]:
     camera = np.asarray(frame["transform_matrix"], dtype=np.float32)
+    if pose_convention == "gshell-legacy-saved":
+        camera = np.linalg.inv(GSHELL_DATASET_ROTATION) @ camera
     origin = camera[:3, 3].astype(np.float32)
     rotation = camera[:3, :3].astype(np.float32)
     fov_x = float(frame["camera_angle_x"])
@@ -105,8 +135,9 @@ def render_invdepth_pair(
     width: int,
     eps: float,
     chunk_size: int,
+    pose_convention: str,
 ) -> tuple[np.ndarray, np.ndarray]:
-    origin, dirs = camera_rays(frame, height, width)
+    origin, dirs = camera_rays(frame, height, width, pose_convention)
     origins = np.repeat(origin[None, :], dirs.shape[0], axis=0).astype(np.float32)
 
     first_t = cast_rays(scene, origins, dirs, chunk_size)
@@ -161,12 +192,21 @@ def detect_flip(
     width: int,
     eps: float,
     chunk_size: int,
+    pose_convention: str,
 ) -> tuple[bool, dict[str, Any]]:
     target_path = resolve_invdepth_path(all_dir, frame)
     if not target_path.exists():
         return False, {"status": "skipped", "reason": f"missing first-layer target {target_path}"}
 
-    first_pred, _ = render_invdepth_pair(scene, frame, height, width, eps, chunk_size)
+    first_pred, _ = render_invdepth_pair(
+        scene,
+        frame,
+        height,
+        width,
+        eps,
+        chunk_size,
+        pose_convention,
+    )
     target = np.load(target_path).astype(np.float32)
     target = target[..., 0] if target.ndim == 3 else target
     target_small = resize_for_compare(target, height, width)
@@ -207,7 +247,15 @@ def generate_all(args: argparse.Namespace, scene: o3d.t.geometry.RaycastingScene
         if output_path.exists() and not args.overwrite:
             second = np.load(output_path)
         else:
-            _, second = render_invdepth_pair(scene, frame, args.height, args.width, args.eps, args.chunk_size)
+            _, second = render_invdepth_pair(
+                scene,
+                frame,
+                args.height,
+                args.width,
+                args.eps,
+                args.chunk_size,
+                args.pose_convention,
+            )
             if flip_vertical:
                 second = np.flipud(second)
             np.save(output_path, second.astype(np.float32))
@@ -284,6 +332,7 @@ def main() -> None:
             args.width,
             args.eps,
             args.chunk_size,
+            args.pose_convention,
         )
         print(f"First-depth orientation check: {flip_summary}")
 
@@ -295,6 +344,7 @@ def main() -> None:
         "height": args.height,
         "width": args.width,
         "eps": args.eps,
+        "pose_convention": args.pose_convention,
         "flip_vertical": flip_vertical,
         "orientation_check": flip_summary,
         "all": all_summary,
