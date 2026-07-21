@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
+from baselines.NeuralUDF.dataset.dataset import load_K_Rt_from_K_P
 from dataset_tools_blender import pipeline
 
 
@@ -107,6 +108,101 @@ class DirectBlenderPipelineTest(unittest.TestCase):
         self.assertEqual(len(poses), pipeline.VIEW_COUNT)
         for name, expected in frames:
             np.testing.assert_allclose(poses[name], expected, atol=1e-12)
+
+    def test_neuraludf_uses_only_the_existing_training_split(self) -> None:
+        scene = pipeline.DEFAULT_OUTPUT_ROOT / "air_jordan_1"
+        frames = pipeline.effective_neuraludf_frames(scene)
+        self.assertEqual(len(frames), len(pipeline.TRAIN_INDICES))
+        self.assertEqual(frames[0][0], "000.png")
+        self.assertEqual(frames[0][1], "img002.jpg")
+        self.assertEqual(frames[-1][0], "149.png")
+        for (_, source_name, actual), source_index in zip(frames, pipeline.TRAIN_INDICES):
+            self.assertEqual(source_name, f"img{source_index + 1:03d}.jpg")
+            expected = pipeline.expected_frame(source_index)[1]
+            np.testing.assert_allclose(actual, expected, atol=1e-7)
+
+    def test_neuraludf_camera_matrices_follow_idr_contract(self) -> None:
+        effective = pipeline.expected_frame(17)[1]
+        scale = np.diag([0.2, 0.2, 0.2, 1.0])
+        scale[:3, 3] = [0.01, -0.02, 0.03]
+        matrices = pipeline.neuraludf_camera_matrices(effective, scale)
+        self.assertEqual(
+            set(matrices),
+            {
+                "camera_mat",
+                "camera_mat_inv",
+                "world_mat",
+                "world_mat_inv",
+                "scale_mat",
+                "scale_mat_inv",
+            },
+        )
+        np.testing.assert_allclose(
+            matrices["camera_mat"] @ matrices["camera_mat_inv"], np.eye(4), atol=1e-4
+        )
+        np.testing.assert_allclose(
+            matrices["world_mat"] @ matrices["world_mat_inv"], np.eye(4), atol=1e-4
+        )
+        expected_pose = pipeline.normalized_neuraludf_pose(effective, scale)
+        rigid_projection = (
+            pipeline.neuraludf_intrinsic() @ np.linalg.inv(expected_pose)
+        )
+        projective_projection = matrices["world_mat"] @ matrices["scale_mat"]
+        projective_w2c = np.linalg.inv(matrices["camera_mat"]) @ projective_projection
+        projective_scale = np.linalg.norm(projective_w2c[:3, :3], axis=1).mean()
+        np.testing.assert_allclose(
+            projective_projection[:3, :4] / projective_scale,
+            rigid_projection[:3, :4],
+            rtol=2e-7,
+            atol=1e-3,
+        )
+        _, recovered_pose = load_K_Rt_from_K_P(
+            matrices["camera_mat"], projective_projection
+        )
+        np.testing.assert_allclose(recovered_pose, expected_pose, atol=1e-5)
+        rotation = recovered_pose[:3, :3]
+        np.testing.assert_allclose(rotation.T @ rotation, np.eye(3), atol=1e-5)
+        self.assertAlmostEqual(float(np.linalg.det(rotation)), 1.0, places=5)
+
+    def test_neuraludf_loader_recovers_rigid_unit_rays_for_every_pose(self) -> None:
+        scale = np.diag([0.137, 0.137, 0.137, 1.0])
+        scale[:3, 3] = [0.031, -0.047, 0.019]
+        intrinsic = pipeline.neuraludf_intrinsic().astype(np.float32)
+        indices = [0, *pipeline.TRAIN_INDICES]
+        for index in indices:
+            effective = pipeline.expected_frame(index)[1]
+            matrices = pipeline.neuraludf_camera_matrices(effective, scale)
+            _, pose = load_K_Rt_from_K_P(
+                intrinsic, matrices["world_mat"] @ matrices["scale_mat"]
+            )
+            expected = pipeline.normalized_neuraludf_pose(effective, scale)
+            np.testing.assert_allclose(pose, expected, atol=1e-5)
+
+            rotation = pose[:3, :3]
+            np.testing.assert_allclose(rotation.T @ rotation, np.eye(3), atol=1e-5)
+            self.assertAlmostEqual(float(np.linalg.det(rotation)), 1.0, places=5)
+            center_ray = rotation @ np.array([0.0, 0.0, 1.0])
+            self.assertAlmostEqual(float(np.linalg.norm(center_ray)), 1.0, places=5)
+
+    def test_custom_shoe_configs_use_masked_white_contract(self) -> None:
+        config_root = Path("baselines/NeuralUDF/confs")
+        config_names = (
+            "udf_shoes_smoke.conf",
+            "udf_shoes.conf",
+            "udf_shoes_dtu_probe.conf",
+            "udf_shoes_garment_probe.conf",
+        )
+        for config_name in config_names:
+            text = (config_root / config_name).read_text(encoding="utf-8")
+            self.assertIn("use_white_bkgd = True", text)
+            self.assertIn("mask_weight = 0.1", text)
+            self.assertIn("n_outside = 0", text)
+            self.assertIn("masked_white", text)
+        garment = (config_root / "udf_shoes_garment_probe.conf").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("udf_shift", garment)
+        self.assertNotIn("predict_grad", garment)
 
     def test_sparse_bbox_rejects_outliers_without_ground_truth_geometry(self) -> None:
         core = np.asarray(

@@ -1,0 +1,8 @@
+output/
+exp/
+recording/
+docs/
+custom_mc/build/
+core.*
+__pycache__/
+*.pyc

@@ -28,6 +28,12 @@ Optional derived SuGaR output:
 /storage/Abhinay/home_ab5298/dataset/datasets/processed/golden_set_evaluation_blender_sugar
 ```
 
+Optional derived NeuralUDF output:
+
+```text
+/storage/Abhinay/home_ab5298/dataset/datasets/processed/golden_set_evaluation_neuraludf
+```
+
 Each published shoe contains one shared copy of every asset:
 
 ```text
@@ -184,6 +190,88 @@ published only after image, mask, camera, sparse-point, and bounding-box checks
 pass. Optional overrides are `--input-root`, `--output-root`, and
 `--colmap-bin`.
 
+## NeuralUDF Export
+
+NeuralUDF expects the IDR/NeuS camera archive convention. The exporter uses the
+150 frames selected by `transforms_train.json`, converts the exact effective
+Blender cameras to OpenCV projection matrices, and writes the official
+`camera_mat_*`, `world_mat_*`, and `scale_mat_*` entries. COLMAP is not used.
+The normalization sphere is estimated from masks and exact cameras; the
+reference mesh and inverse depth are never read or copied.
+
+The normalization matrix scales scene positions into the unit sphere. It is
+part of the projective camera matrix, but it is not a physical camera rotation.
+The NeuralUDF loader therefore removes the uniform normalization scale while
+recovering each pose. Camera positions remain normalized, while rotation axes
+and ray directions remain unit length. Nonuniform scale, non-rigid rotation,
+or invalid matrices are rejected.
+
+```text
+<shoe>/
+  image/000.png ... 149.png
+  mask/000.png ... 149.png
+  cameras_sphere.npz
+```
+
+Prepare and validate the two pilot shoes:
+
+```bash
+$PYTHON $PIPELINE prepare-neuraludf --shoe air_jordan_1
+$PYTHON $PIPELINE prepare-neuraludf --shoe birkenstock_arizona_sandal
+$PYTHON $PIPELINE validate-neuraludf --shoe air_jordan_1
+$PYTHON $PIPELINE validate-neuraludf --shoe birkenstock_arizona_sandal
+```
+
+Validation reads the existing prepared scenes; it does not regenerate images,
+masks, or `cameras_sphere.npz`. The strict smoke and full configurations are respectively
+`baselines/NeuralUDF/confs/udf_shoes_smoke.conf` and
+`baselines/NeuralUDF/confs/udf_shoes.conf`. These shoe-specific configurations
+use a fixed white renderer background, foreground-masked RGB loss, the existing
+silhouette loss with weight `0.1`, and no outside NeRF. The network, Eikonal,
+sparse, and color implementations remain unchanged; the original upstream DTU
+and DeepFashion configurations are untouched.
+
+From the NeuralUDF directory, launch the corrected pilot runs through the
+versioned tmux launcher:
+
+```bash
+scripts/launch_train_shoe_tmux.sh \
+  air_jordan_1 2 masked_white_smoke confs/udf_shoes_smoke.conf 256
+
+scripts/launch_train_shoe_tmux.sh \
+  birkenstock_arizona_sandal 3 masked_white_smoke confs/udf_shoes_smoke.conf 256
+```
+
+The outputs are written below
+`baselines/NeuralUDF/output/golden_set_evaluation_blender_masked_white_smoke/`.
+The smoke config runs 5,000 iterations. Accept it only when both meshes resemble
+upright shoes, do not touch the `[-1, 1]` extraction boundary, and no large
+planar sheets remain. After that check, replace `udf_shoes_smoke.conf` with
+`udf_shoes.conf` and use `--resolution 512` for the 300,000-iteration baseline.
+
+To diagnose topology-dependent behavior before a full run, use the reproducible
+25,000-iteration DTU and open-garment probes. Both use seed `0`, save checkpoints
+and meshes every 5,000 iterations, and consume the same prepared images, masks,
+and cameras:
+
+```bash
+scripts/launch_train_shoe_tmux.sh \
+  air_jordan_1 2 masked_white_dtu_25k confs/udf_shoes_dtu_probe.conf 256
+
+scripts/launch_train_shoe_tmux.sh \
+  birkenstock_arizona_sandal 3 masked_white_dtu_25k \
+  confs/udf_shoes_dtu_probe.conf 256
+```
+
+The DTU pair should be run first, followed by the garment pair on the same
+physical GPUs. This isolates the training recipe as the only experimental
+variable; it does not regenerate or alter the prepared NeuralUDF dataset.
+Corrected probe outputs use the
+`golden_set_evaluation_blender_masked_white_probe_dtu` and
+`golden_set_evaluation_blender_masked_white_probe_garment` roots. Older output
+roots were produced with stretched camera rays and are not valid baseline
+results.
+
 ## GShell Polycam Smoke Test
 
 After the Air Jordan and Birkenstock scenes validate, run the existing Polycam
@@ -230,6 +318,11 @@ Before publication, `prepare-sugar` additionally verifies:
 - nonempty finite sparse points and reprojection errors;
 - a robust sparse-point bounding box containing at least 95% of points;
 - absence of inverse depth and ground-truth mesh assets.
+
+`validate-neuraludf` additionally requires rigid rotations with determinant
+one, unit-length camera rays, and valid near/far intervals around the normalized
+unit sphere. It also checks the unchanged images, masks, and all 150 IDR camera
+entries.
 
 Second-surface depth remains outside this pipeline.
 

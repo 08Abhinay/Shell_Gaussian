@@ -35,6 +35,36 @@ def load_K_Rt_from_P(filename, P=None):
     return intrinsics, pose
 
 
+def load_K_Rt_from_K_P(camera_mat, projection_mat):
+    """Recover a rigid normalized camera pose from IDR camera matrices."""
+    camera_mat = np.asarray(camera_mat, dtype=np.float64)
+    projection_mat = np.asarray(projection_mat, dtype=np.float64)
+    if camera_mat.shape != (4, 4) or projection_mat.shape != (4, 4):
+        raise ValueError("camera_mat and projection_mat must both be 4x4")
+    if not np.isfinite(camera_mat).all() or not np.isfinite(projection_mat).all():
+        raise ValueError("camera matrices must contain only finite values")
+
+    projective_w2c = np.linalg.inv(camera_mat) @ projection_mat
+    row_scales = np.linalg.norm(projective_w2c[:3, :3], axis=1)
+    uniform_scale = float(row_scales.mean())
+    if uniform_scale <= 0.0 or not np.allclose(
+        row_scales, uniform_scale, rtol=1e-4, atol=1e-7
+    ):
+        raise ValueError(f"camera normalization must be uniform, found {row_scales}")
+
+    normalized_w2c = np.eye(4, dtype=np.float64)
+    normalized_w2c[:3, :4] = projective_w2c[:3, :4] / uniform_scale
+    rotation = normalized_w2c[:3, :3]
+    if not np.allclose(rotation.T @ rotation, np.eye(3), rtol=1e-4, atol=1e-5):
+        raise ValueError("normalized camera rotation is not orthonormal")
+    determinant = float(np.linalg.det(rotation))
+    if not np.isclose(determinant, 1.0, rtol=1e-4, atol=1e-5):
+        raise ValueError(f"normalized camera rotation determinant is {determinant}")
+
+    pose = np.linalg.inv(normalized_w2c)
+    return camera_mat.astype(np.float32), pose.astype(np.float32)
+
+
 # deepfashion k (293067.6,293067.6,511.5,511.5)
 
 class Dataset:
@@ -74,14 +104,26 @@ class Dataset:
 
         # scale_mat: used for coordinate normalization, we assume the scene to render is inside a unit sphere at origin.
         self.scale_mats_np = [camera_dict['scale_mat_%d' % idx].astype(np.float32) for idx in range(self.n_images)]
+        has_explicit_intrinsics = all(
+            'camera_mat_%d' % idx in camera_dict for idx in range(self.n_images)
+        )
+        camera_mats_np = (
+            [camera_dict['camera_mat_%d' % idx].astype(np.float32) for idx in range(self.n_images)]
+            if has_explicit_intrinsics else None
+        )
 
         self.intrinsics_all = []
         self.pose_all = []
 
-        for scale_mat, world_mat in zip(self.scale_mats_np, self.world_mats_np):
-            P = world_mat @ scale_mat
-            P = P[:3, :4]
-            intrinsics, pose = load_K_Rt_from_P(None, P)
+        for idx, (scale_mat, world_mat) in enumerate(zip(self.scale_mats_np, self.world_mats_np)):
+            if camera_mats_np is not None:
+                intrinsics, pose = load_K_Rt_from_K_P(
+                    camera_mats_np[idx], world_mat @ scale_mat
+                )
+            else:
+                P = world_mat @ scale_mat
+                P = P[:3, :4]
+                intrinsics, pose = load_K_Rt_from_P(None, P)
 
             # rescale intrinsics
             intrinsics[:2] *= self.downsample_factor

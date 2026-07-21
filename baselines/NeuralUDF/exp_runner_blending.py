@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 import argparse
 import os
+import random
 import logging
 import numpy as np
 import cv2 as cv
@@ -43,6 +44,7 @@ class Runner:
 
         self.conf = ConfigFactory.parse_string(conf_text)
         self.conf['dataset.data_dir'] = self.conf['dataset.data_dir'].replace('CASE_NAME', case)
+        self.conf['general']['seed'] = args.seed
 
         # modify the setting based on input
         if args.learning_rate > 0:
@@ -296,6 +298,11 @@ class Runner:
 
             mask_sum = mask.sum() + 1e-5
 
+            background_rgb = (
+                torch.ones([1, 3], device=rays_o.device)
+                if self.use_white_bkgd else None
+            )
+
             render_out = self.renderer.render(rays_o, rays_d, near, far,
                                               flip_saturation=self.get_flip_saturation(),
                                               color_maps=src_images if color_pixel_weight > 0. else None,
@@ -304,6 +311,7 @@ class Runner:
                                               query_c2w=ref_c2w,
                                               img_index=None,
                                               rays_uv=rays_uv if color_patch_weight > 0 else None,
+                                              background_rgb=background_rgb,
                                               cos_anneal_ratio=self.get_cos_anneal_ratio())
 
             weight_sum = render_out['weight_sum']
@@ -327,8 +335,25 @@ class Runner:
             udf = render_out['udf']
             udf_min = udf.min(dim=1)[0][mask[:, 0] > 0.5].mean()
 
+            color_base_for_loss = color_base
+            color_for_loss = color
+            color_pixel_for_loss = color_pixel
+            true_rgb_for_loss = true_rgb
+            if pixel_mask is not None:
+                # ColorPixelLoss uses the mask as its denominator, so remove
+                # background errors here without changing the shared loss.
+                color_base_for_loss = (
+                    color_base * pixel_mask if color_base is not None else None
+                )
+                color_for_loss = color * pixel_mask if color is not None else None
+                color_pixel_for_loss = (
+                    color_pixel * pixel_mask if color_pixel is not None else None
+                )
+                true_rgb_for_loss = true_rgb * pixel_mask
+
             color_losses = self.color_loss_func(
-                color_base, color, true_rgb, color_pixel,
+                color_base_for_loss, color_for_loss, true_rgb_for_loss,
+                color_pixel_for_loss,
                 pixel_mask, patch_colors, gt_patch_colors, patch_mask
             )
 
@@ -886,6 +911,7 @@ if __name__ == '__main__':
     parser.add_argument('--gpu', type=int, default=0)
     parser.add_argument('--resolution', type=int, default=128)
     parser.add_argument('--case', type=str, default='', help='the object name or index of a dataset')
+    parser.add_argument('--seed', type=int, default=0, help='random seed for reproducible training')
 
     parser.add_argument('--learning_rate', type=float, default=0)
     parser.add_argument('--learning_rate_geo', type=float, default=0,
@@ -895,11 +921,17 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed)
+    print('Using random seed: {}'.format(args.seed))
+
     runner = Runner(args.conf, args.mode, args.case, args.model_type, args.is_continue, args)
 
     if args.mode == 'train':
         runner.train()
-        runner.extract_udf_mesh(resolution=512, world_space=True, dist_threshold_ratio=5.0)
+        runner.extract_udf_mesh(resolution=args.resolution, world_space=True, dist_threshold_ratio=5.0)
     elif args.mode == 'validate_mesh':
         runner.validate_mesh(world_space=False, resolution=args.resolution, threshold=args.threshold)
     elif args.mode == 'extract_udf_mesh':

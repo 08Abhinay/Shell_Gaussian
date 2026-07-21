@@ -87,6 +87,81 @@ The corresponding mesh can be found in `exp/<case_name>/<exp_name>/meshes/<iter_
 
 More information can be found in [preprocess_custom_data](https://github.com/Totoro97/NeuS/tree/main/preprocess_custom_data) of NeuS.
 
+### Reproducible shoe baseline used in Shell_Gaussian
+
+The shoe evaluation integration is an adapted NeuralUDF baseline for synthetic
+white-background images. It retains the upstream UDF network, renderer,
+Eikonal loss, sparse regularization, and MeshUDF extraction. The integration
+changes are deliberately limited and must be reported with results:
+
+- `dataset/dataset.py` recovers a rigid camera pose from the IDR projection and
+  normalization matrices. Uniform scene scale changes camera position but not
+  rotation-axis or ray length; legacy archives without explicit intrinsics keep
+  the upstream OpenCV decomposition fallback.
+- `exp_runner_blending.py` supports deterministic seeds, respects the requested
+  final extraction resolution, sends a fixed white background to the renderer,
+  and applies RGB error only on foreground pixels when masks are enabled.
+- The `udf_shoes*.conf` files use `use_white_bkgd=True`, `mask_weight=0.1`, and
+  `n_outside=0`. No inverse depth or reference mesh is used during training.
+- The original upstream DTU and DeepFashion configurations remain unchanged.
+
+Prepare and validate the exact-camera input using the centralized pipeline:
+
+```bash
+cd /storage/Abhinay/Shell_Gaussian
+PYTHON=/home/ab5298/anaconda3/envs/neuraludf/bin/python
+PIPELINE=dataset_tools_blender/pipeline.py
+
+$PYTHON $PIPELINE prepare-neuraludf --shoe birkenstock_arizona_sandal
+$PYTHON $PIPELINE validate-neuraludf --shoe birkenstock_arizona_sandal
+$PYTHON -m unittest dataset_tools_blender.tests.test_pipeline
+```
+
+Run a shoe directly, or launch the same command in tmux. Both scripts default to
+the 300,000-iteration `udf_shoes.conf`, seed `0`, and final resolution `512`:
+
+```bash
+cd /storage/Abhinay/Shell_Gaussian/baselines/NeuralUDF
+
+scripts/train_shoe.sh birkenstock_arizona_sandal 3
+
+scripts/launch_train_shoe_tmux.sh \
+  birkenstock_arizona_sandal 3 masked_white_300k
+```
+
+The positional interfaces are:
+
+```text
+train_shoe.sh SHOE GPU [CONFIG] [RESOLUTION]
+launch_train_shoe_tmux.sh SHOE GPU [RUN_LABEL] [CONFIG] [RESOLUTION]
+```
+
+The launcher refuses to reuse an active tmux name or overwrite a log, and
+requires at least 20 GiB of free GPU memory by default. Override reproducibility
+settings only explicitly through `NEURALUDF_SEED`, `NEURALUDF_THRESHOLD`,
+`NEURALUDF_MIN_FREE_MB`, or the optional positional arguments.
+
+Monitor without changing the run:
+
+```bash
+tmux ls
+tail -f output/logs/birkenstock_arizona_sandal_masked_white_300k.log
+nvidia-smi -i 3
+```
+
+The final experiment root is:
+
+```text
+output/golden_set_evaluation_blender_masked_white/<shoe>/udf_dtu/
+```
+
+Use `udf_meshes/udf_res512_step300000.ply` for the NeuralUDF comparison. Files
+under `meshes/` are ordinary positive-threshold surfaces; an unsigned field can
+produce doubled layers and contour artifacts there. The 25,000-iteration probe
+is for integration diagnosis, not the final paper baseline. Report the final
+method as **NeuralUDF (adapted masked-white configuration)** and apply this one
+frozen recipe to every evaluated shoe.
+
 ### The reconstruction results of ours and baselines
 You can download the results of the methods mentioned in the paper here:
 - [DeepFashion3D](https://connecthkuhk-my.sharepoint.com/:f:/g/personal/xxlong_connect_hku_hk/Et1G0_59EWJNvebXoVhv7PUBU2WQXU12UhEDsID2t-mZ7g?e=fXEKhn) 
