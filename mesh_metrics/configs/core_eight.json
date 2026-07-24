@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "name": "core_diverse_eight",
+  "dataset_root": "/storage/Abhinay/home_ab5298/dataset/datasets/processed/golden_set_evaluation_blender",
+  "shoes": [
+    {"name": "air_jordan_1", "category": "structured_high_top"},
+    {"name": "adidas_yeezy_boost_350_v2_zyon", "category": "soft_low_top"},
+    {"name": "nike_air_zoom_pegasus_36", "category": "running_shoe"},
+    {"name": "birkenstock_arizona_sandal", "category": "footbed_sandal"},
+    {"name": "sandals_0001", "category": "open_sandal"},
+    {"name": "red_high_heel_shoes", "category": "high_heel"},
+    {"name": "female_gymnasts_shoes", "category": "tall_footwear"},
+    {"name": "crocs_shoe", "category": "perforated_clog"}
+  ]
+}

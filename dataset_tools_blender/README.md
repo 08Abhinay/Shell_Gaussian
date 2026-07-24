@@ -8,6 +8,22 @@ points; it never estimates or modifies the camera orbit.
 The existing `dataset_tools/`, datasets, loaders, and baseline code are not
 modified by this pipeline.
 
+The public CLI remains `pipeline.py`, while implementation details are split by
+consumer:
+
+```text
+dataset_tools_blender/
+  pipeline.py          # command-line parser and command dispatch
+  core.py              # shared Blender dataset contracts and utilities
+  sugar/pipeline.py    # SuGaR conversion and validation
+  neuraludf/pipeline.py
+  neus2/pipeline.py
+```
+
+Existing commands and imports from `dataset_tools_blender.pipeline` remain
+compatible. New baseline-specific code should be added to its corresponding
+subpackage rather than to the CLI module.
+
 ## Inputs And Outputs
 
 Default input:
@@ -266,6 +282,56 @@ scripts/launch_train_shoe_tmux.sh \
 The DTU pair should be run first, followed by the garment pair on the same
 physical GPUs. This isolates the training recipe as the only experimental
 variable; it does not regenerate or alter the prepared NeuralUDF dataset.
+
+## NeuS2 Export
+
+NeuS2 uses the same 150/30 split and exact cameras as the GShell evaluation
+dataset. The exporter writes one shared set of 180 RGBA PNGs and does not read
+or copy inverse depth or `reference_mesh.ply`.
+
+```text
+<shoe>/
+  images/img001.png ... img180.png
+  transform_train.json
+  transform_test.json
+  conversion_manifest.json
+```
+
+The camera stored in each frame is:
+
+```text
+(Rx(+90 degrees) @ saved_gshell_c2w) @ diag(1, -1, -1, 1)
+```
+
+This is an OpenCV-style camera-to-world matrix. `from_na=true` tells NeuS2 not
+to apply its usual NeRF axis permutation. Intrinsics remain exactly
+`1536x1024` with a 21-degree horizontal field of view.
+
+The 150 training masks and exact cameras define a conservative visual hull.
+Its bounding sphere is mapped into NeuS2's unit cube with one uniform scale
+and one translation. The held-out masks, inverse depth, and reference mesh do
+not influence this normalization.
+
+Prepare and validate a scene:
+
+```bash
+PYTHON=/storage/Abhinay/home_ab5298/anaconda3/envs/shellgaussianenv/bin/python
+PIPELINE=/storage/Abhinay/Shell_Gaussian/dataset_tools_blender/pipeline.py
+
+$PYTHON $PIPELINE prepare-neus2 --shoe adidas_yeezy_boost_350_v2_zyon
+$PYTHON $PIPELINE validate-neus2 --shoe adidas_yeezy_boost_350_v2_zyon
+```
+
+The default output root is:
+
+```text
+/storage/Abhinay/home_ab5298/dataset/datasets/processed/golden_set_evaluation_neus2
+```
+
+Preparation is transactional. An existing valid scene is checked and skipped;
+`--overwrite` is required to replace it. Validation checks all 180 alpha
+masks, both disjoint splits, exact camera matrices, rigid rotations, unit
+rays, intrinsics, and the visual-hull normalization.
 Corrected probe outputs use the
 `golden_set_evaluation_blender_masked_white_probe_dtu` and
 `golden_set_evaluation_blender_masked_white_probe_garment` roots. Older output

@@ -85,6 +85,7 @@ baselines/gaussian-splatting/submodules/**/*.egg-info/
 # Logs and temporary files
 /slurm_logs/
 baselines/slurm_logs/
+mesh_metrics/output/
 baselines/NeuralUDF/core.*
 *.tmp
 *.swp

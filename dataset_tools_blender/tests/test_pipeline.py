@@ -10,6 +10,9 @@ import numpy as np
 
 from baselines.NeuralUDF.dataset.dataset import load_K_Rt_from_K_P
 from dataset_tools_blender import pipeline
+from dataset_tools_blender.neuraludf import pipeline as neuraludf_pipeline
+from dataset_tools_blender.neus2 import pipeline as neus2_pipeline
+from dataset_tools_blender.sugar import pipeline as sugar_pipeline
 
 
 class DirectBlenderPipelineTest(unittest.TestCase):
@@ -99,9 +102,9 @@ class DirectBlenderPipelineTest(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory() as temporary:
             model = Path(temporary) / "model"
-            pipeline.write_seed_colmap_model(model, frames)
-            camera = pipeline.parse_colmap_camera(model / "cameras.txt")
-            poses = pipeline.parse_colmap_images(model / "images.txt")
+            sugar_pipeline.write_seed_colmap_model(model, frames)
+            camera = sugar_pipeline.parse_colmap_camera(model / "cameras.txt")
+            poses = sugar_pipeline.parse_colmap_images(model / "images.txt")
 
         self.assertEqual(camera["model"], "PINHOLE")
         self.assertEqual((camera["width"], camera["height"]), pipeline.RESOLUTION)
@@ -109,9 +112,39 @@ class DirectBlenderPipelineTest(unittest.TestCase):
         for name, expected in frames:
             np.testing.assert_allclose(poses[name], expected, atol=1e-12)
 
+    def test_sugar_split_preserves_exact_png_membership(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            destination = root / "destination"
+            source.mkdir()
+            for split, indices in (
+                ("train", pipeline.TRAIN_INDICES),
+                ("test", pipeline.TEST_INDICES),
+            ):
+                payload = {
+                    "frames": [
+                        {"file_path": f"image/img{index + 1:03d}.jpg"}
+                        for index in indices
+                    ]
+                }
+                (source / f"transforms_{split}.json").write_text(
+                    json.dumps(payload), encoding="utf-8"
+                )
+
+            split_info = sugar_pipeline.write_sugar_splits(
+                source, destination
+            )
+            errors = sugar_pipeline.validate_sugar_splits(destination)
+
+        self.assertEqual(
+            split_info, {"train_count": 150, "test_count": 30}
+        )
+        self.assertEqual(errors, [])
+
     def test_neuraludf_uses_only_the_existing_training_split(self) -> None:
         scene = pipeline.DEFAULT_OUTPUT_ROOT / "air_jordan_1"
-        frames = pipeline.effective_neuraludf_frames(scene)
+        frames = neuraludf_pipeline.effective_neuraludf_frames(scene)
         self.assertEqual(len(frames), len(pipeline.TRAIN_INDICES))
         self.assertEqual(frames[0][0], "000.png")
         self.assertEqual(frames[0][1], "img002.jpg")
@@ -125,7 +158,7 @@ class DirectBlenderPipelineTest(unittest.TestCase):
         effective = pipeline.expected_frame(17)[1]
         scale = np.diag([0.2, 0.2, 0.2, 1.0])
         scale[:3, 3] = [0.01, -0.02, 0.03]
-        matrices = pipeline.neuraludf_camera_matrices(effective, scale)
+        matrices = neuraludf_pipeline.neuraludf_camera_matrices(effective, scale)
         self.assertEqual(
             set(matrices),
             {
@@ -143,9 +176,9 @@ class DirectBlenderPipelineTest(unittest.TestCase):
         np.testing.assert_allclose(
             matrices["world_mat"] @ matrices["world_mat_inv"], np.eye(4), atol=1e-4
         )
-        expected_pose = pipeline.normalized_neuraludf_pose(effective, scale)
+        expected_pose = neuraludf_pipeline.normalized_neuraludf_pose(effective, scale)
         rigid_projection = (
-            pipeline.neuraludf_intrinsic() @ np.linalg.inv(expected_pose)
+            neuraludf_pipeline.neuraludf_intrinsic() @ np.linalg.inv(expected_pose)
         )
         projective_projection = matrices["world_mat"] @ matrices["scale_mat"]
         projective_w2c = np.linalg.inv(matrices["camera_mat"]) @ projective_projection
@@ -167,15 +200,15 @@ class DirectBlenderPipelineTest(unittest.TestCase):
     def test_neuraludf_loader_recovers_rigid_unit_rays_for_every_pose(self) -> None:
         scale = np.diag([0.137, 0.137, 0.137, 1.0])
         scale[:3, 3] = [0.031, -0.047, 0.019]
-        intrinsic = pipeline.neuraludf_intrinsic().astype(np.float32)
+        intrinsic = neuraludf_pipeline.neuraludf_intrinsic().astype(np.float32)
         indices = [0, *pipeline.TRAIN_INDICES]
         for index in indices:
             effective = pipeline.expected_frame(index)[1]
-            matrices = pipeline.neuraludf_camera_matrices(effective, scale)
+            matrices = neuraludf_pipeline.neuraludf_camera_matrices(effective, scale)
             _, pose = load_K_Rt_from_K_P(
                 intrinsic, matrices["world_mat"] @ matrices["scale_mat"]
             )
-            expected = pipeline.normalized_neuraludf_pose(effective, scale)
+            expected = neuraludf_pipeline.normalized_neuraludf_pose(effective, scale)
             np.testing.assert_allclose(pose, expected, atol=1e-5)
 
             rotation = pose[:3, :3]
@@ -183,6 +216,62 @@ class DirectBlenderPipelineTest(unittest.TestCase):
             self.assertAlmostEqual(float(np.linalg.det(rotation)), 1.0, places=5)
             center_ray = rotation @ np.array([0.0, 0.0, 1.0])
             self.assertAlmostEqual(float(np.linalg.norm(center_ray)), 1.0, places=5)
+
+    def test_neus2_uses_exact_opencv_cameras_and_existing_split(self) -> None:
+        scene = pipeline.DEFAULT_OUTPUT_ROOT / "air_jordan_1"
+        frames = neus2_pipeline.effective_neus2_frames(scene)
+        self.assertEqual(len(frames), pipeline.VIEW_COUNT)
+        for index, source_name, effective, opencv in frames:
+            self.assertEqual(source_name, f"img{index + 1:03d}.jpg")
+            np.testing.assert_allclose(
+                effective,
+                pipeline.expected_frame(index)[1],
+                atol=1e-7,
+            )
+            np.testing.assert_allclose(
+                opencv,
+                effective @ pipeline.OPENGL_TO_OPENCV_CAMERA,
+                atol=1e-12,
+            )
+            rotation = opencv[:3, :3]
+            np.testing.assert_allclose(rotation.T @ rotation, np.eye(3), atol=1e-7)
+            self.assertAlmostEqual(float(np.linalg.det(rotation)), 1.0, places=7)
+
+        scale = 2.5
+        offset = np.asarray([0.1, 0.2, 0.3], dtype=np.float64)
+        train = neus2_pipeline.neus2_transform_payload(
+            frames,
+            pipeline.TRAIN_INDICES,
+            scale,
+            offset,
+        )
+        test = neus2_pipeline.neus2_transform_payload(
+            frames,
+            pipeline.TEST_INDICES,
+            scale,
+            offset,
+        )
+        self.assertEqual(len(train["frames"]), 150)
+        self.assertEqual(len(test["frames"]), 30)
+        self.assertTrue(train["from_na"])
+        self.assertEqual(train["scale"], scale)
+        self.assertEqual(train["offset"], offset.tolist())
+        train_indices = {frame["source_view_index"] for frame in train["frames"]}
+        test_indices = {frame["source_view_index"] for frame in test["frames"]}
+        self.assertFalse(train_indices & test_indices)
+        self.assertEqual(train_indices | test_indices, set(range(pipeline.VIEW_COUNT)))
+
+    def test_neus2_visual_hull_sphere_maps_to_unit_cube(self) -> None:
+        sphere = np.diag([0.2, 0.2, 0.2, 1.0])
+        sphere[:3, 3] = [0.03, -0.04, 0.01]
+        scale, offset = neus2_pipeline.neus2_scale_offset(sphere)
+        np.testing.assert_allclose(scale * sphere[:3, 3] + offset, 0.5, atol=1e-12)
+        self.assertAlmostEqual(scale * sphere[0, 0], 0.5, places=12)
+
+        nonuniform = sphere.copy()
+        nonuniform[1, 1] = 0.3
+        with self.assertRaisesRegex(ValueError, "must be uniform"):
+            neus2_pipeline.neus2_scale_offset(nonuniform)
 
     def test_custom_shoe_configs_use_masked_white_contract(self) -> None:
         config_root = Path("baselines/NeuralUDF/confs")
@@ -211,7 +300,7 @@ class DirectBlenderPipelineTest(unittest.TestCase):
         )
         points = np.repeat(core, 20, axis=0)
         points = np.vstack((points, [[100.0, 100.0, 100.0], [-100.0, -100.0, -100.0]]))
-        bbox = pipeline.robust_sparse_bbox(points)
+        bbox = sugar_pipeline.robust_sparse_bbox(points)
         self.assertLessEqual(bbox["points_outside_fraction"], 0.05)
         self.assertLess(bbox["max"][0], 1.0)
         self.assertGreater(bbox["min"][0], -1.0)
