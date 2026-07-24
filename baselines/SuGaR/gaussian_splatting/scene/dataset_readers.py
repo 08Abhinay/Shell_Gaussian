@@ -42,6 +42,35 @@ class SceneInfo(NamedTuple):
     nerf_normalization: dict
     ply_path: str
 
+
+def _load_explicit_camera_split(path):
+    split_paths = {
+        "train": Path(path) / "transforms_train.json",
+        "test": Path(path) / "transforms_test.json",
+    }
+    if not all(split_path.is_file() for split_path in split_paths.values()):
+        return None
+
+    result = {}
+    for split, split_path in split_paths.items():
+        with split_path.open(encoding="utf-8") as handle:
+            payload = json.load(handle)
+        result[split] = {
+            Path(frame["file_path"]).stem
+            for frame in payload.get("frames", [])
+        }
+    if not result["train"] or not result["test"]:
+        raise ValueError(
+            "Explicit transforms split must contain train and test frames"
+        )
+    overlap = result["train"] & result["test"]
+    if overlap:
+        raise ValueError(
+            f"Explicit transforms split overlaps: {sorted(overlap)}"
+        )
+    return result["train"], result["test"]
+
+
 def getNerfppNorm(cam_info):
     def get_center_and_diag(cam_centers):
         cam_centers = np.hstack(cam_centers)
@@ -156,8 +185,36 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
     if eval:
-        train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 0]
-        test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == 0]
+        explicit_split = _load_explicit_camera_split(path)
+        if explicit_split is not None:
+            train_names, test_names = explicit_split
+            camera_names = {camera.image_name for camera in cam_infos}
+            missing_names = (train_names | test_names) - camera_names
+            unexpected_names = camera_names - (train_names | test_names)
+            if missing_names or unexpected_names:
+                raise ValueError(
+                    "Explicit transforms split does not match COLMAP cameras: "
+                    f"missing={sorted(missing_names)}, "
+                    f"unexpected={sorted(unexpected_names)}"
+                )
+            train_cam_infos = [
+                camera
+                for camera in cam_infos
+                if camera.image_name in train_names
+            ]
+            test_cam_infos = [
+                camera
+                for camera in cam_infos
+                if camera.image_name in test_names
+            ]
+            print(
+                "Using explicit transforms_train/transforms_test membership: "
+                f"{len(train_cam_infos)} train / "
+                f"{len(test_cam_infos)} test"
+            )
+        else:
+            train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 0]
+            test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == 0]
     else:
         train_cam_infos = cam_infos
         test_cam_infos = []

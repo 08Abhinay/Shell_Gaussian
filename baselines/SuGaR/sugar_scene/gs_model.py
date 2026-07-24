@@ -203,7 +203,9 @@ class GaussianSplattingWrapper:
             with open(path, encoding="utf-8") as handle:
                 payload = json.load(handle)
             result[split] = {
-                os.path.basename(frame["file_path"].rstrip("/"))
+                os.path.splitext(
+                    os.path.basename(frame["file_path"].rstrip("/"))
+                )[0]
                 for frame in payload.get("frames", [])
             }
         if not result["train"] or not result["test"]:

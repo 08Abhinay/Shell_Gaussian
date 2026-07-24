@@ -41,19 +41,21 @@ def tuple_text(values: list[float]) -> str:
 
 def main() -> int:
     args = parse_args()
-    coarse_result_path = args.coarse_result.resolve()
+    coarse_result_path = args.coarse_result.absolute()
     coarse_result = json.loads(coarse_result_path.read_text(encoding="utf-8"))
     if coarse_result.get("protocol") != "coarse_only_masked_colmap_bounded_scale_capped":
         raise ValueError("Refusing to refine an unexpected coarse-result protocol")
     if coarse_result.get("status") != "complete":
         raise ValueError("Coarse pilot is not marked complete")
 
-    scene_path = Path(coarse_result["scene_path"]).resolve()
-    checkpoint_path = Path(coarse_result["vanilla_3dgs_checkpoint_path"]).resolve()
+    scene_path = Path(coarse_result["scene_path"]).absolute()
+    checkpoint_path = Path(
+        coarse_result["vanilla_3dgs_checkpoint_path"]
+    ).absolute()
     checkpoint_argument = str(checkpoint_path) + "/"
-    coarse_mesh_path = Path(coarse_result["coarse_mesh_path"]).resolve()
-    coarse_model_path = Path(coarse_result["coarse_model_path"]).resolve()
-    output_root = Path(coarse_result["output_root"]).resolve()
+    coarse_mesh_path = Path(coarse_result["coarse_mesh_path"]).absolute()
+    coarse_model_path = Path(coarse_result["coarse_model_path"]).absolute()
+    output_root = Path(coarse_result["output_root"]).absolute()
     bbox_min = coarse_result["bbox_min"]
     bbox_max = coarse_result["bbox_max"]
     iteration = int(coarse_result["vanilla_3dgs_iteration"])

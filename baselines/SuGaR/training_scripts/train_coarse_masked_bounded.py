@@ -53,12 +53,12 @@ def tuple_text(values: list[float]) -> str:
 
 def main() -> int:
     args = parse_args()
-    scene_path = args.scene_path.resolve()
-    checkpoint_path = args.checkpoint_path.resolve()
+    scene_path = args.scene_path.absolute()
+    checkpoint_path = args.checkpoint_path.absolute()
     # SuGaR's legacy GaussianSplattingWrapper concatenates filenames onto this
     # string (for example, checkpoint_path + "cameras.json").
     checkpoint_argument = str(checkpoint_path) + "/"
-    output_root = args.output_root.resolve()
+    output_root = args.output_root.absolute()
     coarse_output = output_root / "coarse" / scene_path.name
     mesh_output = output_root / "coarse_mesh" / scene_path.name
     output_root.mkdir(parents=True, exist_ok=True)

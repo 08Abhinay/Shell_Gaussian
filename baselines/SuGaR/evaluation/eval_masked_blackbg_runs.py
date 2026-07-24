@@ -60,6 +60,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--skip-3dgs", action="store_true", help="Skip vanilla 3DGS render.py + metrics.py.")
     parser.add_argument("--skip-sugar", action="store_true", help="Skip refined SuGaR evaluation.")
     parser.add_argument("--overwrite", action="store_true", help="Recompute even if metric files already exist.")
+    parser.add_argument("--shoe", help="Shoe name for a generic --run-dir.")
+    parser.add_argument("--gs-iteration", type=int, default=7_000)
+    parser.add_argument("--refined-iteration", type=int, default=15_000)
+    parser.add_argument("--gaussians-per-triangle", type=int, default=1)
+    parser.add_argument(
+        "--white-background",
+        action="store_true",
+        help="Render and score against the white-background dataset contract.",
+    )
     parser.add_argument(
         "--summary",
         type=Path,
@@ -71,32 +80,53 @@ def parse_args() -> argparse.Namespace:
 
 def abelde_env() -> dict[str, str]:
     env = os.environ.copy()
-    env["HOME"] = "/data/abelde"
-    env["XDG_CACHE_HOME"] = env.get("XDG_CACHE_HOME", "/data/abelde/.cache")
-    env["TORCH_HOME"] = env.get("TORCH_HOME", "/data/abelde/.cache/torch")
-    env["PIP_CACHE_DIR"] = env.get("PIP_CACHE_DIR", "/data/abelde/.cache/pip")
-    env["CUDA_CACHE_PATH"] = env.get("CUDA_CACHE_PATH", "/data/abelde/.cache/nv/ComputeCache")
-    env["TMPDIR"] = env.get("TMPDIR", "/data/abelde/tmp")
+    home = Path("/storage/Abhinay/home_ab5298")
+    cache = home / ".cache"
+    env["HOME"] = str(home)
+    env["XDG_CACHE_HOME"] = str(cache)
+    env["TORCH_HOME"] = str(cache / "torch")
+    env["PIP_CACHE_DIR"] = str(cache / "pip")
+    env["CUDA_CACHE_PATH"] = str(cache / "nv" / "ComputeCache")
+    env["TMPDIR"] = str(home / "tmp")
     for value in ["XDG_CACHE_HOME", "TORCH_HOME", "PIP_CACHE_DIR", "CUDA_CACHE_PATH", "TMPDIR"]:
         Path(env[value]).mkdir(parents=True, exist_ok=True)
     return env
 
 
+def storage_home_path(path: Path) -> Path:
+    text = str(path)
+    home_prefix = "/home/ab5298"
+    if text == home_prefix or text.startswith(home_prefix + os.sep):
+        return Path("/storage/Abhinay/home_ab5298" + text[len(home_prefix):])
+    return path
+
+
 def get_runs(args: argparse.Namespace) -> list[Path]:
     if args.run_dir:
-        runs = [path.resolve() for path in args.run_dir]
+        return [path.resolve() for path in args.run_dir]
     else:
         runs = sorted(path.resolve() for path in args.runs_root.glob(args.pattern) if path.is_dir())
     return [run for run in runs if RUN_RE.match(run.name)]
 
 
 def read_scene_path(run_dir: Path) -> Path:
+    result_path = run_dir / "refinement_run_result.json"
+    if result_path.is_file():
+        return storage_home_path(
+            Path(
+                json.loads(
+                    result_path.read_text(encoding="utf-8")
+                )["scene_path"]
+            )
+        )
     log_path = run_dir / "logs" / "pipeline.log"
     if not log_path.is_file():
         raise FileNotFoundError(f"Missing pipeline log: {log_path}")
     for line in log_path.read_text(errors="replace").splitlines():
         if line.startswith("Scene: "):
-            return Path(line.split("Scene: ", 1)[1].strip())
+            return storage_home_path(
+                Path(line.split("Scene: ", 1)[1].strip())
+            )
     raise ValueError(f"Could not find scene path in {log_path}")
 
 
@@ -115,6 +145,47 @@ def find_one(pattern: str, root: Path, label: str) -> Path:
     return matches[0]
 
 
+def read_refinement_artifacts(run_dir: Path, ref_iter: int) -> tuple[Path, Path]:
+    """Resolve completed refinement outputs without assuming directory depth."""
+    result_path = run_dir / "refinement_run_result.json"
+    if result_path.is_file():
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+        if result.get("status") != "complete":
+            raise ValueError(
+                f"Refinement is not complete according to {result_path}: "
+                f"{result.get('status')!r}"
+            )
+        manifest_iter = int(result.get("refinement_iterations", -1))
+        if manifest_iter != ref_iter:
+            raise ValueError(
+                f"Refinement iteration mismatch in {result_path}: "
+                f"expected {ref_iter}, found {manifest_iter}"
+            )
+
+        try:
+            refined_model = storage_home_path(Path(result["refined_model_path"]))
+            coarse_mesh = storage_home_path(Path(result["accepted_coarse_mesh_path"]))
+        except KeyError as error:
+            raise ValueError(
+                f"Missing artifact path {error.args[0]!r} in {result_path}"
+            ) from error
+
+        required_path(refined_model, "refined model")
+        required_path(coarse_mesh, "accepted coarse mesh")
+        if refined_model.name != f"{ref_iter}.pt":
+            raise ValueError(
+                f"Expected refined checkpoint {ref_iter}.pt, found {refined_model}"
+            )
+        return refined_model, coarse_mesh
+
+    # Older outputs predate the result manifest and may use varying nesting depths.
+    refined_model = find_one(
+        f"**/{ref_iter}.pt", run_dir / "refined", "refined model"
+    )
+    coarse_mesh = find_one("**/*.ply", run_dir / "coarse_mesh", "coarse mesh")
+    return refined_model, coarse_mesh
+
+
 def read_3dgs_results(gs_dir: Path, iteration: int) -> dict[str, float]:
     results_path = gs_dir / "results.json"
     if not results_path.is_file():
@@ -131,7 +202,14 @@ def read_3dgs_results(gs_dir: Path, iteration: int) -> dict[str, float]:
     }
 
 
-def run_official_3dgs_eval(run_dir: Path, scene_path: Path, gs_iter: int, gpu: int, overwrite: bool) -> dict[str, object]:
+def run_official_3dgs_eval(
+    run_dir: Path,
+    scene_path: Path,
+    gs_iter: int,
+    gpu: int,
+    overwrite: bool,
+    white_background: bool,
+) -> dict[str, object]:
     gs_dir = required_path(run_dir / "vanilla_3dgs", "3DGS output")
     renders_dir = gs_dir / "test" / f"ours_{gs_iter}" / "renders"
     gt_dir = gs_dir / "test" / f"ours_{gs_iter}" / "gt"
@@ -139,7 +217,7 @@ def run_official_3dgs_eval(run_dir: Path, scene_path: Path, gs_iter: int, gpu: i
 
     if overwrite or not (results_path.is_file() and renders_dir.is_dir() and gt_dir.is_dir()):
         env = abelde_env()
-        env["CUDA_VISIBLE_DEVICES"] = str(gpu)
+        env.setdefault("CUDA_VISIBLE_DEVICES", str(gpu))
         render_cmd = [
             sys.executable,
             "render.py",
@@ -153,6 +231,8 @@ def run_official_3dgs_eval(run_dir: Path, scene_path: Path, gs_iter: int, gpu: i
             "--eval",
             "--quiet",
         ]
+        if white_background:
+            render_cmd.append("-w")
         metrics_cmd = [sys.executable, "metrics.py", "-m", str(gs_dir)]
         subprocess.run(render_cmd, cwd=SUGAR_ROOT / "gaussian_splatting", env=env, check=True)
         subprocess.run(metrics_cmd, cwd=SUGAR_ROOT / "gaussian_splatting", env=env, check=True)
@@ -199,6 +279,7 @@ def run_sugar_eval(
     gpf: int,
     gpu: int,
     overwrite: bool,
+    white_background: bool,
 ) -> dict[str, object]:
     eval_dir = run_dir / "eval" / "sugar_gaussian_rasterizer"
     renders_dir = eval_dir / "renders"
@@ -220,8 +301,7 @@ def run_sugar_eval(
 
     torch.cuda.set_device(gpu)
     gs_dir = required_path(run_dir / "vanilla_3dgs", "3DGS output")
-    refined_model = find_one(f"*/{ref_iter}.pt", run_dir / "refined", "refined model")
-    coarse_mesh = find_one("*.ply", run_dir / "coarse_mesh", "coarse mesh")
+    refined_model, coarse_mesh = read_refinement_artifacts(run_dir, ref_iter)
 
     nerfmodel = GaussianSplattingWrapper(
         source_path=str(scene_path),
@@ -230,8 +310,8 @@ def run_sugar_eval(
         load_gt_images=True,
         eval_split=True,
         eval_split_interval=8,
-        background=[0.0, 0.0, 0.0],
-        white_background=False,
+        background=[1.0, 1.0, 1.0] if white_background else [0.0, 0.0, 0.0],
+        white_background=white_background,
     )
 
     o3d_mesh = o3d.io.read_triangle_mesh(str(coarse_mesh))
@@ -255,7 +335,10 @@ def run_sugar_eval(
     refined_sugar.eval()
 
     lpips_model = LPIPS(net_type="vgg", version="0.1").to(nerfmodel.device).eval()
-    bg = torch.tensor([0.0, 0.0, 0.0], device=nerfmodel.device)
+    bg = torch.tensor(
+        [1.0, 1.0, 1.0] if white_background else [0.0, 0.0, 0.0],
+        device=nerfmodel.device,
+    )
     sh_deg = nerfmodel.gaussians.active_sh_degree
 
     per_view = []
@@ -331,7 +414,9 @@ def write_summary(rows: list[dict[str, object]], path: Path) -> None:
 
 def main() -> None:
     args = parse_args()
-    torch.hub.set_dir("/data/abelde/.cache/torch/hub")
+    torch.hub.set_dir(
+        "/storage/Abhinay/home_ab5298/.cache/torch/hub"
+    )
     runs = get_runs(args)
     if not runs:
         raise SystemExit(f"No runs found under {args.runs_root} matching {args.pattern}")
@@ -339,11 +424,16 @@ def main() -> None:
     rows: list[dict[str, object]] = []
     for run_dir in runs:
         match = RUN_RE.match(run_dir.name)
-        assert match is not None
-        shoe = match["shoe"]
-        gs_iter = int(match["gs_iter"])
-        ref_iter = int(match["ref_iter"])
-        gpf = int(match["gpf"])
+        if match is not None:
+            shoe = match["shoe"]
+            gs_iter = int(match["gs_iter"])
+            ref_iter = int(match["ref_iter"])
+            gpf = int(match["gpf"])
+        else:
+            shoe = args.shoe or run_dir.name
+            gs_iter = args.gs_iteration
+            ref_iter = args.refined_iteration
+            gpf = args.gaussians_per_triangle
         scene_path = read_scene_path(run_dir)
         required_path(scene_path / "images", "masked images")
         required_path(scene_path / "sparse", "COLMAP sparse reconstruction")
@@ -355,13 +445,37 @@ def main() -> None:
         print(f"Scene: {scene_path}", flush=True)
 
         if not args.skip_3dgs:
-            row = run_official_3dgs_eval(run_dir, scene_path, gs_iter, args.gpu, args.overwrite)
+            row = run_official_3dgs_eval(
+                run_dir,
+                scene_path,
+                gs_iter,
+                args.gpu,
+                args.overwrite,
+                args.white_background,
+            )
+            if row["views"] != 30:
+                raise ValueError(
+                    f"Expected 30 held-out 3DGS views, found {row['views']}"
+                )
             row.update({"shoe": shoe, "run_id": run_dir.name})
             rows.append(row)
             print(f"3DGS: PSNR={row['psnr']:.4f} SSIM={row['ssim']:.4f} LPIPS={row['lpips']:.4f}", flush=True)
 
         if not args.skip_sugar:
-            row = run_sugar_eval(run_dir, scene_path, gs_iter, ref_iter, gpf, args.gpu, args.overwrite)
+            row = run_sugar_eval(
+                run_dir,
+                scene_path,
+                gs_iter,
+                ref_iter,
+                gpf,
+                args.gpu,
+                args.overwrite,
+                args.white_background,
+            )
+            if row["views"] != 30:
+                raise ValueError(
+                    f"Expected 30 held-out SuGaR views, found {row['views']}"
+                )
             row.update({"shoe": shoe, "run_id": run_dir.name})
             rows.append(row)
             print(f"SuGaR: PSNR={row['psnr']:.4f} SSIM={row['ssim']:.4f} LPIPS={row['lpips']:.4f}", flush=True)
