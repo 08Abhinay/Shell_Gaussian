@@ -101,8 +101,10 @@ changes are deliberately limited and must be reported with results:
 - `exp_runner_blending.py` supports deterministic seeds, respects the requested
   final extraction resolution, sends a fixed white background to the renderer,
   and applies RGB error only on foreground pixels when masks are enabled.
-- The `udf_shoes*.conf` files use `use_white_bkgd=True`, `mask_weight=0.1`, and
-  `n_outside=0`. No inverse depth or reference mesh is used during training.
+- The final `udf_shoes_open.conf` recipe uses the upstream DeepFashion-style
+  open-surface regularization with `use_white_bkgd=True`, `mask_weight=0.1`,
+  and `n_outside=0`. No inverse depth or reference mesh is used during
+  training.
 - The original upstream DTU and DeepFashion configurations remain unchanged.
 
 Prepare and validate the exact-camera input using the centralized pipeline:
@@ -117,50 +119,69 @@ $PYTHON $PIPELINE validate-neuraludf --shoe birkenstock_arizona_sandal
 $PYTHON -m unittest dataset_tools_blender.tests.test_pipeline
 ```
 
-Run a shoe directly, or launch the same command in tmux. Both scripts default to
-the 300,000-iteration `udf_shoes.conf`, seed `0`, and final resolution `512`:
+Run one shoe directly with the frozen 300,000-iteration open-surface recipe:
 
 ```bash
 cd /storage/Abhinay/Shell_Gaussian/baselines/NeuralUDF
 
-scripts/train_shoe.sh birkenstock_arizona_sandal 3
-
-scripts/launch_train_shoe_tmux.sh \
-  birkenstock_arizona_sandal 3 masked_white_300k
+scripts/train_shoe_open.sh \
+  birkenstock_arizona_sandal \
+  3 \
+  confs/udf_shoes_open.conf \
+  512
 ```
 
-The positional interfaces are:
+The final five-shoe experiment uses the permanent two-GPU launcher:
 
-```text
-train_shoe.sh SHOE GPU [CONFIG] [RESOLUTION]
-launch_train_shoe_tmux.sh SHOE GPU [RUN_LABEL] [CONFIG] [RESOLUTION]
+```bash
+bash scripts/launch_open_full_queues.sh \
+  --gpus 2,3 \
+  --shoe-list scripts/evaluation_shoes.txt \
+  --session neuraludf_final_five_gpu23
 ```
 
-The launcher refuses to reuse an active tmux name or overwrite a log, and
-requires at least 20 GiB of free GPU memory by default. Override reproducibility
-settings only explicitly through `NEURALUDF_SEED`, `NEURALUDF_THRESHOLD`,
-`NEURALUDF_MIN_FREE_MB`, or the optional positional arguments.
+The launcher validates every prepared scene, splits the list round-robin across
+the requested physical GPUs, refuses existing final outputs, and requires at
+least 20 GiB of free GPU memory per worker. Each shoe records its source
+revision, configuration and camera hashes, elapsed time, peak GPU memory,
+checkpoint, final mesh, and geometry-metric path.
 
 Monitor without changing the run:
 
 ```bash
-tmux ls
-tail -f output/logs/birkenstock_arizona_sandal_masked_white_300k.log
-nvidia-smi -i 3
+tmux attach -t neuraludf_final_five_gpu23
+
+tail -f \
+  output/golden_set_evaluation_blender_final/batch_runs/\
+neuraludf_final_five_gpu23/batch.log
+
+nvidia-smi -i 2,3
 ```
 
 The final experiment root is:
 
 ```text
-output/golden_set_evaluation_blender_masked_white/<shoe>/udf_dtu/
+output/golden_set_evaluation_blender_final/<shoe>/udf_open/
 ```
 
 Use `udf_meshes/udf_res512_step300000.ply` for the NeuralUDF comparison. Files
 under `meshes/` are ordinary positive-threshold surfaces; an unsigned field can
 produce doubled layers and contour artifacts there. The 25,000-iteration probe
-is for integration diagnosis, not the final paper baseline. Report the final
-method as **NeuralUDF (adapted masked-white configuration)** and apply this one
-frozen recipe to every evaluated shoe.
+and the separate 50,000-iteration fine-tuning experiments are diagnostics, not
+paper results. Fine-tuning was excluded because it degraded geometry on both
+tested development comparisons. Report the final method as **NeuralUDF (masked
+open-surface configuration)** and apply this one frozen recipe to every
+evaluated shoe.
+
+The shared evaluator runs with `--geometry-only` after every successful
+training job. It writes final geometry results under:
+
+```text
+mesh_metrics/output/evaluations/neuraludf_final/<shoe>/
+```
+
+Training PSNR is not a held-out novel-view metric and must not be placed in the
+paper's image-quality table.
 
 ### The reconstruction results of ours and baselines
 You can download the results of the methods mentioned in the paper here:

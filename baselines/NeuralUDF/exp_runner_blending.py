@@ -149,7 +149,15 @@ class Runner:
 
         # Load checkpoint
         latest_model_name = None
-        if is_continue:
+        init_checkpoint = args.init_checkpoint
+        if init_checkpoint and is_continue:
+            raise ValueError('--init_checkpoint and --is_continue are mutually exclusive')
+        if init_checkpoint:
+            init_checkpoint = os.path.abspath(init_checkpoint)
+            if not os.path.isfile(init_checkpoint):
+                raise FileNotFoundError('Initial checkpoint is missing: {}'.format(init_checkpoint))
+            latest_model_name = init_checkpoint
+        elif is_continue:
             model_list_raw = os.listdir(os.path.join(self.base_exp_dir, 'checkpoints'))
             model_list = []
             for model_name in model_list_raw:
@@ -462,9 +470,9 @@ class Runner:
                         self.visualize_one_ray(img_idx=33, px=self.dataset.W // 2, py=self.dataset.H // 2 + i)
 
             if self.iter_step % self.val_mesh_freq == 0:
-                self.validate_mesh(threshold=args.threshold)
+                self.validate_mesh(resolution=args.resolution, threshold=args.threshold)
                 try:
-                    self.extract_udf_mesh(world_space=True, dist_threshold_ratio=2.0)
+                    self.extract_udf_mesh(resolution=args.resolution, world_space=True, dist_threshold_ratio=2.0)
                 except:
                     print("extract udf mesh fails")
 
@@ -490,8 +498,9 @@ class Runner:
             fd.write(res)
 
     def load_checkpoint(self, checkpoint_name):
-        checkpoint = torch.load(os.path.join(self.base_exp_dir, 'checkpoints', checkpoint_name),
-                                map_location=self.device)
+        checkpoint_path = checkpoint_name if os.path.isabs(checkpoint_name) else os.path.join(
+            self.base_exp_dir, 'checkpoints', checkpoint_name)
+        checkpoint = torch.load(checkpoint_path, map_location=self.device)
 
         self.nerf_outside.load_state_dict(checkpoint['nerf'])
         self.udf_network_fine.load_state_dict(checkpoint['udf_network_fine'])
@@ -905,6 +914,8 @@ if __name__ == '__main__':
     parser.add_argument('--threshold', type=float, default=0.005)
     parser.add_argument('--is_continue', default=False, action="store_true")
     parser.add_argument('--is_finetune', default=False, action="store_true")
+    parser.add_argument('--init_checkpoint', type=str, default='',
+                        help='initialize a new experiment directory from an explicit checkpoint')
     parser.add_argument('--reg_weights_schedule', default=False, action="store_true",
                         help='the schedule of regularization weights')
     parser.add_argument('--vis_ray', default=False, action="store_true", help='visualize the udf of a ray for debug')

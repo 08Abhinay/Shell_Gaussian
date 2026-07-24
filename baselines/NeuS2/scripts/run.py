@@ -32,6 +32,7 @@ def parse_args():
 	parser = argparse.ArgumentParser(description="Run neural graphics primitives testbed with additional configuration & output options")
 
 	parser.add_argument("--name", default="neus", type=str, required=True)
+	parser.add_argument("--output_path", default="", help="Optional explicit experiment output directory.")
 	parser.add_argument("--scene", "--training_data", default="", help="The scene to load. Can be the scene's name or a full path to the training data.")
 	parser.add_argument("--mode", default="", const="nerf", nargs="?", choices=["nerf", "sdf", "image", "volume"], help="Mode can be 'nerf', 'sdf', or 'image' or 'volume'. Inferred from the scene if unspecified.")
 	parser.add_argument("--network", default="", help="Path to the network config. Uses the scene's default if unspecified.")
@@ -63,10 +64,16 @@ def parse_args():
 
 	## na_test
 	parser.add_argument('--test_camera_view', type=int,default=0)
+	parser.add_argument('--test_all_views', action='store_true')
 	parser.add_argument('--test', action='store_true')
 	parser.add_argument('--render_img_HW', type=int, default=None)
 	parser.add_argument("--shaded_mesh", action='store_true')
 	parser.add_argument("--white_bkgd", action='store_true')
+	parser.add_argument(
+		"--skip_post_train_eval",
+		action="store_true",
+		help="Skip the legacy one-view training-set metric pass after training.",
+	)
 
 	args = parser.parse_args()
 	return args
@@ -75,12 +82,12 @@ def parse_args():
 if __name__ == "__main__":
 	args = parse_args()
 
-	args.output_path = os.path.join('output',args.name)
+	args.output_path = os.path.abspath(args.output_path) if args.output_path else os.path.join('output',args.name)
 	os.makedirs(os.path.join(args.output_path,"checkpoints"), exist_ok=True)
 	os.makedirs(os.path.join(args.output_path,"mesh"), exist_ok=True)
 	
 	time_name = time.strftime("%m_%d_%H_%M", time.localtime())
-	writer = SummaryWriter(log_dir=os.path.join('output',  args.name, 'logs', time_name))
+	writer = SummaryWriter(log_dir=os.path.join(args.output_path, 'logs', time_name))
 
 	mode = ngp.TestbedMode.Nerf 
 	configs_dir = os.path.join(ROOT_DIR, "configs", "nerf")
@@ -129,10 +136,7 @@ if __name__ == "__main__":
 		log_path = os.path.join(args.output_path, f"eval_log.txt")
 		log_ptr = open(log_path, "w+")
 
-		if args.load_snapshot:
-			print("Loading snapshot ", args.load_snapshot)
-			testbed.load_snapshot(args.load_snapshot)
-		else:
+		if not args.load_snapshot:
 			print("specify a checkpoint path")
 			exit(1)
 		
@@ -142,7 +146,13 @@ if __name__ == "__main__":
 			print(f"Generating mesh via marching cubes and saving to {args.save_mesh_path}. Resolution=[{res},{res},{res}]")
 			testbed.compute_and_save_marching_cubes_mesh(args.save_mesh_path, [res, res, res])
 			
-		render_img_training_view(args, testbed, log_ptr, args.scene)
+		with open(args.scene) as transform_handle:
+			test_view_count = len(json.load(transform_handle)["frames"])
+		view_indices = range(test_view_count) if args.test_all_views else [args.test_camera_view]
+		for view_index in view_indices:
+			args.test_camera_view = view_index
+			render_img_training_view(args, testbed, log_ptr, args.scene)
+		log_ptr.close()
 
 	else:
 		ref_transforms = {}
@@ -243,9 +253,10 @@ if __name__ == "__main__":
 		print(f"Generating mesh via marching cubes and saving to {args.save_mesh_path}. Resolution=[{res},{res},{res}]")
 		testbed.compute_and_save_marching_cubes_mesh(args.save_mesh_path, [res, res, res])
 
-		log_path = os.path.join(args.output_path, f"eval_log.txt")
-		log_ptr = open(log_path, "w+")
-		render_img_training_view(args, testbed, log_ptr, args.scene)
+		if not args.skip_post_train_eval:
+			log_path = os.path.join(args.output_path, f"eval_log.txt")
+			with open(log_path, "w+") as log_ptr:
+				render_img_training_view(args, testbed, log_ptr, args.scene)
 		
 
 
@@ -377,6 +388,3 @@ if __name__ == "__main__":
 				if os.path.dirname(outname) != "":
 					os.makedirs(os.path.dirname(outname), exist_ok=True)
 				write_image(outname + ".png", image)
-
-
-

@@ -66,8 +66,8 @@ def parse_eval_log(log_path: Path) -> tuple[float, float, float | None, int] | N
 def resolve_shoes(output_dir: Path, shoes_file: Path | None) -> list[str]:
     if shoes_file is None:
         return sorted(
-            path.name.rsplit("_neus2_", 1)[0]
-            for path in output_dir.glob("*_neus2_*")
+            path.name
+            for path in output_dir.iterdir()
             if path.is_dir() and (path / "eval_log.txt").is_file()
         )
 
@@ -87,13 +87,13 @@ def main() -> int:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=default_root / "output",
-        help="Directory containing *_neus2_* output folders.",
+        default=default_root / "output" / "golden_set_evaluation_blender_final",
+        help="Directory containing one structured output folder per shoe.",
     )
     parser.add_argument(
         "--shoes-file",
         type=Path,
-        default=default_root / "bash_scripts" / "shoes.txt",
+        default=default_root / "bash_scripts" / "evaluation_shoes.txt",
         help="Optional ordered shoe list. Use an empty string to scan output-dir.",
     )
     parser.add_argument(
@@ -111,7 +111,7 @@ def main() -> int:
     rows = []
     missing = []
     for shoe in shoes:
-        log_path = output_dir / f"{shoe}_neus2_10000" / "eval_log.txt"
+        log_path = output_dir / shoe / "eval_log.txt"
         metrics = parse_eval_log(log_path) if log_path.is_file() else None
         if metrics is None:
             missing.append(shoe)

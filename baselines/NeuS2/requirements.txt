@@ -7,3 +7,4 @@ tqdm~=4.62.2
 opencv-python~=4.5.5.62
 trimesh
 tensorboard
+lpips==0.1.4

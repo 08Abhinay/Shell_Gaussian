@@ -335,6 +335,9 @@ def render_img_training_view(args, testbed, log_ptr, image_dir, frame_time_id = 
         ref_image[...,:3] *= ref_image[...,3:4]
         ref_image += (1.0 - ref_image[...,3:4]) * testbed.background_color
         ref_image[...,:3] = srgb_to_linear(ref_image[...,:3])
+    elif ref_image.shape[2] == 4:
+        ref_image[...,:3] *= ref_image[...,3:4]
+        ref_image += (1.0 - ref_image[...,3:4]) * testbed.background_color
     
     if training_step < 0:
         write_image(join(img_path,f"frame_{frame_time_id:06}_gt.png"), ref_image)

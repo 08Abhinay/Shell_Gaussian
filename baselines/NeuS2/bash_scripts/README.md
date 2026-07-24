@@ -1,60 +1,86 @@
-# NeuS2 Shoe Training Scripts
+# NeuS2 Shoe Experiments
 
-The normal entry point is `train_all_shoes.sh`. It starts a detached tmux session, so the batch keeps running after you disconnect SSH.
+NeuS2 uses the derived exact-camera dataset at:
 
-```sh
-cd /data/abelde/projects/active/Shell_Gaussian/baselines/NeuS2
+```text
+/storage/Abhinay/home_ab5298/dataset/datasets/processed/golden_set_evaluation_neus2
+```
+
+The official `configs/nerf/dtu.json` is candidate A and remains unchanged.
+Candidate B is `configs/nerf/dtu_shoes_masked.json`; its only recipe change is
+`mask_loss_weight: 0.1`.
+
+Both candidates must first run for 15,000 steps on the unreported development
+shoe `adidas_yeezy_boost_350_v2_zyon`. Select lower Chamfer-L1 unless the
+relative difference is below 2%, in which case retain official DTU. Do not
+tune on the five reportable shoes.
+
+## One-Shoe Pilot
+
+Official DTU:
+
+```bash
+NEUS2_ENV=/home/ab5298/anaconda3/envs/neus2 \
+NEUS2_DATA_ROOT=/storage/Abhinay/home_ab5298/dataset/datasets/processed/golden_set_evaluation_neus2 \
+NEUS2_OUTPUT_ROOT=/storage/Abhinay/Shell_Gaussian/baselines/NeuS2/output/golden_set_evaluation_blender_pilot_dtu \
+NEUS2_SHOE_LIST=/storage/Abhinay/Shell_Gaussian/baselines/NeuS2/bash_scripts/development_shoes.txt \
+NEUS2_CONFIG=dtu.json \
+NEUS2_N_STEPS=15000 \
+NEUS2_MARCHING_CUBES_RES=512 \
+NEUS2_GPUS=2 \
+NEUS2_RUN_EVAL=1 \
+NEUS2_RUN_MESH_METRICS=1 \
+NEUS2_MESH_METRICS_ROOT=/storage/Abhinay/Shell_Gaussian/mesh_metrics/output/evaluations/neus2_pilot_dtu \
+NEUS2_TMUX_SESSION=neus2_yeezy_dtu_gpu2 \
 bash bash_scripts/train_all_shoes.sh
 ```
 
-Attach to the running batch:
+Run candidate B with a different output root, metric root, and tmux name:
 
-```sh
-tmux attach -t neus2_all_shoes
+```bash
+NEUS2_CONFIG=dtu_shoes_masked.json
+NEUS2_OUTPUT_ROOT=/storage/Abhinay/Shell_Gaussian/baselines/NeuS2/output/golden_set_evaluation_blender_pilot_masked
+NEUS2_MESH_METRICS_ROOT=/storage/Abhinay/Shell_Gaussian/mesh_metrics/output/evaluations/neus2_pilot_masked
+NEUS2_TMUX_SESSION=neus2_yeezy_masked_gpu2
 ```
 
-Detach again with `Ctrl-b d`.
+## Final Five-Shoe Queue
 
-Defaults:
+After freezing the selected config:
 
-```sh
-NEUS2_SHOE_LIST=bash_scripts/shoes.txt
-NEUS2_N_STEPS=10000
-NEUS2_TMUX_SESSION=neus2_all_shoes
+```bash
+NEUS2_ENV=/home/ab5298/anaconda3/envs/neus2 \
+NEUS2_DATA_ROOT=/storage/Abhinay/home_ab5298/dataset/datasets/processed/golden_set_evaluation_neus2 \
+NEUS2_OUTPUT_ROOT=/storage/Abhinay/Shell_Gaussian/baselines/NeuS2/output/golden_set_evaluation_blender_final \
+NEUS2_SHOE_LIST=/storage/Abhinay/Shell_Gaussian/baselines/NeuS2/bash_scripts/evaluation_shoes.txt \
+NEUS2_CONFIG=<selected-config> \
+NEUS2_N_STEPS=15000 \
+NEUS2_MARCHING_CUBES_RES=512 \
+NEUS2_GPUS=2 \
+NEUS2_RUN_EVAL=1 \
+NEUS2_RUN_MESH_METRICS=1 \
+NEUS2_MESH_METRICS_ROOT=/storage/Abhinay/Shell_Gaussian/mesh_metrics/output/evaluations/neus2 \
+NEUS2_TMUX_SESSION=neus2_final_five_gpu2 \
+bash bash_scripts/train_all_shoes.sh
 ```
 
-If `NEUS2_GPUS` is not set, the script uses all GPUs listed by `nvidia-smi`. To choose GPUs yourself:
+Monitor:
 
-```sh
-NEUS2_GPUS="0 1 2 3" bash bash_scripts/train_all_shoes.sh
+```bash
+tmux ls
+tmux capture-pane -pt neus2_final_five_gpu2 | tail -40
+tail -f baselines/NeuS2/output/batch_runs/<run-id>/batch.log
+nvidia-smi -i 2
 ```
 
-Useful overrides:
+Each output scene contains a 15k checkpoint, a 512-cubed mesh, 30 held-out
+prediction/GT pairs, evaluation logs, resource usage, and an experiment
+manifest. Mesh metrics are written separately under `mesh_metrics/output`.
+The queue stops on training, evaluation, boundary-validation, or metric
+failure.
 
-```sh
-NEUS2_DATA_ROOT=/data/abelde/datasets/processed/neus2_shoes
-NEUS2_ENV=/data/abelde/projects/active/Shell_Gaussian/baselines/NeuS2/neus2_env
-NEUS2_CONFIG=dtu.json
-NEUS2_TRAIN_TRANSFORM=transform_train.json
-NEUS2_CACHE_ROOT=/data/abelde/.cache
-NEUS2_N_STEPS=10000
-NEUS2_GPUS="0 1 2 3"
-```
-
-Logs are printed when the tmux session starts. Batch logs go under `output/batch_runs/<run_id>/`, and each shoe also writes `output/<shoe_name>_neus2_<steps>/logs/train.log`.
-
-For debugging one shoe directly:
-
-```sh
-bash bash_scripts/train_shoe.sh Adidas-Yeezy-Boost-350-V2-Desert-Sage-Infant 0 10000
-```
-
-`train_shoe.sh` only sets cache directories, activates the NeuS2 conda env, sets `PYTHONPATH=build`, and runs:
-
-```sh
-python -u scripts/run.py \
-  --scene <dataset>/<shoe>/transform_train.json \
-  --name <shoe>_neus2_<steps> \
-  --network dtu.json \
-  --n_steps <steps>
-```
+For reporting, PSNR, SSIM, and LPIPS come directly from NeuS2's
+`scripts/render_utils.py` and are aggregated from the 30 held-out views in
+`eval_log.txt`. No project-level image scorer replaces these repository-native
+metrics. The shared `mesh_metrics` package is used only for similarity-aligned
+geometry and mesh-derived silhouette/depth analysis.
