@@ -190,6 +190,30 @@ class Dataset:
         intrinsics = self.intrinsics_all[src_idx]
         return ref_c2w.cuda(), c2ws.cuda(), intrinsics.cuda(), images.cuda().permute(0, 3, 1, 2), [self.W, self.H]
 
+    def get_nearest_src_info(self, query_c2w, num=8):
+        """Return the nearest training views for an external query camera."""
+        if num <= 0:
+            raise ValueError("num must be positive")
+        query_c2w = torch.as_tensor(
+            query_c2w, dtype=self.pose_all.dtype, device=self.pose_all.device
+        )
+        if query_c2w.shape != (4, 4):
+            raise ValueError("query_c2w must be a 4x4 camera-to-world matrix")
+        distances = torch.linalg.norm(
+            self.pose_all[:, :3, 3] - query_c2w[:3, 3], dim=1
+        )
+        src_idx = torch.argsort(distances)[:min(num, self.n_images)]
+        c2ws = self.pose_all[src_idx]
+        images = self.images[src_idx]
+        intrinsics = self.intrinsics_all[src_idx]
+        return (
+            query_c2w,
+            c2ws,
+            intrinsics,
+            images.permute(0, 3, 1, 2),
+            [self.W, self.H],
+        )
+
     def gen_rays_at(self, img_idx, resolution_level=1):
         """
         Generate rays at world space from one camera.

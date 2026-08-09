@@ -75,6 +75,11 @@ mapfile -t SHOES < <(sed -e 's/#.*$//' -e '/^[[:space:]]*$/d' "$SHOE_LIST")
 (( ${#SHOES[@]} > 0 )) || { echo "Shoe list is empty: $SHOE_LIST" >&2; exit 2; }
 
 OUTPUT_ROOT=${NEURALUDF_OUTPUT_ROOT:-$DEFAULT_OUTPUT_ROOT}
+DATA_ROOT=${NEURALUDF_DATA_ROOT:-/storage/Abhinay/home_ab5298/dataset/datasets/processed/neuraludf/golden_set_evaluation}
+SOURCE_SCENE_ROOT=${NEURALUDF_SOURCE_SCENE_ROOT:-/storage/Abhinay/home_ab5298/dataset/datasets/processed/gshell/golden_set_evaluation}
+GROUND_TRUTH_ROOT=${NEURALUDF_GROUND_TRUTH_ROOT:-/storage/Abhinay/home_ab5298/dataset/datasets/processed/gshell/golden_set_evaluation}
+METRICS_ROOT=${NEURALUDF_METRICS_ROOT:-$PROJECT_ROOT/mesh_metrics/output/evaluations/neuraludf_final}
+VALIDATION_COMMAND=${NEURALUDF_VALIDATION_COMMAND:-validate-neuraludf}
 BATCH_DIR=$OUTPUT_ROOT/batch_runs/$SESSION
 BATCH_LOG=$BATCH_DIR/batch.log
 
@@ -105,7 +110,12 @@ if (( INTERNAL_RUN )); then
             set -o pipefail
             NEURALUDF_BATCH_DIR=$BATCH_DIR \
             NEURALUDF_WORKER_ID=$INDEX \
+            NEURALUDF_DATA_ROOT=$DATA_ROOT \
+            NEURALUDF_SOURCE_SCENE_ROOT=$SOURCE_SCENE_ROOT \
+            NEURALUDF_GROUND_TRUTH_ROOT=$GROUND_TRUTH_ROOT \
             NEURALUDF_OUTPUT_ROOT=$OUTPUT_ROOT \
+            NEURALUDF_METRICS_ROOT=$METRICS_ROOT \
+            NEURALUDF_VALIDATION_COMMAND=$VALIDATION_COMMAND \
                 "$QUEUE_SCRIPT" "$GPU" "${ASSIGNED[@]}" 2>&1 | tee "$WORKER_LOG"
             exit "${PIPESTATUS[0]}"
         ) &
@@ -163,8 +173,10 @@ if (( AVAILABLE_MB < MIN_STORAGE_MB )); then
     exit 1
 fi
 
-printf -v COMMAND '%q --internal-run --gpus %q --shoe-list %q --session %q' \
-    "$SCRIPT" "$GPUS_CSV" "$SHOE_LIST" "$SESSION"
+printf -v COMMAND 'env NEURALUDF_DATA_ROOT=%q NEURALUDF_SOURCE_SCENE_ROOT=%q NEURALUDF_GROUND_TRUTH_ROOT=%q NEURALUDF_OUTPUT_ROOT=%q NEURALUDF_METRICS_ROOT=%q NEURALUDF_VALIDATION_COMMAND=%q %q --internal-run --gpus %q --shoe-list %q --session %q' \
+    "$DATA_ROOT" "$SOURCE_SCENE_ROOT" "$GROUND_TRUTH_ROOT" "$OUTPUT_ROOT" \
+    "$METRICS_ROOT" "$VALIDATION_COMMAND" "$SCRIPT" "$GPUS_CSV" \
+    "$SHOE_LIST" "$SESSION"
 tmux new-session -d -s "$SESSION" -c "$PROJECT_ROOT" "$COMMAND"
 
 echo "Started tmux session: $SESSION"

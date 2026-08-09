@@ -43,7 +43,13 @@ class Runner:
         f.close()
 
         self.conf = ConfigFactory.parse_string(conf_text)
-        self.conf['dataset.data_dir'] = self.conf['dataset.data_dir'].replace('CASE_NAME', case)
+        self.conf['dataset']['data_dir'] = self.conf['dataset']['data_dir'].replace('CASE_NAME', case)
+        data_root = os.environ.get('NEURALUDF_DATA_ROOT')
+        if data_root:
+            self.conf['dataset']['data_dir'] = os.path.join(data_root, case)
+        output_root = os.environ.get('NEURALUDF_OUTPUT_ROOT')
+        if output_root:
+            self.conf['general']['base_exp_dir'] = os.path.join(output_root, case)
         self.conf['general']['seed'] = args.seed
 
         # modify the setting based on input
@@ -56,6 +62,9 @@ class Runner:
 
         self.base_exp_dir = os.path.join(self.conf['general.base_exp_dir'], self.conf['general.expname'])
         os.makedirs(self.base_exp_dir, exist_ok=True)
+
+        print(f"Resolved dataset path: {self.conf['dataset.data_dir']}")
+        print(f"Resolved output path: {self.base_exp_dir}")
 
         self.dataset_name = self.conf.get_string('dataset.dataset_name', default='general')
         self.dataset = Dataset(self.conf['dataset'])
@@ -507,7 +516,8 @@ class Runner:
         self.variance_network_fine.load_state_dict(checkpoint['variance_network_fine'])
         self.color_network_fine.load_state_dict(checkpoint['color_network_fine'])
         self.beta_network.load_state_dict(checkpoint['beta_network'])
-        self.optimizer.load_state_dict(checkpoint['optimizer'])
+        if self.mode[:5] == 'train':
+            self.optimizer.load_state_dict(checkpoint['optimizer'])
         self.iter_step = checkpoint['iter_step']
 
         if self.is_finetune:

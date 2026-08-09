@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 PYTHON=${NEURALUDF_PYTHON:-/home/ab5298/anaconda3/envs/neuraludf/bin/python}
-DATA_ROOT=${NEURALUDF_DATA_ROOT:-/storage/Abhinay/home_ab5298/dataset/datasets/processed/golden_set_evaluation_neuraludf}
+DATA_ROOT=${NEURALUDF_DATA_ROOT:-/storage/Abhinay/home_ab5298/dataset/datasets/processed/neuraludf/golden_set_evaluation}
 
 if (( $# < 2 || $# > 4 )); then
     echo "Usage: $0 SHOE GPU [CONFIG] [RESOLUTION]" >&2

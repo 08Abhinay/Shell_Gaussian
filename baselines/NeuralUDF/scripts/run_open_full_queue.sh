@@ -13,10 +13,13 @@ GPU_POLL_SECONDS=${NEURALUDF_GPU_POLL_SECONDS:-5}
 VALIDATION_PYTHON=${NEURALUDF_VALIDATION_PYTHON:-/home/ab5298/anaconda3/envs/neuraludf/bin/python}
 METRICS_PYTHON=${NEURALUDF_METRICS_PYTHON:-/storage/Abhinay/home_ab5298/anaconda3/envs/shellgaussianenv/bin/python}
 PIPELINE=$PROJECT_ROOT/dataset_tools_blender/pipeline.py
-DATA_ROOT=${NEURALUDF_DATA_ROOT:-/storage/Abhinay/home_ab5298/dataset/datasets/processed/golden_set_evaluation_neuraludf}
-SOURCE_SCENE_ROOT=${NEURALUDF_SOURCE_SCENE_ROOT:-/storage/Abhinay/home_ab5298/dataset/datasets/processed/golden_set_evaluation_blender}
+DATA_ROOT=${NEURALUDF_DATA_ROOT:-/storage/Abhinay/home_ab5298/dataset/datasets/processed/neuraludf/golden_set_evaluation}
+SOURCE_SCENE_ROOT=${NEURALUDF_SOURCE_SCENE_ROOT:-/storage/Abhinay/home_ab5298/dataset/datasets/processed/gshell/golden_set_evaluation}
+GROUND_TRUTH_ROOT=${NEURALUDF_GROUND_TRUTH_ROOT:-/storage/Abhinay/home_ab5298/dataset/datasets/processed/gshell/golden_set_evaluation}
 OUTPUT_ROOT=${NEURALUDF_OUTPUT_ROOT:-$ROOT/output/golden_set_evaluation_blender_final}
 METRICS_ROOT=${NEURALUDF_METRICS_ROOT:-$PROJECT_ROOT/mesh_metrics/output/evaluations/neuraludf_final}
+VALIDATION_COMMAND=${NEURALUDF_VALIDATION_COMMAND:-validate-neuraludf}
+NOVEL_VIEW_EVAL_SCRIPT=$ROOT/scripts/evaluate_novel_views.sh
 BATCH_DIR=${NEURALUDF_BATCH_DIR:-$OUTPUT_ROOT/batch_runs/manual}
 WORKER_ID=${NEURALUDF_WORKER_ID:-0}
 
@@ -69,6 +72,7 @@ monitor_gpu_memory() {
 for SHOE in "$@"; do
     PREPARED_SCENE=$DATA_ROOT/$SHOE
     SOURCE_SCENE=$SOURCE_SCENE_ROOT/$SHOE
+    GROUND_TRUTH_MESH=$GROUND_TRUTH_ROOT/$SHOE/reference_mesh.ply
     SHOE_ROOT=$OUTPUT_ROOT/$SHOE
     EXP_DIR=$SHOE_ROOT/udf_open
     LOG_DIR=$SHOE_ROOT/logs
@@ -81,6 +85,7 @@ for SHOE in "$@"; do
 
     [[ -d $PREPARED_SCENE ]] || { echo "Prepared scene is missing: $PREPARED_SCENE" >&2; exit 1; }
     [[ -d $SOURCE_SCENE ]] || { echo "Source evaluation scene is missing: $SOURCE_SCENE" >&2; exit 1; }
+    [[ -f $GROUND_TRUTH_MESH ]] || { echo "Ground-truth mesh is missing: $GROUND_TRUTH_MESH" >&2; exit 1; }
     if [[ -d $SHOE_ROOT ]] && find "$SHOE_ROOT" -mindepth 1 -print -quit | grep -q .; then
         echo "Fresh-run output already exists: $SHOE_ROOT" >&2
         exit 1
@@ -97,7 +102,9 @@ for SHOE in "$@"; do
     fi
 
     echo "[$(date -u +%FT%TZ)] Validating $SHOE"
-    "$VALIDATION_PYTHON" "$PIPELINE" validate-neuraludf --shoe "$SHOE"
+    "$VALIDATION_PYTHON" "$PIPELINE" "$VALIDATION_COMMAND" --shoe "$SHOE"
+
+    TRAIN_VIEW_COUNT=$(find "$PREPARED_SCENE/image" -maxdepth 1 -type f -name '*.png' | wc -l)
 
     mkdir -p "$LOG_DIR"
     START_EPOCH=$(date +%s)
@@ -109,7 +116,7 @@ for SHOE in "$@"; do
     {
         echo "[$START_UTC] Starting $SHOE on physical GPU $GPU"
         echo "Configuration: $CONFIG"
-        echo "Contract: 150 RGB views + masks + exact cameras; seed 0; 300000 iterations"
+        echo "Contract: ${TRAIN_VIEW_COUNT} RGB views + masks + exact cameras; seed 0; 300000 iterations"
         echo "Final mesh: $FINAL_MESH"
     } | tee "$LOG"
 
@@ -139,13 +146,20 @@ for SHOE in "$@"; do
     [[ -s $CHECKPOINT ]] || { echo "Final checkpoint is missing: $CHECKPOINT" >&2; exit 1; }
     [[ -s $FINAL_MESH ]] || { echo "Final MeshUDF surface is missing: $FINAL_MESH" >&2; exit 1; }
 
-    echo "[$(date -u +%FT%TZ)] Computing geometry-only metrics for $SHOE" | tee -a "$LOG"
+    echo "[$(date -u +%FT%TZ)] Rendering held-out views for $SHOE" | tee -a "$LOG"
+    NEURALUDF_CONFIG=$CONFIG \
+    NEURALUDF_SOURCE_ROOT=$SOURCE_SCENE_ROOT \
+    NEURALUDF_PREPARED_ROOT=$DATA_ROOT \
+        "$NOVEL_VIEW_EVAL_SCRIPT" "$GPU" "$SHOE" "$CHECKPOINT" \
+        "$SHOE_ROOT/heldout_evaluation" | tee -a "$LOG"
+
+    echo "[$(date -u +%FT%TZ)] Computing mesh metrics for $SHOE" | tee -a "$LOG"
     "$METRICS_PYTHON" -m mesh_metrics.evaluate_mesh \
         --prediction "$FINAL_MESH" \
         --scene "$SOURCE_SCENE" \
+        --ground-truth "$GROUND_TRUTH_MESH" \
         --output "$METRIC_DIR" \
         --training-view-set train \
-        --geometry-only \
         --save-aligned | tee -a "$LOG"
 
     "$METRICS_PYTHON" - "$METRIC_JSON" <<'PY'

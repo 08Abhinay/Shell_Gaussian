@@ -183,6 +183,27 @@ mesh_metrics/output/evaluations/neuraludf_final/<shoe>/
 Training PSNR is not a held-out novel-view metric and must not be placed in the
 paper's image-quality table.
 
+### Held-out image metrics
+
+Use the permanent evaluation entry point to render the 30 withheld Blender
+cameras from a completed checkpoint. Held-out RGB images are query targets
+only: NeuralUDF's appearance renderer selects its color-source views strictly
+from the 150-image training dataset.
+
+```bash
+bash scripts/evaluate_novel_views.sh \
+  0 \
+  air_jordan_1 \
+  output/golden_set_evaluation_blender_final/air_jordan_1/udf_open/checkpoints/ckpt_300000.pth \
+  output/golden_set_evaluation_blender_final/air_jordan_1/udf_open/heldout
+```
+
+The command writes the rendered and ground-truth pairs under `renders/` and
+`gt/`, followed by per-view and average results in `image_metrics.tsv` and
+`image_metrics.json`. Scores use full-resolution white-background RGB, standard
+PSNR and SSIM, and LPIPS-VGG. These are novel-view metrics; they are distinct
+from the training PSNR printed by NeuralUDF.
+
 ### The reconstruction results of ours and baselines
 You can download the results of the methods mentioned in the paper here:
 - [DeepFashion3D](https://connecthkuhk-my.sharepoint.com/:f:/g/personal/xxlong_connect_hku_hk/Et1G0_59EWJNvebXoVhv7PUBU2WQXU12UhEDsID2t-mZ7g?e=fXEKhn) 
