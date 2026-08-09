@@ -1,0 +1,3 @@
+[submodule "baselines/MILo"]
+	path = baselines/MILo
+	url = https://github.com/Anttwo/MILo.git
