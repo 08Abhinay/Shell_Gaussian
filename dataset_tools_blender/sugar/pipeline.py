@@ -9,6 +9,7 @@ import math
 import os
 import queue
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 import time
@@ -20,6 +21,7 @@ from PIL import Image
 
 from ..core import (
     CAMERA_RADIUS,
+    DEFAULT_SUGAR_TURNTABLE_OUTPUT_ROOT,
     GSHELL_LOADER_LEFT_ROTATION,
     RESOLUTION,
     SUGAR_BBOX_HIGH_QUANTILE,
@@ -29,6 +31,9 @@ from ..core import (
     SUGAR_PROTOCOL,
     TEST_INDICES,
     TRAIN_INDICES,
+    TURNTABLE_INDICES,
+    TURNTABLE_TEST_INDICES,
+    TURNTABLE_TRAIN_INDICES,
     VIEW_COUNT,
     colmap_w2c_to_effective,
     effective_to_colmap_w2c,
@@ -38,9 +43,15 @@ from ..core import (
     parse_gpus,
     read_json,
     selected_records,
-    sha256_file,
+    source_manifest_fields,
     sugar_focal_length,
     validate_scene,
+    validate_source_manifest,
+)
+
+
+SUGAR_TURNTABLE_PROTOCOL = (
+    "exact_blender_cameras_turntable_36_train_only_triangulation_v1"
 )
 
 
@@ -88,12 +99,14 @@ def qvec_to_rotmat(quaternion: np.ndarray) -> np.ndarray:
 
 def effective_sugar_frames(
     source_scene: Path,
+    indices: tuple[int, ...] = tuple(range(VIEW_COUNT)),
 ) -> list[tuple[str, np.ndarray]]:
     payload = read_json(source_scene / "transforms.json")
     frames = payload.get("frames", [])
     if len(frames) != VIEW_COUNT:
         raise ValueError(f"Expected {VIEW_COUNT} source poses, found {len(frames)}")
     result: list[tuple[str, np.ndarray]] = []
+    selected = set(indices)
     for index, frame in enumerate(frames):
         source_name = Path(str(frame.get("file_path", ""))).name
         expected_name = f"img{index + 1:03d}.jpg"
@@ -105,12 +118,17 @@ def effective_sugar_frames(
             frame.get("transform_matrix"), dtype=np.float64
         )
         effective_c2w = GSHELL_LOADER_LEFT_ROTATION @ saved_c2w
-        result.append((source_name, effective_c2w))
+        if index in selected:
+            result.append((source_name, effective_c2w))
+    if len(result) != len(indices):
+        raise ValueError("Requested SuGaR camera subset is incomplete")
     return result
 
 
 def write_seed_colmap_model(
-    model_dir: Path, frames: list[tuple[str, np.ndarray]]
+    model_dir: Path,
+    frames: list[tuple[str, np.ndarray]],
+    image_ids: dict[str, int] | None = None,
 ) -> None:
     model_dir.mkdir(parents=True, exist_ok=True)
     width, height = RESOLUTION
@@ -126,7 +144,8 @@ def write_seed_colmap_model(
         "# Image list with two lines of data per image:\n",
         "# IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME\n",
     ]
-    for image_id, (name, effective_c2w) in enumerate(frames, start=1):
+    for default_id, (name, effective_c2w) in enumerate(frames, start=1):
+        image_id = image_ids[name] if image_ids is not None else default_id
         world_to_camera = effective_to_colmap_w2c(effective_c2w)
         quaternion = rotmat_to_qvec(world_to_camera[:3, :3])
         translation = world_to_camera[:3, 3]
@@ -144,6 +163,17 @@ def write_seed_colmap_model(
         "# POINT3D_ID, X, Y, Z, R, G, B, ERROR, TRACK[]\n",
         encoding="utf-8",
     )
+
+
+def colmap_database_image_ids(database: Path) -> dict[str, int]:
+    with sqlite3.connect(database) as connection:
+        rows = connection.execute(
+            "SELECT image_id, name FROM images"
+        ).fetchall()
+    result = {str(name): int(image_id) for image_id, name in rows}
+    if len(result) != len(rows):
+        raise ValueError("COLMAP database contains duplicate image names")
+    return result
 
 
 def parse_colmap_images(path: Path) -> dict[str, np.ndarray]:
@@ -208,6 +238,57 @@ def parse_colmap_points(path: Path) -> tuple[np.ndarray, np.ndarray]:
         np.asarray(points, dtype=np.float64),
         np.asarray(errors, dtype=np.float64),
     )
+
+
+def parse_colmap_image_ids(path: Path) -> dict[str, int]:
+    image_ids: dict[str, int] = {}
+    with path.open(encoding="utf-8", errors="strict") as handle:
+        for line in handle:
+            fields = line.strip().split()
+            if (
+                len(fields) == 10
+                and fields[0].isdigit()
+                and fields[8].isdigit()
+            ):
+                image_ids[fields[9]] = int(fields[0])
+    return image_ids
+
+
+def point_track_image_ids(path: Path) -> set[int]:
+    image_ids: set[int] = set()
+    with path.open(encoding="utf-8", errors="strict") as handle:
+        for line in handle:
+            fields = line.strip().split()
+            if not fields or fields[0].startswith("#"):
+                continue
+            track = fields[8:]
+            if len(track) % 2:
+                raise ValueError(f"Malformed COLMAP point track in {path}")
+            image_ids.update(int(track[index]) for index in range(0, len(track), 2))
+    return image_ids
+
+
+def append_unobserved_colmap_images(
+    images_path: Path,
+    frames: list[tuple[str, np.ndarray]],
+) -> None:
+    existing = parse_colmap_image_ids(images_path)
+    next_id = max(existing.values(), default=0) + 1
+    lines: list[str] = []
+    for offset, (name, effective_c2w) in enumerate(frames):
+        if name in existing:
+            raise ValueError(f"COLMAP image already exists: {name}")
+        world_to_camera = effective_to_colmap_w2c(effective_c2w)
+        quaternion = rotmat_to_qvec(world_to_camera[:3, :3])
+        translation = world_to_camera[:3, 3]
+        values = [*quaternion.tolist(), *translation.tolist()]
+        lines.append(
+            f"{next_id + offset} "
+            + " ".join(f"{value:.17g}" for value in values)
+            + f" 1 {name}\n\n"
+        )
+    with images_path.open("a", encoding="utf-8") as handle:
+        handle.write("".join(lines))
 
 
 def robust_sparse_bbox(points: np.ndarray) -> dict[str, Any]:
@@ -296,15 +377,17 @@ def run_colmap_stage(
 
 
 def write_sugar_images(
-    source_scene: Path, destination: Path
+    source_scene: Path,
+    destination: Path,
+    indices: tuple[int, ...] = tuple(range(VIEW_COUNT)),
 ) -> dict[str, float | int]:
     output_images = destination / "undistorted" / "images"
     output_masks = destination / "undistorted" / "masks"
     output_images.mkdir(parents=True, exist_ok=True)
     output_masks.mkdir(parents=True, exist_ok=True)
     foreground_fractions: list[float] = []
-    for index in range(1, VIEW_COUNT + 1):
-        basename = f"img{index:03d}"
+    for index in indices:
+        basename = f"img{index + 1:03d}"
         with Image.open(
             source_scene / "image" / f"{basename}.jpg"
         ) as image_handle:
@@ -329,7 +412,7 @@ def write_sugar_images(
         )
         foreground_fractions.append(float((mask > 0).mean()))
     return {
-        "count": VIEW_COUNT,
+        "count": len(indices),
         "width": RESOLUTION[0],
         "height": RESOLUTION[1],
         "foreground_fraction_min": float(np.min(foreground_fractions)),
@@ -343,31 +426,36 @@ def split_image_names(indices: tuple[int, ...]) -> set[str]:
 
 
 def write_sugar_splits(
-    source_scene: Path, destination: Path
+    source_scene: Path,
+    destination: Path,
+    train_indices: tuple[int, ...] = TRAIN_INDICES,
+    test_indices: tuple[int, ...] = TEST_INDICES,
+    verify_source_membership: bool = True,
 ) -> dict[str, int]:
     output_root = destination / "undistorted"
     output_root.mkdir(parents=True, exist_ok=True)
     expected = {
-        "train": split_image_names(TRAIN_INDICES),
-        "test": split_image_names(TEST_INDICES),
+        "train": split_image_names(train_indices),
+        "test": split_image_names(test_indices),
     }
     for split, indices in (
-        ("train", TRAIN_INDICES),
-        ("test", TEST_INDICES),
+        ("train", train_indices),
+        ("test", test_indices),
     ):
-        source_payload = read_json(
-            source_scene / f"transforms_{split}.json"
-        )
-        source_names = {
-            f"{Path(str(frame.get('file_path', ''))).stem}.png"
-            for frame in source_payload.get("frames", [])
-        }
-        if source_names != expected[split]:
-            raise ValueError(
-                f"Source {split} membership changed: "
-                f"missing={sorted(expected[split] - source_names)}, "
-                f"unexpected={sorted(source_names - expected[split])}"
+        if verify_source_membership:
+            source_payload = read_json(
+                source_scene / f"transforms_{split}.json"
             )
+            source_names = {
+                f"{Path(str(frame.get('file_path', ''))).stem}.png"
+                for frame in source_payload.get("frames", [])
+            }
+            if source_names != expected[split]:
+                raise ValueError(
+                    f"Source {split} membership changed: "
+                    f"missing={sorted(expected[split] - source_names)}, "
+                    f"unexpected={sorted(source_names - expected[split])}"
+                )
         payload = {
             "schema_version": 1,
             "purpose": "colmap_camera_split_membership",
@@ -380,16 +468,20 @@ def write_sugar_splits(
             json.dumps(payload, indent=2) + "\n", encoding="utf-8"
         )
     return {
-        "train_count": len(TRAIN_INDICES),
-        "test_count": len(TEST_INDICES),
+        "train_count": len(train_indices),
+        "test_count": len(test_indices),
     }
 
 
-def validate_sugar_splits(scene: Path) -> list[str]:
+def validate_sugar_splits(
+    scene: Path,
+    train_indices: tuple[int, ...] = TRAIN_INDICES,
+    test_indices: tuple[int, ...] = TEST_INDICES,
+) -> list[str]:
     errors: list[str] = []
     expected = {
-        "train": split_image_names(TRAIN_INDICES),
-        "test": split_image_names(TEST_INDICES),
+        "train": split_image_names(train_indices),
+        "test": split_image_names(test_indices),
     }
     actual: dict[str, set[str]] = {}
     for split in ("train", "test"):
@@ -423,46 +515,39 @@ def validate_sugar_splits(scene: Path) -> list[str]:
     if actual.get("train", set()) | actual.get("test", set()) != (
         expected["train"] | expected["test"]
     ):
-        errors.append("train/test membership does not cover all 180 cameras")
+        errors.append("train/test membership does not cover all cameras")
     return errors
 
 
 def validate_sugar_scene(
-    scene: Path, source_scene: Path
+    scene: Path,
+    source_scene: Path,
+    indices: tuple[int, ...] = tuple(range(VIEW_COUNT)),
+    train_indices: tuple[int, ...] = TRAIN_INDICES,
+    test_indices: tuple[int, ...] = TEST_INDICES,
+    protocol: str = SUGAR_PROTOCOL,
+    require_train_only_tracks: bool = False,
 ) -> dict[str, Any]:
     errors: list[str] = []
     manifest_path = scene / "masked_colmap_manifest.json"
     if not manifest_path.is_file():
         raise FileNotFoundError(manifest_path)
     manifest = read_json(manifest_path)
-    if manifest.get("protocol") != SUGAR_PROTOCOL:
+    if manifest.get("protocol") != protocol:
         errors.append("incorrect SuGaR protocol")
-    if (
-        Path(str(manifest.get("source_scene", ""))).resolve()
-        != source_scene.resolve()
-    ):
-        errors.append("source scene path does not match")
-    source_transforms = source_scene / "transforms.json"
-    if not source_transforms.is_file():
-        errors.append("source transforms.json is missing")
-    elif manifest.get("source_transforms_sha256") != sha256_file(
-        source_transforms
-    ):
-        errors.append(
-            "source transforms.json changed after SuGaR preparation"
-        )
+    errors.extend(validate_source_manifest(manifest, source_scene))
 
     image_dir = scene / "undistorted" / "images"
     mask_dir = scene / "undistorted" / "masks"
     sparse_dir = scene / "undistorted" / "sparse" / "0"
-    expected_pngs = numbered_names("images", "png")
+    expected_pngs = {f"img{index + 1:03d}.png" for index in indices}
     actual_images = {path.name for path in image_dir.glob("*.png")}
     actual_masks = {path.name for path in mask_dir.glob("*.png")}
     if actual_images != expected_pngs:
         errors.append("SuGaR RGBA image set is incomplete")
     if actual_masks != expected_pngs:
         errors.append("SuGaR mask set is incomplete")
-    errors.extend(validate_sugar_splits(scene))
+    errors.extend(validate_sugar_splits(scene, train_indices, test_indices))
     for name in (
         "cameras.txt",
         "images.txt",
@@ -475,7 +560,7 @@ def validate_sugar_scene(
         if not path.is_file() or path.stat().st_size == 0:
             errors.append(f"missing or empty sparse/0/{name}")
 
-    expected_frames = effective_sugar_frames(source_scene)
+    expected_frames = effective_sugar_frames(source_scene, indices)
     if not errors:
         camera = parse_colmap_camera(sparse_dir / "cameras.txt")
         focal = sugar_focal_length()
@@ -499,9 +584,9 @@ def validate_sugar_scene(
             errors.append("COLMAP intrinsics changed")
 
         colmap_poses = parse_colmap_images(sparse_dir / "images.txt")
-        if len(colmap_poses) != VIEW_COUNT:
+        if len(colmap_poses) != len(indices):
             errors.append(
-                f"registered camera count {len(colmap_poses)} != {VIEW_COUNT}"
+                f"registered camera count {len(colmap_poses)} != {len(indices)}"
             )
         maximum_pose_error = 0.0
         for jpg_name, expected_pose in expected_frames:
@@ -526,6 +611,21 @@ def validate_sugar_scene(
         points, reprojection_errors = parse_colmap_points(
             sparse_dir / "points3D.txt"
         )
+        if require_train_only_tracks:
+            image_ids = parse_colmap_image_ids(sparse_dir / "images.txt")
+            held_out_ids = {
+                image_ids[f"img{index + 1:03d}.png"]
+                for index in test_indices
+                if f"img{index + 1:03d}.png" in image_ids
+            }
+            leaked_ids = point_track_image_ids(
+                sparse_dir / "points3D.txt"
+            ) & held_out_ids
+            if leaked_ids:
+                errors.append(
+                    "held-out cameras appear in sparse-point tracks: "
+                    f"{sorted(leaked_ids)}"
+                )
         if not len(points):
             errors.append("COLMAP did not triangulate any sparse points")
         elif (
@@ -560,8 +660,8 @@ def validate_sugar_scene(
                     "of sparse points"
                 )
 
-        for index in range(1, VIEW_COUNT + 1):
-            basename = f"img{index:03d}.png"
+        for index in indices:
+            basename = f"img{index + 1:03d}.png"
             with (
                 Image.open(image_dir / basename) as rgba_handle,
                 Image.open(mask_dir / basename) as mask_handle,
@@ -594,6 +694,8 @@ def validate_sugar_scene(
             "SuGaR output contains forbidden ground-truth geometry "
             "or inverse depth"
         )
+    if any(path.is_symlink() for path in scene.rglob("*")):
+        errors.append("SuGaR output contains symbolic links")
     if errors:
         raise RuntimeError(
             f"SuGaR validation failed for {scene}:\n"
@@ -601,7 +703,7 @@ def validate_sugar_scene(
         )
     return {
         "scene": scene.name,
-        "view_count": VIEW_COUNT,
+        "view_count": len(indices),
         "sparse_point_count": int(len(points)),
         "mean_reprojection_error": float(np.mean(reprojection_errors)),
         "maximum_camera_matrix_error": maximum_pose_error,
@@ -612,13 +714,27 @@ def prepare_sugar_record(
     args: argparse.Namespace,
     record: dict[str, Any],
     gpu_pool: queue.Queue[int],
+    indices: tuple[int, ...] = tuple(range(VIEW_COUNT)),
+    train_indices: tuple[int, ...] = TRAIN_INDICES,
+    test_indices: tuple[int, ...] = TEST_INDICES,
+    protocol: str = SUGAR_PROTOCOL,
+    train_only_sparse: bool = False,
+    validate_source_pixels: bool = True,
 ) -> dict[str, Any]:
     name = str(record["name"])
     source_scene = args.input_root.absolute() / name
     target = args.output_root.absolute() / name
-    validate_scene(source_scene)
+    validate_scene(source_scene, validate_pixels=validate_source_pixels)
     if target.exists() and not args.overwrite:
-        result = validate_sugar_scene(target, source_scene)
+        result = validate_sugar_scene(
+            target,
+            source_scene,
+            indices,
+            train_indices,
+            test_indices,
+            protocol,
+            train_only_sparse,
+        )
         print(f"[skip-sugar] {name}: existing scene is valid", flush=True)
         return result
 
@@ -638,10 +754,31 @@ def prepare_sugar_record(
         print(
             f"[prepare-sugar] {name} on physical GPU {gpu}", flush=True
         )
-        frames = effective_sugar_frames(source_scene)
-        write_seed_colmap_model(seed_model, frames)
+        frames = effective_sugar_frames(source_scene, indices)
+        frame_by_index = {
+            index: frame for index, frame in zip(indices, frames)
+        }
+        sparse_frames = (
+            [frame_by_index[index] for index in train_indices]
+            if train_only_sparse
+            else frames
+        )
+        held_out_frames = (
+            [frame_by_index[index] for index in test_indices]
+            if train_only_sparse
+            else []
+        )
+        colmap_images = source_scene / "image"
+        if train_only_sparse:
+            colmap_images = workspace / "train_images"
+            colmap_images.mkdir(parents=True)
+            for image_name, _ in sparse_frames:
+                shutil.copy2(
+                    source_scene / "image" / image_name,
+                    colmap_images / image_name,
+                )
         colmap_masks.mkdir(parents=True)
-        for image_name, _ in frames:
+        for image_name, _ in sparse_frames:
             source_mask = (
                 source_scene / "mask" / f"{Path(image_name).stem}.png"
             )
@@ -668,7 +805,7 @@ def prepare_sugar_record(
                     "--database_path",
                     str(database),
                     "--image_path",
-                    str(source_scene / "image"),
+                    str(colmap_images),
                     "--ImageReader.mask_path",
                     str(colmap_masks),
                     "--ImageReader.camera_model",
@@ -715,6 +852,17 @@ def prepare_sugar_record(
                 environment,
             ),
         ]
+        database_image_ids = colmap_database_image_ids(database)
+        expected_sparse_names = {name for name, _ in sparse_frames}
+        if set(database_image_ids) != expected_sparse_names:
+            raise RuntimeError(
+                "COLMAP database image membership changed: "
+                f"missing={sorted(expected_sparse_names - set(database_image_ids))}, "
+                f"unexpected={sorted(set(database_image_ids) - expected_sparse_names)}"
+            )
+        write_seed_colmap_model(
+            seed_model, sparse_frames, database_image_ids
+        )
         triangulated_model.mkdir(parents=True)
         stages.append(
             run_colmap_stage(
@@ -725,7 +873,7 @@ def prepare_sugar_record(
                     "--database_path",
                     str(database),
                     "--image_path",
-                    str(source_scene / "image"),
+                    str(colmap_images),
                     "--input_path",
                     str(seed_model),
                     "--output_path",
@@ -766,6 +914,11 @@ def prepare_sugar_record(
             )
         )
 
+        if held_out_frames:
+            append_unobserved_colmap_images(
+                triangulated_text / "images.txt", held_out_frames
+            )
+
         points, reprojection_errors = parse_colmap_points(
             triangulated_text / "points3D.txt"
         )
@@ -778,8 +931,14 @@ def prepare_sugar_record(
                 "COLMAP produced non-finite reprojection errors"
             )
         bbox = robust_sparse_bbox(points)
-        image_info = write_sugar_images(source_scene, temporary)
-        split_info = write_sugar_splits(source_scene, temporary)
+        image_info = write_sugar_images(source_scene, temporary, indices)
+        split_info = write_sugar_splits(
+            source_scene,
+            temporary,
+            train_indices,
+            test_indices,
+            verify_source_membership=not train_only_sparse,
+        )
         sparse_output = temporary / "undistorted" / "sparse" / "0"
         sparse_output.mkdir(parents=True)
         shutil.copy2(
@@ -794,9 +953,9 @@ def prepare_sugar_record(
             triangulated_text / "images.txt",
             sparse_output / "images.txt",
         )
-        if changed != VIEW_COUNT:
+        if changed != len(indices):
             raise RuntimeError(
-                f"Expected to rewrite {VIEW_COUNT} COLMAP image names, "
+                f"Expected to rewrite {len(indices)} COLMAP image names, "
                 f"changed {changed}"
             )
 
@@ -828,13 +987,8 @@ def prepare_sugar_record(
             )
 
         manifest = {
-            "version": 1,
-            "protocol": SUGAR_PROTOCOL,
-            "scene": name,
-            "source_scene": str(source_scene),
-            "source_transforms_sha256": sha256_file(
-                source_scene / "transforms.json"
-            ),
+            **source_manifest_fields(source_scene),
+            "protocol": protocol,
             "camera": {
                 "source": (
                     "validated effective GShell c2w derived from "
@@ -850,13 +1004,18 @@ def prepare_sugar_record(
                 "focal_y": focal,
                 "principal_x": RESOLUTION[0] / 2.0,
                 "principal_y": RESOLUTION[1] / 2.0,
-                "view_count": VIEW_COUNT,
+                "view_count": len(indices),
                 "poses_are_fixed": True,
             },
             "images": image_info,
             "sparse_points": {
                 "method": (
-                    "masked_sift_exhaustive_matching_fixed_pose_triangulation"
+                    "masked_sift_exhaustive_matching_fixed_pose_"
+                    + (
+                        "train_only_triangulation"
+                        if train_only_sparse
+                        else "triangulation"
+                    )
                 ),
                 "count": int(len(points)),
                 "mean_reprojection_error": float(
@@ -875,6 +1034,7 @@ def prepare_sugar_record(
                 "uses_blender_camera_transforms": True,
                 "uses_inverse_depth": False,
                 "uses_ground_truth_mesh": False,
+                "sparse_points_use_training_images_only": train_only_sparse,
             },
             "colmap_stages": stages,
             "elapsed_seconds": time.time() - started,
@@ -883,7 +1043,15 @@ def prepare_sugar_record(
             json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
         )
         shutil.rmtree(workspace)
-        result = validate_sugar_scene(temporary, source_scene)
+        result = validate_sugar_scene(
+            temporary,
+            source_scene,
+            indices,
+            train_indices,
+            test_indices,
+            protocol,
+            train_only_sparse,
+        )
         install_transactionally(temporary, target, args.overwrite)
         print(
             f"[ok-sugar] {name}: {result['sparse_point_count']} "
@@ -942,5 +1110,79 @@ def run_validate_sugar(args: argparse.Namespace) -> None:
         result = validate_sugar_scene(
             args.output_root.absolute() / name,
             args.input_root.absolute() / name,
+        )
+        print(json.dumps(result, sort_keys=True))
+
+
+def prepare_sugar_turntable_record(
+    args: argparse.Namespace,
+    record: dict[str, Any],
+    gpu_pool: queue.Queue[int],
+) -> dict[str, Any]:
+    return prepare_sugar_record(
+        args,
+        record,
+        gpu_pool,
+        TURNTABLE_INDICES,
+        TURNTABLE_TRAIN_INDICES,
+        TURNTABLE_TEST_INDICES,
+        SUGAR_TURNTABLE_PROTOCOL,
+        True,
+        False,
+    )
+
+
+def run_prepare_sugar_turntable(args: argparse.Namespace) -> None:
+    records = selected_records(
+        load_manifest(args.manifest.resolve(), args.source_root.resolve()),
+        args.shoe,
+        args.all,
+    )
+    gpus = parse_gpus(args)
+    gpu_pool: queue.Queue[int] = queue.Queue()
+    for gpu in gpus:
+        gpu_pool.put(gpu)
+    failures: list[str] = []
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=len(gpus)
+    ) as executor:
+        futures = {
+            executor.submit(
+                prepare_sugar_turntable_record, args, record, gpu_pool
+            ): str(record["name"])
+            for record in records
+        }
+        for future in concurrent.futures.as_completed(futures):
+            name = futures[future]
+            try:
+                future.result()
+            except Exception as exc:  # noqa: BLE001
+                failures.append(f"{name}: {type(exc).__name__}: {exc}")
+                print(
+                    f"[failed-sugar-turntable] {failures[-1]}",
+                    flush=True,
+                )
+    if failures:
+        raise RuntimeError(
+            "SuGaR turntable preparation failures:\n" + "\n".join(failures)
+        )
+
+
+def run_validate_sugar_turntable(args: argparse.Namespace) -> None:
+    records = selected_records(
+        load_manifest(args.manifest.resolve(), args.source_root.resolve()),
+        args.shoe,
+        args.all,
+    )
+    for record in records:
+        name = str(record["name"])
+        result = validate_sugar_scene(
+            args.output_root.absolute() / name,
+            args.input_root.absolute() / name,
+            TURNTABLE_INDICES,
+            TURNTABLE_TRAIN_INDICES,
+            TURNTABLE_TEST_INDICES,
+            SUGAR_TURNTABLE_PROTOCOL,
+            True,
         )
         print(json.dumps(result, sort_keys=True))

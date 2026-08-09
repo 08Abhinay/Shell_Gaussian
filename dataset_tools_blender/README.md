@@ -35,19 +35,19 @@ Default input:
 Default output:
 
 ```text
-/storage/Abhinay/home_ab5298/dataset/datasets/processed/golden_set_evaluation_blender
+/storage/Abhinay/home_ab5298/dataset/datasets/processed/gshell/golden_set_evaluation
 ```
 
 Optional derived SuGaR output:
 
 ```text
-/storage/Abhinay/home_ab5298/dataset/datasets/processed/golden_set_evaluation_blender_sugar
+/storage/Abhinay/home_ab5298/dataset/datasets/processed/sugar/golden_set_evaluation
 ```
 
 Optional derived NeuralUDF output:
 
 ```text
-/storage/Abhinay/home_ab5298/dataset/datasets/processed/golden_set_evaluation_neuraludf
+/storage/Abhinay/home_ab5298/dataset/datasets/processed/neuraludf/golden_set_evaluation
 ```
 
 Each published shoe contains one shared copy of every asset:
@@ -325,13 +325,69 @@ $PYTHON $PIPELINE validate-neus2 --shoe adidas_yeezy_boost_350_v2_zyon
 The default output root is:
 
 ```text
-/storage/Abhinay/home_ab5298/dataset/datasets/processed/golden_set_evaluation_neus2
+/storage/Abhinay/home_ab5298/dataset/datasets/processed/neus2/golden_set_evaluation
 ```
 
 Preparation is transactional. An existing valid scene is checked and skipped;
 `--overwrite` is required to replace it. Validation checks all 180 alpha
 masks, both disjoint splits, exact camera matrices, rigid rotations, unit
 rays, intrinsics, and the visual-hull normalization.
+
+### NeuS2 Turntable-Only Export
+
+The turntable-only export matches the established `neus2_shoes` protocol. It
+uses only the first, level camera ring from the 180-view Blender dataset:
+
+```text
+<shoe>/
+  images/img001.png ... img036.png
+  transform.json
+  transform_train.json
+  transform_test.json
+  conversion_manifest.json
+```
+
+`transform.json` contains all 36 level views. Training uses 30 views, while
+source indices `0, 6, 12, 18, 24, 30` (images `001, 007, 013, 019, 025, 031`)
+form the six-view test set. The visual-hull normalization uses only the 30
+training masks. No elevated views, inverse depth, or reference mesh influence
+the prepared turntable training scene.
+
+Prepare or validate one shoe:
+
+```bash
+$PYTHON $PIPELINE prepare-neus2-turntable --shoe air_jordan_1
+$PYTHON $PIPELINE validate-neus2-turntable --shoe air_jordan_1
+```
+
+Prepare and validate the five paper shoes:
+
+```bash
+bash /storage/Abhinay/Shell_Gaussian/dataset_tools_blender/neus2/prepare_turntable_five.sh
+```
+
+The default output root is:
+
+```text
+/storage/Abhinay/home_ab5298/dataset/datasets/processed/neus2/golden_set_evaluation_turntable
+```
+
+Derived NeuS2 and SuGaR manifests use portable source identity fields rather
+than absolute filesystem paths:
+
+```json
+{
+  "version": 2,
+  "source_dataset": "gshell/golden_set_evaluation",
+  "scene": "air_jordan_1",
+  "source_transforms_sha256": "..."
+}
+```
+
+The scene name and transforms hash identify the exact source. This avoids
+false validation failures when the same dataset is reached through
+`/storage/Abhinay/home_ab5298` or its resolved `/home/ab5298` path.
+
 Corrected probe outputs use the
 `golden_set_evaluation_blender_masked_white_probe_dtu` and
 `golden_set_evaluation_blender_masked_white_probe_garment` roots. Older output
@@ -344,7 +400,7 @@ After the Air Jordan and Birkenstock scenes validate, run the existing Polycam
 trainer without changing baseline code:
 
 ```bash
-GSHELL_DATASET_ROOT=/storage/Abhinay/home_ab5298/dataset/datasets/processed/golden_set_evaluation_blender \
+GSHELL_DATASET_ROOT=/storage/Abhinay/home_ab5298/dataset/datasets/processed/gshell/golden_set_evaluation \
 GSHELL_CONFIG=/storage/Abhinay/Shell_Gaussian/baselines/GShell/configs/shoes_mc_normfix_512_768_depth.json \
 GSHELL_CONDA_ENV=/storage/Abhinay/home_ab5298/anaconda3/envs/shellgaussianenv \
 GSHELL_OUTPUT_ROOT=/storage/Abhinay/Shell_Gaussian/baselines/GShell/output/golden_set_evaluation_blender_polycam_smoke \
@@ -397,3 +453,49 @@ loader. Their zero-valued background pages are allocated as sparse filesystem
 holes, reducing physical disk use without compression, quantization, or a
 loader change. Use sparse-aware copy tools (for example, `cp --sparse=always`)
 when relocating the generated dataset.
+
+## Shared Turntable Exports
+
+The G-Shell, NeuralUDF, NeuS2, and SuGaR turntable datasets share the first
+level camera ring. Images `001, 007, 013, 019, 025, 031` are held out; the
+remaining 30 images are used for training. No elevated image is included.
+
+The centralized commands for the three additional baseline formats are:
+
+```bash
+$PYTHON $PIPELINE prepare-gshell-turntable --shoe air_jordan_1
+$PYTHON $PIPELINE validate-gshell-turntable --shoe air_jordan_1
+
+$PYTHON $PIPELINE prepare-neuraludf-turntable --shoe air_jordan_1
+$PYTHON $PIPELINE validate-neuraludf-turntable --shoe air_jordan_1
+
+$PYTHON $PIPELINE prepare-sugar-turntable --shoe air_jordan_1 --gpu 2
+$PYTHON $PIPELINE validate-sugar-turntable --shoe air_jordan_1
+```
+
+G-Shell retains physical copies of first-surface inverse depth, but omits the
+reference mesh. NeuralUDF stores only its 30 author-compatible training assets
+and recomputes normalization from those masks. SuGaR exports all 36 cameras,
+but feature matching and sparse triangulation use only the 30 training images;
+the six held-out cameras have no sparse-point observations.
+
+Prepare the five paper shoes for all three formats in one tmux session:
+
+```bash
+bash /storage/Abhinay/Shell_Gaussian/dataset_tools_blender/turntable/prepare_other_baselines_five.sh \
+  --gpus 2,3 \
+  --session turntable_other_baselines_five
+```
+
+The three output roots are:
+
+```text
+/storage/Abhinay/home_ab5298/dataset/datasets/processed/gshell/golden_set_evaluation_turntable
+/storage/Abhinay/home_ab5298/dataset/datasets/processed/neuraludf/golden_set_evaluation_turntable
+/storage/Abhinay/home_ab5298/dataset/datasets/processed/sugar/golden_set_evaluation_turntable
+```
+
+The launcher requires exactly two GPUs with at least 20 GiB free, publishes
+each scene transactionally, skips existing valid scenes, and records one batch
+log plus separate CPU and SuGaR worker logs. Dataset manifests contain portable
+source identifiers and hashes rather than resolved `/home/ab5298` paths.

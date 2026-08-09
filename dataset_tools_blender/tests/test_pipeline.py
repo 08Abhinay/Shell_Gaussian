@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,12 +11,64 @@ import numpy as np
 
 from baselines.NeuralUDF.dataset.dataset import load_K_Rt_from_K_P
 from dataset_tools_blender import pipeline
+from dataset_tools_blender.gshell import pipeline as gshell_pipeline
 from dataset_tools_blender.neuraludf import pipeline as neuraludf_pipeline
 from dataset_tools_blender.neus2 import pipeline as neus2_pipeline
 from dataset_tools_blender.sugar import pipeline as sugar_pipeline
 
 
 class DirectBlenderPipelineTest(unittest.TestCase):
+    def test_shared_turntable_split_is_36_views_with_six_held_out(self) -> None:
+        self.assertEqual(pipeline.TURNTABLE_INDICES, tuple(range(36)))
+        self.assertEqual(
+            pipeline.TURNTABLE_TEST_INDICES,
+            (0, 6, 12, 18, 24, 30),
+        )
+        self.assertEqual(len(pipeline.TURNTABLE_TRAIN_INDICES), 30)
+        self.assertFalse(
+            set(pipeline.TURNTABLE_TRAIN_INDICES)
+            & set(pipeline.TURNTABLE_TEST_INDICES)
+        )
+        self.assertEqual(
+            set(pipeline.TURNTABLE_TRAIN_INDICES)
+            | set(pipeline.TURNTABLE_TEST_INDICES),
+            set(pipeline.TURNTABLE_INDICES),
+        )
+
+    def test_derived_manifest_identity_is_portable(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source_scene = Path(temporary) / "air_jordan_1"
+            source_scene.mkdir()
+            (source_scene / "transforms.json").write_text(
+                '{"frames": []}\n', encoding="utf-8"
+            )
+            manifest = pipeline.source_manifest_fields(source_scene)
+
+        self.assertEqual(manifest["version"], 2)
+        self.assertEqual(
+            manifest["source_dataset"],
+            "gshell/golden_set_evaluation",
+        )
+        self.assertEqual(manifest["scene"], "air_jordan_1")
+        self.assertNotIn("source_scene", manifest)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            source_scene = Path(temporary) / "air_jordan_1"
+            source_scene.mkdir()
+            (source_scene / "transforms.json").write_text(
+                '{"frames": []}\n', encoding="utf-8"
+            )
+            current = pipeline.source_manifest_fields(source_scene)
+            self.assertEqual(
+                pipeline.validate_source_manifest(current, source_scene),
+                [],
+            )
+            current["source_scene"] = "/machine-specific/path"
+            self.assertIn(
+                "manifest contains a deprecated absolute source path",
+                pipeline.validate_source_manifest(current, source_scene),
+            )
+
     def test_manifest_covers_every_external_glb(self) -> None:
         records = pipeline.load_manifest(
             pipeline.DEFAULT_MANIFEST,
@@ -60,7 +113,7 @@ class DirectBlenderPipelineTest(unittest.TestCase):
 
     def test_orbit_matches_processed_turntable_reference(self) -> None:
         root = Path(
-            "/storage/Abhinay/home_ab5298/dataset/datasets/processed/gshell_shoes_size_metadata"
+            "/storage/Abhinay/home_ab5298/dataset/datasets/processed/gshell/shoes_size_metadata"
         )
         reference_json = next(path for path in sorted(root.glob("*/transforms.json")))
         frames = json.loads(reference_json.read_text(encoding="utf-8"))["frames"][:36]
@@ -112,6 +165,59 @@ class DirectBlenderPipelineTest(unittest.TestCase):
         for name, expected in frames:
             np.testing.assert_allclose(poses[name], expected, atol=1e-12)
 
+    def test_seed_colmap_model_uses_database_image_ids(self) -> None:
+        frames = [
+            ("img002.jpg", pipeline.expected_frame(1)[1]),
+            ("img003.jpg", pipeline.expected_frame(2)[1]),
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            database = root / "database.db"
+            with sqlite3.connect(database) as connection:
+                connection.execute(
+                    "CREATE TABLE images(image_id INTEGER, name TEXT)"
+                )
+                connection.executemany(
+                    "INSERT INTO images VALUES (?, ?)",
+                    [(17, "img002.jpg"), (4, "img003.jpg")],
+                )
+            image_ids = sugar_pipeline.colmap_database_image_ids(database)
+            model = root / "model"
+            sugar_pipeline.write_seed_colmap_model(model, frames, image_ids)
+            written_ids = sugar_pipeline.parse_colmap_image_ids(
+                model / "images.txt"
+            )
+        self.assertEqual(written_ids, image_ids)
+
+    def test_sugar_turntable_test_cameras_have_no_sparse_tracks(self) -> None:
+        train_frames = [
+            (f"img{index + 1:03d}.jpg", pipeline.expected_frame(index)[1])
+            for index in pipeline.TURNTABLE_TRAIN_INDICES
+        ]
+        test_frames = [
+            (f"img{index + 1:03d}.jpg", pipeline.expected_frame(index)[1])
+            for index in pipeline.TURNTABLE_TEST_INDICES
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            model = Path(temporary) / "model"
+            sugar_pipeline.write_seed_colmap_model(model, train_frames)
+            sugar_pipeline.append_unobserved_colmap_images(
+                model / "images.txt", test_frames
+            )
+            poses = sugar_pipeline.parse_colmap_images(model / "images.txt")
+            image_ids = sugar_pipeline.parse_colmap_image_ids(
+                model / "images.txt"
+            )
+            tracked_ids = sugar_pipeline.point_track_image_ids(
+                model / "points3D.txt"
+            )
+
+        self.assertEqual(len(poses), 36)
+        self.assertEqual(len(image_ids), 36)
+        self.assertFalse(tracked_ids)
+        for name, expected in [*train_frames, *test_frames]:
+            np.testing.assert_allclose(poses[name], expected, atol=1e-12)
+
     def test_sugar_split_preserves_exact_png_membership(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -153,6 +259,24 @@ class DirectBlenderPipelineTest(unittest.TestCase):
             self.assertEqual(source_name, f"img{source_index + 1:03d}.jpg")
             expected = pipeline.expected_frame(source_index)[1]
             np.testing.assert_allclose(actual, expected, atol=1e-7)
+
+    def test_neuraludf_turntable_uses_only_30_level_training_views(self) -> None:
+        scene = pipeline.DEFAULT_OUTPUT_ROOT / "air_jordan_1"
+        frames = neuraludf_pipeline.effective_neuraludf_turntable_frames(scene)
+        self.assertEqual(len(frames), 30)
+        for output_index, ((output_name, source_name, actual), source_index) in enumerate(
+            zip(frames, pipeline.TURNTABLE_TRAIN_INDICES)
+        ):
+            self.assertEqual(output_name, f"{output_index:03d}.png")
+            self.assertEqual(source_name, f"img{source_index + 1:03d}.jpg")
+            np.testing.assert_allclose(
+                actual,
+                pipeline.expected_frame(source_index)[1],
+                atol=1e-7,
+            )
+
+    def test_gshell_turntable_protocol_does_not_include_reference_mesh(self) -> None:
+        self.assertIn("turntable_36", gshell_pipeline.GSHELL_TURNTABLE_PROTOCOL)
 
     def test_neuraludf_camera_matrices_follow_idr_contract(self) -> None:
         effective = pipeline.expected_frame(17)[1]
@@ -272,6 +396,68 @@ class DirectBlenderPipelineTest(unittest.TestCase):
         nonuniform[1, 1] = 0.3
         with self.assertRaisesRegex(ValueError, "must be uniform"):
             neus2_pipeline.neus2_scale_offset(nonuniform)
+
+    def test_neus2_turntable_matches_the_existing_36_view_split(self) -> None:
+        self.assertEqual(
+            neus2_pipeline.TURNTABLE_INDICES,
+            tuple(range(36)),
+        )
+        self.assertEqual(
+            neus2_pipeline.TURNTABLE_TEST_INDICES,
+            (0, 6, 12, 18, 24, 30),
+        )
+        self.assertEqual(len(neus2_pipeline.TURNTABLE_TRAIN_INDICES), 30)
+        self.assertFalse(
+            set(neus2_pipeline.TURNTABLE_TRAIN_INDICES)
+            & set(neus2_pipeline.TURNTABLE_TEST_INDICES)
+        )
+
+        scene = pipeline.DEFAULT_OUTPUT_ROOT / "air_jordan_1"
+        frames = neus2_pipeline.effective_neus2_frames(scene)
+        scale = 2.5
+        offset = np.asarray([0.1, 0.2, 0.3], dtype=np.float64)
+        all_views = neus2_pipeline.neus2_transform_payload(
+            frames,
+            neus2_pipeline.TURNTABLE_INDICES,
+            scale,
+            offset,
+        )
+        train = neus2_pipeline.neus2_transform_payload(
+            frames,
+            neus2_pipeline.TURNTABLE_TRAIN_INDICES,
+            scale,
+            offset,
+        )
+        test = neus2_pipeline.neus2_transform_payload(
+            frames,
+            neus2_pipeline.TURNTABLE_TEST_INDICES,
+            scale,
+            offset,
+        )
+        self.assertEqual(len(all_views["frames"]), 36)
+        self.assertEqual(len(train["frames"]), 30)
+        self.assertEqual(len(test["frames"]), 6)
+        self.assertEqual(
+            [frame["file_path"] for frame in test["frames"]],
+            [
+                "images/img001.png",
+                "images/img007.png",
+                "images/img013.png",
+                "images/img019.png",
+                "images/img025.png",
+                "images/img031.png",
+            ],
+        )
+        train_indices = {
+            frame["source_view_index"] for frame in train["frames"]
+        }
+        test_indices = {
+            frame["source_view_index"] for frame in test["frames"]
+        }
+        self.assertEqual(
+            train_indices | test_indices,
+            set(neus2_pipeline.TURNTABLE_INDICES),
+        )
 
     def test_custom_shoe_configs_use_masked_white_contract(self) -> None:
         config_root = Path("baselines/NeuralUDF/confs")

@@ -11,6 +11,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from dataset_tools_blender.core import *  # noqa: F403
+from dataset_tools_blender.gshell import pipeline as gshell_pipeline
 from dataset_tools_blender.neuraludf import pipeline as neuraludf_pipeline
 from dataset_tools_blender.neuraludf.pipeline import (
     effective_neuraludf_frames,
@@ -218,6 +219,134 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=DEFAULT_NEUS2_OUTPUT_ROOT,  # noqa: F405
     )
+
+    prepare_neus2_turntable = commands.add_parser(
+        "prepare-neus2-turntable",
+        help="Create a 36-view NeuS2 turntable scene with a 30/6 split.",
+    )
+    add_common(prepare_neus2_turntable)
+    add_selection(prepare_neus2_turntable)
+    prepare_neus2_turntable.add_argument(
+        "--input-root", type=Path, default=DEFAULT_OUTPUT_ROOT  # noqa: F405
+    )
+    prepare_neus2_turntable.add_argument(
+        "--output-root",
+        type=Path,
+        default=neus2_pipeline.DEFAULT_NEUS2_TURNTABLE_OUTPUT_ROOT,
+    )
+    prepare_neus2_turntable.add_argument("--overwrite", action="store_true")
+
+    validate_neus2_turntable = commands.add_parser(
+        "validate-neus2-turntable",
+        help="Validate 36-view NeuS2 turntable scenes.",
+    )
+    add_common(validate_neus2_turntable)
+    add_selection(validate_neus2_turntable)
+    validate_neus2_turntable.add_argument(
+        "--input-root", type=Path, default=DEFAULT_OUTPUT_ROOT  # noqa: F405
+    )
+    validate_neus2_turntable.add_argument(
+        "--output-root",
+        type=Path,
+        default=neus2_pipeline.DEFAULT_NEUS2_TURNTABLE_OUTPUT_ROOT,
+    )
+
+    prepare_gshell_turntable = commands.add_parser(
+        "prepare-gshell-turntable",
+        help="Create a 36-view G-Shell turntable scene with a 30/6 split.",
+    )
+    add_common(prepare_gshell_turntable)
+    add_selection(prepare_gshell_turntable)
+    prepare_gshell_turntable.add_argument(
+        "--input-root", type=Path, default=DEFAULT_OUTPUT_ROOT  # noqa: F405
+    )
+    prepare_gshell_turntable.add_argument(
+        "--output-root",
+        type=Path,
+        default=DEFAULT_GSHELL_TURNTABLE_OUTPUT_ROOT,  # noqa: F405
+    )
+    prepare_gshell_turntable.add_argument("--overwrite", action="store_true")
+
+    validate_gshell_turntable = commands.add_parser(
+        "validate-gshell-turntable",
+        help="Validate 36-view G-Shell turntable scenes.",
+    )
+    add_common(validate_gshell_turntable)
+    add_selection(validate_gshell_turntable)
+    validate_gshell_turntable.add_argument(
+        "--input-root", type=Path, default=DEFAULT_OUTPUT_ROOT  # noqa: F405
+    )
+    validate_gshell_turntable.add_argument(
+        "--output-root",
+        type=Path,
+        default=DEFAULT_GSHELL_TURNTABLE_OUTPUT_ROOT,  # noqa: F405
+    )
+
+    prepare_neuraludf_turntable = commands.add_parser(
+        "prepare-neuraludf-turntable",
+        help="Create a 30-view NeuralUDF turntable training scene.",
+    )
+    add_common(prepare_neuraludf_turntable)
+    add_selection(prepare_neuraludf_turntable)
+    prepare_neuraludf_turntable.add_argument(
+        "--input-root", type=Path, default=DEFAULT_OUTPUT_ROOT  # noqa: F405
+    )
+    prepare_neuraludf_turntable.add_argument(
+        "--output-root",
+        type=Path,
+        default=DEFAULT_NEURALUDF_TURNTABLE_OUTPUT_ROOT,  # noqa: F405
+    )
+    prepare_neuraludf_turntable.add_argument("--overwrite", action="store_true")
+
+    validate_neuraludf_turntable = commands.add_parser(
+        "validate-neuraludf-turntable",
+        help="Validate NeuralUDF turntable training scenes.",
+    )
+    add_common(validate_neuraludf_turntable)
+    add_selection(validate_neuraludf_turntable)
+    validate_neuraludf_turntable.add_argument(
+        "--input-root", type=Path, default=DEFAULT_OUTPUT_ROOT  # noqa: F405
+    )
+    validate_neuraludf_turntable.add_argument(
+        "--output-root",
+        type=Path,
+        default=DEFAULT_NEURALUDF_TURNTABLE_OUTPUT_ROOT,  # noqa: F405
+    )
+
+    prepare_sugar_turntable = commands.add_parser(
+        "prepare-sugar-turntable",
+        help="Create a 36-view SuGaR turntable scene with train-only points.",
+    )
+    add_common(prepare_sugar_turntable)
+    add_selection(prepare_sugar_turntable)
+    add_gpus(prepare_sugar_turntable)
+    prepare_sugar_turntable.add_argument(
+        "--input-root", type=Path, default=DEFAULT_OUTPUT_ROOT  # noqa: F405
+    )
+    prepare_sugar_turntable.add_argument(
+        "--output-root",
+        type=Path,
+        default=DEFAULT_SUGAR_TURNTABLE_OUTPUT_ROOT,  # noqa: F405
+    )
+    prepare_sugar_turntable.add_argument(
+        "--colmap-bin", type=Path, default=DEFAULT_COLMAP  # noqa: F405
+    )
+    prepare_sugar_turntable.add_argument("--overwrite", action="store_true")
+
+    validate_sugar_turntable = commands.add_parser(
+        "validate-sugar-turntable",
+        help="Validate 36-view SuGaR turntable scenes.",
+    )
+    add_common(validate_sugar_turntable)
+    add_selection(validate_sugar_turntable)
+    validate_sugar_turntable.add_argument(
+        "--input-root", type=Path, default=DEFAULT_OUTPUT_ROOT  # noqa: F405
+    )
+    validate_sugar_turntable.add_argument(
+        "--output-root",
+        type=Path,
+        default=DEFAULT_SUGAR_TURNTABLE_OUTPUT_ROOT,  # noqa: F405
+    )
     return parser.parse_args()
 
 
@@ -233,6 +362,30 @@ def main() -> None:
         "validate-neuraludf": neuraludf_pipeline.run_validate_neuraludf,
         "prepare-neus2": neus2_pipeline.run_prepare_neus2,
         "validate-neus2": neus2_pipeline.run_validate_neus2,
+        "prepare-neus2-turntable": (
+            neus2_pipeline.run_prepare_neus2_turntable
+        ),
+        "validate-neus2-turntable": (
+            neus2_pipeline.run_validate_neus2_turntable
+        ),
+        "prepare-gshell-turntable": (
+            gshell_pipeline.run_prepare_gshell_turntable
+        ),
+        "validate-gshell-turntable": (
+            gshell_pipeline.run_validate_gshell_turntable
+        ),
+        "prepare-neuraludf-turntable": (
+            neuraludf_pipeline.run_prepare_neuraludf_turntable
+        ),
+        "validate-neuraludf-turntable": (
+            neuraludf_pipeline.run_validate_neuraludf_turntable
+        ),
+        "prepare-sugar-turntable": (
+            sugar_pipeline.run_prepare_sugar_turntable
+        ),
+        "validate-sugar-turntable": (
+            sugar_pipeline.run_validate_sugar_turntable
+        ),
     }
     handlers[args.command](args)
 

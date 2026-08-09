@@ -14,6 +14,7 @@ import numpy as np
 from PIL import Image, ImageFilter
 
 from ..core import (
+    DEFAULT_NEURALUDF_TURNTABLE_OUTPUT_ROOT,
     GSHELL_LOADER_LEFT_ROTATION,
     NEURALUDF_CAMERA_ATOL,
     NEURALUDF_GRID_RESOLUTION,
@@ -22,14 +23,23 @@ from ..core import (
     OPENGL_TO_OPENCV_CAMERA,
     RESOLUTION,
     TRAIN_INDICES,
+    TURNTABLE_TEST_INDICES,
+    TURNTABLE_TRAIN_INDICES,
     effective_to_colmap_w2c,
     install_transactionally,
     load_manifest,
     mask_array,
     read_json,
     selected_records,
+    source_manifest_fields,
     sugar_focal_length,
     validate_scene,
+    validate_source_manifest,
+)
+
+
+NEURALUDF_TURNTABLE_PROTOCOL = (
+    "exact_blender_cameras_turntable_30_train_neuraludf_v1"
 )
 
 
@@ -60,6 +70,34 @@ def effective_neuraludf_frames(
             raise ValueError(f"Invalid saved pose for {source_name}")
         effective_c2w = GSHELL_LOADER_LEFT_ROTATION @ saved_c2w
         result.append((f"{output_index:03d}.png", source_name, effective_c2w))
+    return result
+
+
+def effective_neuraludf_turntable_frames(
+    source_scene: Path,
+) -> list[tuple[str, str, np.ndarray]]:
+    payload = read_json(source_scene / "transforms.json")
+    source_frames = payload.get("frames", [])
+    if len(source_frames) <= max(TURNTABLE_TRAIN_INDICES):
+        raise ValueError("Source turntable ring is incomplete")
+    result: list[tuple[str, str, np.ndarray]] = []
+    for output_index, source_index in enumerate(TURNTABLE_TRAIN_INDICES):
+        frame = source_frames[source_index]
+        source_name = f"img{source_index + 1:03d}.jpg"
+        if frame.get("file_path") != f"image/{source_name}":
+            raise ValueError(
+                f"Unexpected NeuralUDF turntable frame: {frame.get('file_path')!r}"
+            )
+        saved_c2w = np.asarray(frame.get("transform_matrix"), dtype=np.float64)
+        if saved_c2w.shape != (4, 4) or not np.isfinite(saved_c2w).all():
+            raise ValueError(f"Invalid saved pose for {source_name}")
+        result.append(
+            (
+                f"{output_index:03d}.png",
+                source_name,
+                GSHELL_LOADER_LEFT_ROTATION @ saved_c2w,
+            )
+        )
     return result
 
 
@@ -186,8 +224,11 @@ def recover_neuraludf_pose(
     return np.linalg.inv(rigid_w2c)
 
 
-def write_neuraludf_scene(source_scene: Path, destination: Path) -> None:
-    frames = effective_neuraludf_frames(source_scene)
+def _write_neuraludf_assets(
+    source_scene: Path,
+    destination: Path,
+    frames: list[tuple[str, str, np.ndarray]],
+) -> None:
     scale_matrix = neuraludf_scale_matrix(source_scene, frames)
     image_dir = destination / "image"
     mask_dir = destination / "mask"
@@ -208,9 +249,64 @@ def write_neuraludf_scene(source_scene: Path, destination: Path) -> None:
     np.savez(destination / "cameras_sphere.npz", **camera_payload)
 
 
-def validate_neuraludf_scene(scene: Path, source_scene: Path) -> dict[str, Any]:
+def write_neuraludf_scene(source_scene: Path, destination: Path) -> None:
+    _write_neuraludf_assets(
+        source_scene,
+        destination,
+        effective_neuraludf_frames(source_scene),
+    )
+
+
+def write_neuraludf_turntable_scene(
+    source_scene: Path, destination: Path
+) -> None:
+    frames = effective_neuraludf_turntable_frames(source_scene)
+    _write_neuraludf_assets(source_scene, destination, frames)
+    manifest = {
+        **source_manifest_fields(source_scene),
+        "protocol": NEURALUDF_TURNTABLE_PROTOCOL,
+        "split": {
+            "all_count": len(TURNTABLE_TRAIN_INDICES)
+            + len(TURNTABLE_TEST_INDICES),
+            "train_count": len(TURNTABLE_TRAIN_INDICES),
+            "test_count": len(TURNTABLE_TEST_INDICES),
+            "train_source_indices": list(TURNTABLE_TRAIN_INDICES),
+            "test_source_indices": list(TURNTABLE_TEST_INDICES),
+            "held_out_assets_live_in": (
+                "gshell/golden_set_evaluation_turntable"
+            ),
+        },
+        "normalization": {
+            "source": "visual_hull_from_30_turntable_training_masks",
+            "uses_held_out_masks": False,
+        },
+        "training_contract": {
+            "uses_rgb": True,
+            "uses_masks": True,
+            "uses_exact_blender_cameras": True,
+            "uses_only_level_turntable_views": True,
+            "uses_inverse_depth": False,
+            "uses_ground_truth_mesh": False,
+        },
+    }
+    (destination / "turntable_manifest.json").write_text(
+        json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+def validate_neuraludf_scene(
+    scene: Path,
+    source_scene: Path,
+    frames_override: list[tuple[str, str, np.ndarray]] | None = None,
+    manifest_protocol: str | None = None,
+) -> dict[str, Any]:
     errors: list[str] = []
-    expected_names = {f"{index:03d}.png" for index in range(len(TRAIN_INDICES))}
+    frames = (
+        frames_override
+        if frames_override is not None
+        else effective_neuraludf_frames(source_scene)
+    )
+    expected_names = {f"{index:03d}.png" for index in range(len(frames))}
     image_dir = scene / "image"
     mask_dir = scene / "mask"
     actual_images = {path.name for path in image_dir.glob("*.png")}
@@ -224,10 +320,20 @@ def validate_neuraludf_scene(scene: Path, source_scene: Path) -> dict[str, Any]:
         errors.append("missing cameras_sphere.npz")
     if (scene / "reference_mesh.ply").exists() or (scene / "invdepth").exists():
         errors.append("NeuralUDF output contains forbidden ground-truth geometry or inverse depth")
+    if any(path.is_symlink() for path in scene.rglob("*")):
+        errors.append("NeuralUDF output contains symbolic links")
+    if manifest_protocol is not None:
+        manifest_path = scene / "turntable_manifest.json"
+        if not manifest_path.is_file():
+            errors.append("missing turntable_manifest.json")
+        else:
+            manifest = read_json(manifest_path)
+            if manifest.get("protocol") != manifest_protocol:
+                errors.append("incorrect NeuralUDF turntable protocol")
+            errors.extend(validate_source_manifest(manifest, source_scene))
     if errors:
         raise RuntimeError(f"NeuralUDF validation failed for {scene}:\n" + "\n".join(errors))
 
-    frames = effective_neuraludf_frames(source_scene)
     expected_scale = neuraludf_scale_matrix(source_scene, frames).astype(np.float32)
     matrix_names = (
         "camera_mat",
@@ -359,6 +465,17 @@ def validate_neuraludf_scene(scene: Path, source_scene: Path) -> dict[str, Any]:
     }
 
 
+def validate_neuraludf_turntable_scene(
+    scene: Path, source_scene: Path
+) -> dict[str, Any]:
+    return validate_neuraludf_scene(
+        scene,
+        source_scene,
+        effective_neuraludf_turntable_frames(source_scene),
+        NEURALUDF_TURNTABLE_PROTOCOL,
+    )
+
+
 def prepare_neuraludf_record(
     args: argparse.Namespace, record: dict[str, Any]
 ) -> dict[str, Any]:
@@ -419,5 +536,76 @@ def run_validate_neuraludf(args: argparse.Namespace) -> None:
         result = validate_neuraludf_scene(
             args.output_root.resolve() / name,
             args.input_root.resolve() / name,
+        )
+        print(json.dumps(result, sort_keys=True))
+
+
+def prepare_neuraludf_turntable_record(
+    args: argparse.Namespace, record: dict[str, Any]
+) -> dict[str, Any]:
+    name = str(record["name"])
+    source_scene = args.input_root.absolute() / name
+    target = args.output_root.absolute() / name
+    validate_scene(source_scene, validate_pixels=False)
+    if target.exists() and not args.overwrite:
+        result = validate_neuraludf_turntable_scene(target, source_scene)
+        print(
+            f"[skip-neuraludf-turntable] {name}: existing scene is valid",
+            flush=True,
+        )
+        return result
+
+    args.output_root.mkdir(parents=True, exist_ok=True)
+    temporary = Path(
+        tempfile.mkdtemp(prefix=f".{name}.tmp-", dir=args.output_root.absolute())
+    )
+    try:
+        print(f"[prepare-neuraludf-turntable] {name}", flush=True)
+        write_neuraludf_turntable_scene(source_scene, temporary)
+        result = validate_neuraludf_turntable_scene(temporary, source_scene)
+        install_transactionally(temporary, target, args.overwrite)
+        print(
+            f"[ok-neuraludf-turntable] {name}: "
+            f"{result['train_count']} training views",
+            flush=True,
+        )
+        return result
+    except Exception:
+        shutil.rmtree(temporary, ignore_errors=True)
+        raise
+
+
+def run_prepare_neuraludf_turntable(args: argparse.Namespace) -> None:
+    records = selected_records(
+        load_manifest(args.manifest.resolve(), args.source_root.resolve()),
+        args.shoe,
+        args.all,
+    )
+    failures: list[str] = []
+    for record in records:
+        try:
+            prepare_neuraludf_turntable_record(args, record)
+        except Exception as exc:  # noqa: BLE001
+            failures.append(
+                f"{record['name']}: {type(exc).__name__}: {exc}"
+            )
+    if failures:
+        raise RuntimeError(
+            "NeuralUDF turntable preparation failures:\n"
+            + "\n".join(failures)
+        )
+
+
+def run_validate_neuraludf_turntable(args: argparse.Namespace) -> None:
+    records = selected_records(
+        load_manifest(args.manifest.resolve(), args.source_root.resolve()),
+        args.shoe,
+        args.all,
+    )
+    for record in records:
+        name = str(record["name"])
+        result = validate_neuraludf_turntable_scene(
+            args.output_root.absolute() / name,
+            args.input_root.absolute() / name,
         )
         print(json.dumps(result, sort_keys=True))

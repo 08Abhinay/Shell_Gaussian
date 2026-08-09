@@ -26,19 +26,31 @@ DEFAULT_SOURCE_ROOT = Path(
 )
 DEFAULT_OUTPUT_ROOT = Path(
     "/storage/Abhinay/home_ab5298/dataset/datasets/processed/"
-    "golden_set_evaluation_blender"
+    "gshell/golden_set_evaluation"
 )
 DEFAULT_SUGAR_OUTPUT_ROOT = Path(
     "/storage/Abhinay/home_ab5298/dataset/datasets/processed/"
-    "golden_set_evaluation_blender_sugar"
+    "sugar/golden_set_evaluation"
 )
 DEFAULT_NEURALUDF_OUTPUT_ROOT = Path(
     "/storage/Abhinay/home_ab5298/dataset/datasets/processed/"
-    "golden_set_evaluation_neuraludf"
+    "neuraludf/golden_set_evaluation"
 )
 DEFAULT_NEUS2_OUTPUT_ROOT = Path(
     "/storage/Abhinay/home_ab5298/dataset/datasets/processed/"
-    "golden_set_evaluation_neus2"
+    "neus2/golden_set_evaluation"
+)
+DEFAULT_GSHELL_TURNTABLE_OUTPUT_ROOT = Path(
+    "/storage/Abhinay/home_ab5298/dataset/datasets/processed/"
+    "gshell/golden_set_evaluation_turntable"
+)
+DEFAULT_NEURALUDF_TURNTABLE_OUTPUT_ROOT = Path(
+    "/storage/Abhinay/home_ab5298/dataset/datasets/processed/"
+    "neuraludf/golden_set_evaluation_turntable"
+)
+DEFAULT_SUGAR_TURNTABLE_OUTPUT_ROOT = Path(
+    "/storage/Abhinay/home_ab5298/dataset/datasets/processed/"
+    "sugar/golden_set_evaluation_turntable"
 )
 DEFAULT_BLENDER = Path(
     "/storage/Abhinay/home_ab5298/anaconda3/envs/"
@@ -58,6 +70,13 @@ TEST_INDICES = tuple(range(0, VIEW_COUNT, TEST_STRIDE))
 TRAIN_INDICES = tuple(
     index for index in range(VIEW_COUNT) if index not in TEST_INDICES
 )
+TURNTABLE_INDICES = tuple(range(VIEWS_PER_RING))
+TURNTABLE_TEST_INDICES = tuple(range(0, VIEWS_PER_RING, TEST_STRIDE))
+TURNTABLE_TRAIN_INDICES = tuple(
+    index
+    for index in TURNTABLE_INDICES
+    if index not in TURNTABLE_TEST_INDICES
+)
 MIN_INVDEPTH_MASK_IOU = 0.98
 SUGAR_PROTOCOL = "exact_blender_cameras_colmap_triangulation_v1"
 SUGAR_CAMERA_ATOL = 1e-6
@@ -71,6 +90,8 @@ NEURALUDF_CAMERA_ATOL = 5e-6
 NEUS2_PROTOCOL = "exact_blender_cameras_visual_hull_normalization_v1"
 NEUS2_CAMERA_ATOL = 5e-6
 OPENGL_TO_OPENCV_CAMERA = np.diag([1.0, -1.0, -1.0, 1.0])
+DERIVED_MANIFEST_VERSION = 2
+SOURCE_DATASET_ID = "gshell/golden_set_evaluation"
 
 
 def rotation_x(angle_rad: float) -> np.ndarray:
@@ -162,6 +183,41 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def source_manifest_fields(source_scene: Path) -> dict[str, Any]:
+    """Return portable identity fields for a derived dataset manifest."""
+    return {
+        "version": DERIVED_MANIFEST_VERSION,
+        "scene": source_scene.name,
+        "source_dataset": SOURCE_DATASET_ID,
+        "source_transforms_sha256": sha256_file(
+            source_scene / "transforms.json"
+        ),
+    }
+
+
+def validate_source_manifest(
+    manifest: dict[str, Any], source_scene: Path
+) -> list[str]:
+    """Validate source identity without comparing absolute filesystem paths."""
+    errors: list[str] = []
+    if manifest.get("version") != DERIVED_MANIFEST_VERSION:
+        errors.append("incorrect derived manifest version")
+    if "source_scene" in manifest:
+        errors.append("manifest contains a deprecated absolute source path")
+    if manifest.get("source_dataset") != SOURCE_DATASET_ID:
+        errors.append("incorrect source dataset identifier")
+    if manifest.get("scene") != source_scene.name:
+        errors.append("source scene name does not match")
+    source_transforms = source_scene / "transforms.json"
+    if not source_transforms.is_file():
+        errors.append("source transforms.json is missing")
+    elif manifest.get("source_transforms_sha256") != sha256_file(
+        source_transforms
+    ):
+        errors.append("source transforms.json changed after preparation")
+    return errors
 
 
 def load_manifest(
@@ -278,6 +334,26 @@ def read_json(path: Path) -> dict[str, Any]:
 def mask_array(path: Path) -> np.ndarray:
     image = np.asarray(Image.open(path).convert("L"))
     return image > 127
+
+
+def copy_sparse_npy(source: Path, destination: Path) -> None:
+    """Copy a dense-shape NPY without allocating its zero background pages."""
+    values = np.load(source, mmap_mode="r")
+    if values.ndim != 2 or values.dtype != np.float32:
+        raise ValueError(f"Expected a 2D float32 inverse-depth array: {source}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    mapped = np.lib.format.open_memmap(
+        destination,
+        mode="w+",
+        dtype=np.float32,
+        shape=values.shape,
+    )
+    for row in np.flatnonzero(np.any(values != 0.0, axis=1)):
+        columns = np.flatnonzero(values[row] != 0.0)
+        start, stop = int(columns[0]), int(columns[-1]) + 1
+        mapped[row, start:stop] = values[row, start:stop]
+    mapped.flush()
+    del mapped
 
 
 def inverse_depth_mask_iou(
