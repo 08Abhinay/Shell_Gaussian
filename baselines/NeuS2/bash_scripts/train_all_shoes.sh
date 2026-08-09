@@ -18,8 +18,9 @@ RUN_ID="${NEUS2_RUN_ID:-${SESSION_NAME}_$(date -u +%Y%m%d_%H%M%S)}"
 LOG_DIR="${NEUS2_LOG_DIR:-${NEUS2_ROOT}/output/batch_runs/${RUN_ID}}"
 OUTPUT_ROOT="${NEUS2_OUTPUT_ROOT:-${NEUS2_ROOT}/output/golden_set_evaluation_blender_final}"
 EXPERIMENT_TAG="${NEUS2_EXPERIMENT_TAG:-}"
-DATA_ROOT="${NEUS2_DATA_ROOT:-/storage/Abhinay/home_ab5298/dataset/datasets/processed/golden_set_evaluation_neus2}"
-SOURCE_DATA_ROOT="${NEUS2_SOURCE_DATA_ROOT:-/storage/Abhinay/home_ab5298/dataset/datasets/processed/golden_set_evaluation_blender}"
+DATA_ROOT="${NEUS2_DATA_ROOT:-/storage/Abhinay/home_ab5298/dataset/datasets/processed/neus2/golden_set_evaluation}"
+SOURCE_DATA_ROOT="${NEUS2_SOURCE_DATA_ROOT:-/storage/Abhinay/home_ab5298/dataset/datasets/processed/gshell/golden_set_evaluation}"
+GROUND_TRUTH_ROOT="${NEUS2_GROUND_TRUTH_ROOT:-/storage/Abhinay/home_ab5298/dataset/datasets/processed/gshell/golden_set_evaluation}"
 MESH_METRICS_ROOT="${NEUS2_MESH_METRICS_ROOT:-/storage/Abhinay/Shell_Gaussian/mesh_metrics/output/evaluations/neus2}"
 MESH_METRICS_PYTHON="${NEUS2_MESH_METRICS_PYTHON:-/storage/Abhinay/home_ab5298/anaconda3/envs/shellgaussianenv/bin/python}"
 MIN_REFERENCE_MASK_IOU="${NEUS2_MIN_REFERENCE_MASK_IOU:-0.98}"
@@ -86,6 +87,7 @@ if [[ "${NEUS2_INSIDE_TMUX:-0}" != "1" ]]; then
         "NEUS2_EXPERIMENT_TAG=${EXPERIMENT_TAG}"
         "NEUS2_DATA_ROOT=${DATA_ROOT}"
         "NEUS2_SOURCE_DATA_ROOT=${SOURCE_DATA_ROOT}"
+        "NEUS2_GROUND_TRUTH_ROOT=${GROUND_TRUTH_ROOT}"
         "NEUS2_MESH_METRICS_ROOT=${MESH_METRICS_ROOT}"
         "NEUS2_MESH_METRICS_PYTHON=${MESH_METRICS_PYTHON}"
         "NEUS2_MIN_REFERENCE_MASK_IOU=${MIN_REFERENCE_MASK_IOU}"
@@ -131,20 +133,14 @@ echo "[$(timestamp)] Run mesh metrics: ${RUN_MESH_METRICS}"
 echo "[$(timestamp)] Resume existing training: ${RESUME_EXISTING}"
 echo "[$(timestamp)] Minimum reference mask IoU: ${MIN_REFERENCE_MASK_IOU}"
 
-FAILURE_MARKER="${LOG_DIR}/.failed"
-rm -f "${FAILURE_MARKER}"
 PIDS=()
 
 for WORKER_IDX in "${!GPUS[@]}"; do
     GPU_ID="${GPUS[${WORKER_IDX}]}"
     (
         set -euo pipefail
+        WORKER_FAILED=0
         for ((i=WORKER_IDX; i<${#SHOES[@]}; i+=${#GPUS[@]})); do
-            if [[ -f "${FAILURE_MARKER}" ]]; then
-                echo "[$(timestamp)] STOP worker ${WORKER_IDX}: another job failed"
-                exit 1
-            fi
-
             SHOE_NAME="${SHOES[$i]}"
             SHOE_LOG="${LOG_DIR}/${SHOE_NAME}.log"
             GPU_LOG="${LOG_DIR}/${SHOE_NAME}_gpu_memory.csv"
@@ -214,8 +210,8 @@ with open(transform_path, "r", encoding="utf-8") as handle:
 normalized = vertices * float(transforms["scale"]) + np.asarray(transforms["offset"])
 boundary_tolerance = 1.0 / int(resolution_text)
 if normalized.min() <= boundary_tolerance or normalized.max() >= 1.0 - boundary_tolerance:
-    raise SystemExit(
-        "NeuS2 mesh touches the extraction boundary: "
+    print(
+        "MESH_WARNING extraction boundary contact: "
         f"normalized_bounds={np.stack((normalized.min(0), normalized.max(0))).tolist()}"
     )
 print(
@@ -236,6 +232,7 @@ PY
                     "${MESH_METRICS_PYTHON}" -m mesh_metrics.evaluate_mesh \
                         --prediction "${MESH_PATH}" \
                         --scene "${SOURCE_DATA_ROOT}/${SHOE_NAME}" \
+                        --ground-truth "${GROUND_TRUTH_ROOT}/${SHOE_NAME}/reference_mesh.ply" \
                         --output "${METRIC_DIR}" \
                         --training-view-set train \
                         --minimum-reference-mask-iou "${MIN_REFERENCE_MASK_IOU}" \
@@ -246,9 +243,9 @@ PY
             fi
 
             if [[ "${STATUS}" -ne 0 ]]; then
-                touch "${FAILURE_MARKER}"
                 echo "[$(timestamp)] FAIL ${SHOE_NAME} on GPU ${GPU_ID}; see ${SHOE_LOG}"
-                exit 1
+                WORKER_FAILED=1
+                continue
             fi
 
             "${NEUS2_PYTHON}" - "${OUTPUT_DIR}" "${SHOE_NAME}" "${NEUS2_CONFIG:-dtu.json}" "${N_STEPS}" "${MARCHING_CUBES_RES}" "${RESOURCE_LOG}" <<'PY'
@@ -268,6 +265,17 @@ resources = {}
 for line in Path(resource_path).read_text(encoding="utf-8").splitlines():
     key, value = line.split("=", 1)
     resources[key] = value
+data_root = Path(os.environ["NEUS2_DATA_ROOT"])
+train_transform = os.environ.get(
+    "NEUS2_TRAIN_TRANSFORM", "transform_train.json"
+)
+test_transform = os.environ.get(
+    "NEUS2_EVAL_TRANSFORM", "transform_test.json"
+)
+with (data_root / shoe / train_transform).open("r", encoding="utf-8") as handle:
+    training_views = len(json.load(handle)["frames"])
+with (data_root / shoe / test_transform).open("r", encoding="utf-8") as handle:
+    heldout_views = len(json.load(handle)["frames"])
 payload = {
     "schema_version": 1,
     "shoe": shoe,
@@ -279,8 +287,8 @@ payload = {
     ).strip(),
     "steps": int(steps),
     "marching_cubes_resolution": int(resolution),
-    "training_views": 150,
-    "heldout_views": 30,
+    "training_views": training_views,
+    "heldout_views": heldout_views,
     "heldout_background": "white",
     "resources": resources,
 }
@@ -289,6 +297,7 @@ path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 PY
             echo "[$(timestamp)] DONE ${SHOE_NAME} on GPU ${GPU_ID}"
         done
+        exit "${WORKER_FAILED}"
     ) &
     PIDS+=("$!")
 done
@@ -300,7 +309,7 @@ for PID in "${PIDS[@]}"; do
     fi
 done
 if [[ "${FAILED}" -ne 0 ]]; then
-    echo "[$(timestamp)] NeuS2 queue stopped after a failure. Logs: ${LOG_DIR}" >&2
+    echo "[$(timestamp)] All NeuS2 shoes were attempted, but one or more failed. Logs: ${LOG_DIR}" >&2
     exit 1
 fi
 

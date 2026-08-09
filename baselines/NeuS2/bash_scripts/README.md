@@ -3,7 +3,7 @@
 NeuS2 uses the derived exact-camera dataset at:
 
 ```text
-/storage/Abhinay/home_ab5298/dataset/datasets/processed/golden_set_evaluation_neus2
+/storage/Abhinay/home_ab5298/dataset/datasets/processed/neus2/golden_set_evaluation
 ```
 
 The official `configs/nerf/dtu.json` is candidate A and remains unchanged.
@@ -21,7 +21,7 @@ Official DTU:
 
 ```bash
 NEUS2_ENV=/home/ab5298/anaconda3/envs/neus2 \
-NEUS2_DATA_ROOT=/storage/Abhinay/home_ab5298/dataset/datasets/processed/golden_set_evaluation_neus2 \
+NEUS2_DATA_ROOT=/storage/Abhinay/home_ab5298/dataset/datasets/processed/neus2/golden_set_evaluation \
 NEUS2_OUTPUT_ROOT=/storage/Abhinay/Shell_Gaussian/baselines/NeuS2/output/golden_set_evaluation_blender_pilot_dtu \
 NEUS2_SHOE_LIST=/storage/Abhinay/Shell_Gaussian/baselines/NeuS2/bash_scripts/development_shoes.txt \
 NEUS2_CONFIG=dtu.json \
@@ -50,7 +50,7 @@ After freezing the selected config:
 
 ```bash
 NEUS2_ENV=/home/ab5298/anaconda3/envs/neus2 \
-NEUS2_DATA_ROOT=/storage/Abhinay/home_ab5298/dataset/datasets/processed/golden_set_evaluation_neus2 \
+NEUS2_DATA_ROOT=/storage/Abhinay/home_ab5298/dataset/datasets/processed/neus2/golden_set_evaluation \
 NEUS2_OUTPUT_ROOT=/storage/Abhinay/Shell_Gaussian/baselines/NeuS2/output/golden_set_evaluation_blender_final \
 NEUS2_SHOE_LIST=/storage/Abhinay/Shell_Gaussian/baselines/NeuS2/bash_scripts/evaluation_shoes.txt \
 NEUS2_CONFIG=<selected-config> \

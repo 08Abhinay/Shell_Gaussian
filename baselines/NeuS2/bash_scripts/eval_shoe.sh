@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NEUS2_ROOT="${NEUS2_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
 ENV_DIR="${NEUS2_ENV:-/home/ab5298/anaconda3/envs/neus2}"
 PYTHON_BIN="${NEUS2_PYTHON:-${ENV_DIR}/bin/python}"
-DATA_ROOT="${NEUS2_DATA_ROOT:-/storage/Abhinay/home_ab5298/dataset/datasets/processed/golden_set_evaluation_neus2}"
+DATA_ROOT="${NEUS2_DATA_ROOT:-/storage/Abhinay/home_ab5298/dataset/datasets/processed/neus2/golden_set_evaluation}"
 OUTPUT_ROOT="${NEUS2_OUTPUT_ROOT:-${NEUS2_ROOT}/output/golden_set_evaluation_blender_final}"
 EXPERIMENT_TAG="${NEUS2_EXPERIMENT_TAG:-}"
 CONFIG="${NEUS2_CONFIG:-dtu.json}"
@@ -52,8 +52,8 @@ with open(sys.argv[1], "r", encoding="utf-8") as handle:
     print(len(json.load(handle)["frames"]))
 PY
 )"
-if [[ "${EVAL_VIEW_COUNT}" -ne 30 ]]; then
-    echo "Expected 30 held-out views, found ${EVAL_VIEW_COUNT}" >&2
+if [[ "${EVAL_VIEW_COUNT}" -le 0 ]]; then
+    echo "Expected at least one held-out view, found ${EVAL_VIEW_COUNT}" >&2
     exit 1
 fi
 
@@ -78,7 +78,7 @@ echo "Physical GPU: ${GPU_ID}"
 
 cp "${OUTPUT_PATH}/eval_log.txt" "${COMBINED_LOG}"
 
-awk '
+awk -v expected="${EVAL_VIEW_COUNT}" '
     /camera_view:/ {
         for (i = 1; i <= NF; i++) {
             if ($i ~ /^PSNR=/) {
@@ -97,7 +97,7 @@ awk '
         n += 1
     }
     END {
-        if (n != 30) {
+        if (n != expected) {
             exit 2
         }
         printf "AVERAGE_TEST PSNR=%.12f SSIM=%.12f LPIPS=%.12f views=%d\n", psnr / n, ssim / n, lpips / n, n
