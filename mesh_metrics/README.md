@@ -34,7 +34,7 @@ $PYTHON -m unittest discover -s mesh_metrics/tests
 ```bash
 $PYTHON -m mesh_metrics.align_mesh \
   --prediction /path/to/reconstructed_mesh.ply \
-  --ground-truth /storage/Abhinay/home_ab5298/dataset/datasets/processed/golden_set_evaluation_blender/air_jordan_1/reference_mesh.ply \
+  --ground-truth /storage/Abhinay/home_ab5298/dataset/datasets/processed/gshell/golden_set_evaluation/air_jordan_1/reference_mesh.ply \
   --output mesh_metrics/output/neuraludf/air_jordan_1 \
   --save-aligned
 ```
@@ -62,7 +62,7 @@ For a complete single-shoe analysis, open `notebooks/evaluate_mesh.ipynb`. It in
 The unified command aligns a prediction, computes point-to-triangle geometry metrics, validates the exact test-camera convention, and computes held-out silhouette and depth metrics:
 
 ```bash
-SCENE=/storage/Abhinay/home_ab5298/dataset/datasets/processed/golden_set_evaluation_blender/air_jordan_1
+SCENE=/storage/Abhinay/home_ab5298/dataset/datasets/processed/gshell/golden_set_evaluation/air_jordan_1
 
 $PYTHON -m mesh_metrics.evaluate_mesh \
   --prediction /path/to/reconstructed_mesh.ply \

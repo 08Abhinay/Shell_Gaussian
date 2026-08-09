@@ -8,6 +8,7 @@ import math
 from pathlib import Path
 
 import numpy as np
+from PIL import Image
 
 
 @dataclass(frozen=True)
@@ -50,25 +51,40 @@ def _read_json(path: Path) -> dict[str, object]:
 
 
 def load_test_cameras(scene_root: str | Path) -> list[EvaluationCamera]:
-    """Load the 30 held-out cameras in effective GShell world coordinates."""
+    """Load held-out cameras in effective GShell world coordinates."""
     root = Path(scene_root).expanduser().resolve()
-    canonicalization = _read_json(root / "blender_canonicalization.json")
-    camera_contract = canonicalization.get("camera_contract")
-    if not isinstance(camera_contract, dict):
-        raise ValueError("blender_canonicalization.json has no camera_contract")
-    resolution = camera_contract.get("resolution")
-    if not isinstance(resolution, list) or len(resolution) != 2:
-        raise ValueError("Camera resolution must contain width and height")
-    width, height = (int(resolution[0]), int(resolution[1]))
-    fov_x_rad = math.radians(float(camera_contract["fov_x_deg"]))
-    radius = float(camera_contract["radius"])
-
     payload = _read_json(root / "transforms_test.json")
     frames = payload.get("frames")
-    if not isinstance(frames, list) or len(frames) != 30:
-        raise ValueError(f"Expected exactly 30 held-out frames, found {len(frames or [])}")
+    if not isinstance(frames, list) or not frames:
+        raise ValueError("transforms_test.json contains no held-out frames")
     if payload.get("pose_convention") != "legacy_gshell_saved_c2w_for_fixed_loader":
         raise ValueError("Unexpected saved camera-pose convention")
+
+    canonicalization_path = root / "blender_canonicalization.json"
+    turntable_path = root / "turntable_manifest.json"
+    if canonicalization_path.is_file():
+        canonicalization = _read_json(canonicalization_path)
+        camera_contract = canonicalization.get("camera_contract")
+        if not isinstance(camera_contract, dict):
+            raise ValueError("blender_canonicalization.json has no camera_contract")
+        resolution = camera_contract.get("resolution")
+        if not isinstance(resolution, list) or len(resolution) != 2:
+            raise ValueError("Camera resolution must contain width and height")
+        width, height = (int(resolution[0]), int(resolution[1]))
+        fov_x_rad = math.radians(float(camera_contract["fov_x_deg"]))
+        radius = float(camera_contract["radius"])
+    elif turntable_path.is_file():
+        turntable = _read_json(turntable_path)
+        camera_contract = turntable.get("camera")
+        if not isinstance(camera_contract, dict):
+            raise ValueError("turntable_manifest.json has no camera contract")
+        first_image = root / Path(str(frames[0]["file_path"]))
+        with Image.open(first_image) as image:
+            width, height = image.size
+        fov_x_rad = math.radians(float(camera_contract["horizontal_fov_degrees"]))
+        radius = float(camera_contract["radius"])
+    else:
+        raise FileNotFoundError("Scene has no Blender or turntable camera manifest")
 
     loader_rotation = project_rotation_x(math.pi / 2.0)
     cameras: list[EvaluationCamera] = []

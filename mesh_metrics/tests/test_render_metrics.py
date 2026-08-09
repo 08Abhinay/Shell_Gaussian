@@ -11,6 +11,7 @@ from mesh_metrics.mesh_io import load_mesh
 from mesh_metrics.render_metrics import (
     HeldOutRenderer,
     RenderMetricConfig,
+    _evaluation_protocol,
     boundary_f_score,
     evaluate_rendered_view,
     load_ground_truth_view,
@@ -20,7 +21,11 @@ from mesh_metrics.surface_queries import TriangleSurface
 
 SCENE = Path(
     "/storage/Abhinay/home_ab5298/dataset/datasets/processed/"
-    "golden_set_evaluation_blender/air_jordan_1"
+    "gshell/golden_set_evaluation/air_jordan_1"
+)
+TURNTABLE_SCENE = Path(
+    "/storage/Abhinay/home_ab5298/dataset/datasets/processed/"
+    "gshell/golden_set_evaluation_turntable/air_jordan_1"
 )
 
 
@@ -50,6 +55,14 @@ class RenderMetricsTest(unittest.TestCase):
             np.testing.assert_allclose(center_direction, expected, atol=1e-7)
         self.assertEqual(counts, {0.0: 6, -25.0: 6, 20.0: 6, 45.0: 6, 65.0: 6})
 
+    @unittest.skipUnless(TURNTABLE_SCENE.is_dir(), "Turntable scene is unavailable")
+    def test_turntable_split_has_six_level_views(self) -> None:
+        cameras = load_test_cameras(TURNTABLE_SCENE)
+        self.assertEqual(len(cameras), 6)
+        self.assertEqual({camera.elevation_deg for camera in cameras}, {0.0})
+        for camera in cameras:
+            self.assertAlmostEqual(camera.radius, 1.0)
+
     def test_boundary_f_score_detects_shift(self) -> None:
         ground_truth = np.zeros((64, 64), dtype=bool)
         ground_truth[16:48, 12:52] = True
@@ -58,6 +71,18 @@ class RenderMetricsTest(unittest.TestCase):
         shifted = np.roll(ground_truth, shift=8, axis=1)
         score = boundary_f_score(shifted, ground_truth, tolerance_px=2.0)
         self.assertLess(score["f_score"], 0.8)
+
+    def test_supported_evaluation_protocols_are_strict(self) -> None:
+        full = [
+            {"elevation_deg": elevation}
+            for elevation in (-25.0, 0.0, 20.0, 45.0, 65.0)
+            for _ in range(6)
+        ]
+        turntable = [{"elevation_deg": 0.0} for _ in range(6)]
+        self.assertEqual(_evaluation_protocol(full), "full_view")
+        self.assertEqual(_evaluation_protocol(turntable), "turntable")
+        with self.assertRaisesRegex(ValueError, "Held-out cameras must follow"):
+            _evaluation_protocol([{"elevation_deg": 0.0} for _ in range(5)])
 
     @unittest.skipUnless(SCENE.is_dir(), "Air Jordan evaluation scene is unavailable")
     def test_reference_mesh_reproduces_first_blender_test_frame(self) -> None:

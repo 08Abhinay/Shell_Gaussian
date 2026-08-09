@@ -183,13 +183,33 @@ def _mean(rows: list[dict[str, object]], key: str) -> float:
     return float(np.mean(values))
 
 
+def _evaluation_protocol(rows: list[dict[str, object]]) -> str:
+    elevations = np.asarray(
+        [float(row["elevation_deg"]) for row in rows], dtype=np.float64
+    )
+    if len(rows) == 6 and np.all(np.isclose(elevations, 0.0)):
+        return "turntable"
+
+    full_elevations = (-25.0, 0.0, 20.0, 45.0, 65.0)
+    if len(rows) == 30 and all(
+        int(np.count_nonzero(np.isclose(elevations, expected))) == 6
+        for expected in full_elevations
+    ):
+        return "full_view"
+
+    raise ValueError(
+        "Held-out cameras must follow either the 30-view full-view contract "
+        "or the 6-view level turntable contract"
+    )
+
+
 def compute_heldout_metrics(
     mesh: trimesh.Trimesh,
     scene_root: str | Path,
     ground_truth_diagonal: float,
     config: RenderMetricConfig | None = None,
 ) -> dict[str, object]:
-    """Render and score one aligned mesh across all 30 held-out cameras."""
+    """Render and score one aligned mesh using a supported held-out protocol."""
     settings = config or RenderMetricConfig()
     settings.validate()
     cameras = load_test_cameras(scene_root)
@@ -215,29 +235,35 @@ def compute_heldout_metrics(
             )
         )
 
-    underside = [row for row in rows if np.isclose(row["elevation_deg"], -25.0)]
-    top = [
-        row
-        for row in rows
-        if np.isclose(row["elevation_deg"], 45.0)
-        or np.isclose(row["elevation_deg"], 65.0)
-    ]
-    if len(underside) != 6 or len(top) != 12:
-        raise ValueError("Held-out camera rings do not match the evaluation contract")
+    protocol = _evaluation_protocol(rows)
+    headline = {
+        "silhouette_iou": _mean(rows, "silhouette_iou"),
+        "boundary_f_score": _mean(rows, "boundary_f_score"),
+        "depth_mae_percent": _mean(rows, "depth_mae_percent"),
+        "depth_overlap_coverage": _mean(rows, "depth_overlap_coverage"),
+    }
+    if protocol == "full_view":
+        underside = [row for row in rows if np.isclose(row["elevation_deg"], -25.0)]
+        top = [
+            row
+            for row in rows
+            if np.isclose(row["elevation_deg"], 45.0)
+            or np.isclose(row["elevation_deg"], 65.0)
+        ]
+        headline.update(
+            {
+                "underside_depth_mae_percent": _mean(underside, "depth_mae_percent"),
+                "top_view_depth_mae_percent": _mean(top, "depth_mae_percent"),
+            }
+        )
     return {
         "schema_version": 1,
+        "evaluation_protocol": protocol,
         "view_count": len(rows),
         "depth_definition": "camera_z_depth",
         "depth_normalization": "percentage_of_ground_truth_bbox_diagonal",
         "boundary_tolerance_px": settings.boundary_tolerance_px,
-        "headline": {
-            "silhouette_iou": _mean(rows, "silhouette_iou"),
-            "boundary_f_score": _mean(rows, "boundary_f_score"),
-            "depth_mae_percent": _mean(rows, "depth_mae_percent"),
-            "depth_overlap_coverage": _mean(rows, "depth_overlap_coverage"),
-            "underside_depth_mae_percent": _mean(underside, "depth_mae_percent"),
-            "top_view_depth_mae_percent": _mean(top, "depth_mae_percent"),
-        },
+        "headline": headline,
         "per_view": rows,
     }
 

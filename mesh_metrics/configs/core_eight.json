@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "name": "core_diverse_eight",
-  "dataset_root": "/storage/Abhinay/home_ab5298/dataset/datasets/processed/golden_set_evaluation_blender",
+  "dataset_root": "/storage/Abhinay/home_ab5298/dataset/datasets/processed/gshell/golden_set_evaluation",
   "shoes": [
     {"name": "air_jordan_1", "category": "structured_high_top"},
     {"name": "adidas_yeezy_boost_350_v2_zyon", "category": "soft_low_top"},

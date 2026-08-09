@@ -85,11 +85,28 @@ def collect_rows(
                 if not isinstance(view_headline, dict):
                     raise ValueError(f"Missing view headline in {view_path}")
                 for key in VIEW_KEYS:
-                    row[key] = float(view_headline[key])
+                    row[key] = (
+                        float(view_headline[key]) if key in view_headline else ""
+                    )
+                protocol = view.get("evaluation_protocol")
+                if protocol is None:
+                    protocol = (
+                        "full_view"
+                        if all(
+                            key in view_headline
+                            for key in (
+                                "underside_depth_mae_percent",
+                                "top_view_depth_mae_percent",
+                            )
+                        )
+                        else "unknown"
+                    )
+                row["evaluation_protocol"] = str(protocol)
                 row["heldout_eligible"] = bool(view.get("heldout_eligible", False))
             else:
                 for key in VIEW_KEYS:
                     row[key] = ""
+                row["evaluation_protocol"] = "unknown"
                 row["heldout_eligible"] = False
             rows.append(row)
         if missing and not allow_incomplete:
@@ -113,6 +130,14 @@ def summarize(rows: list[dict[str, object]]) -> list[dict[str, object]]:
             "heldout_eligible": bool(selected)
             and all(bool(row["heldout_eligible"]) for row in selected),
         }
+        protocols = {
+            str(row["evaluation_protocol"])
+            for row in selected
+            if row["evaluation_protocol"] != "unknown"
+        }
+        if len(protocols) > 1:
+            raise ValueError(f"Method {method} mixes evaluation protocols: {protocols}")
+        summary["evaluation_protocol"] = next(iter(protocols), "unknown")
         for key in GEOMETRY_KEYS + VIEW_KEYS:
             values = [float(row[key]) for row in selected if row[key] != ""]
             summary[f"{key}_mean"] = mean(values) if values else ""
@@ -162,6 +187,12 @@ def write_latex(path: Path, summaries: list[dict[str, object]]) -> None:
             f"{float(row['normal_consistency_mean']):.4f} & "
             f"{float(row['p95_distance_percent_mean']):.4f} \\\\"
         )
+    protocols = {
+        str(row.get("evaluation_protocol", "unknown"))
+        for row in summaries
+        if row["silhouette_iou_mean"] != "" and row["heldout_eligible"]
+    }
+    turntable_only = protocols == {"turntable"}
     lines.extend(
         [
             r"\bottomrule",
@@ -177,10 +208,15 @@ def write_latex(path: Path, summaries: list[dict[str, object]]) -> None:
                 r"percentages of the ground-truth bounding-box diagonal.}"
             ),
             r"\resizebox{\textwidth}{!}{%",
-            r"\begin{tabular}{lccccc}",
+            r"\begin{tabular}{lcccc}"
+            if turntable_only
+            else r"\begin{tabular}{lccccc}",
             r"\toprule",
             (
                 r"Method & Silhouette IoU $\uparrow$ & Boundary F-score $\uparrow$ & "
+                r"Depth MAE $\downarrow$ & Depth Coverage $\uparrow$ \\"
+                if turntable_only
+                else r"Method & Silhouette IoU $\uparrow$ & Boundary F-score $\uparrow$ & "
                 r"Depth MAE $\downarrow$ & Underside MAE $\downarrow$ & "
                 r"Top-view MAE $\downarrow$ \\"
             ),
@@ -189,6 +225,15 @@ def write_latex(path: Path, summaries: list[dict[str, object]]) -> None:
     )
     for row in summaries:
         if row["silhouette_iou_mean"] == "" or not row["heldout_eligible"]:
+            continue
+        if turntable_only:
+            lines.append(
+                f"{_latex_name(str(row['method']))} & "
+                f"{float(row['silhouette_iou_mean']):.4f} & "
+                f"{float(row['boundary_f_score_mean']):.4f} & "
+                f"{float(row['depth_mae_percent_mean']):.4f} & "
+                f"{float(row['depth_overlap_coverage_mean']):.4f} \\\\"
+            )
             continue
         lines.append(
             f"{_latex_name(str(row['method']))} & "
