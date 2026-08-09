@@ -37,7 +37,7 @@ bash bash_scripts/prepare_evaluation_dataset_tmux.sh \
 The default derived dataset is:
 
 ```text
-/storage/Abhinay/home_ab5298/dataset/datasets/processed/golden_set_evaluation_blender_sugar
+/storage/Abhinay/home_ab5298/dataset/datasets/processed/sugar/golden_set_evaluation
 ```
 
 ## Blender Evaluation Training

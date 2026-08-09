@@ -130,6 +130,16 @@ def read_scene_path(run_dir: Path) -> Path:
     raise ValueError(f"Could not find scene path in {log_path}")
 
 
+def expected_test_view_count(scene_path: Path) -> int:
+    split_path = scene_path / "transforms_test.json"
+    if not split_path.is_file():
+        raise FileNotFoundError(f"Missing test split: {split_path}")
+    frames = json.loads(split_path.read_text(encoding="utf-8")).get("frames")
+    if not isinstance(frames, list) or not frames:
+        raise ValueError(f"Test split contains no frames: {split_path}")
+    return len(frames)
+
+
 def required_path(path: Path, label: str) -> Path:
     if not path.exists():
         raise FileNotFoundError(f"Missing {label}: {path}")
@@ -443,6 +453,8 @@ def main() -> None:
 
         print(f"\n=== Evaluating {run_dir.name} ===", flush=True)
         print(f"Scene: {scene_path}", flush=True)
+        expected_views = expected_test_view_count(scene_path)
+        print(f"Expected held-out views: {expected_views}", flush=True)
 
         if not args.skip_3dgs:
             row = run_official_3dgs_eval(
@@ -453,9 +465,9 @@ def main() -> None:
                 args.overwrite,
                 args.white_background,
             )
-            if row["views"] != 30:
+            if row["views"] != expected_views:
                 raise ValueError(
-                    f"Expected 30 held-out 3DGS views, found {row['views']}"
+                    f"Expected {expected_views} held-out 3DGS views, found {row['views']}"
                 )
             row.update({"shoe": shoe, "run_id": run_dir.name})
             rows.append(row)
@@ -472,9 +484,9 @@ def main() -> None:
                 args.overwrite,
                 args.white_background,
             )
-            if row["views"] != 30:
+            if row["views"] != expected_views:
                 raise ValueError(
-                    f"Expected 30 held-out SuGaR views, found {row['views']}"
+                    f"Expected {expected_views} held-out SuGaR views, found {row['views']}"
                 )
             row.update({"shoe": shoe, "run_id": run_dir.name})
             rows.append(row)

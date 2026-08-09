@@ -8,10 +8,23 @@ SUGAR_ROOT="${PROJECT_ROOT}/baselines/SuGaR"
 PIPELINE="${PROJECT_ROOT}/dataset_tools_blender/pipeline.py"
 SUGAR_PYTHON="${SUGAR_PYTHON:-/storage/Abhinay/home_ab5298/anaconda3/envs/SuGaR_env/SuGaR_env/bin/python}"
 TOOLS_PYTHON="${SUGAR_TOOLS_PYTHON:-/storage/Abhinay/home_ab5298/anaconda3/envs/shellgaussianenv/bin/python}"
-DATA_ROOT="${SUGAR_DATA_ROOT:-/storage/Abhinay/home_ab5298/dataset/datasets/processed/golden_set_evaluation_blender_sugar}"
-SOURCE_ROOT="${SUGAR_SOURCE_ROOT:-/storage/Abhinay/home_ab5298/dataset/datasets/processed/golden_set_evaluation_blender}"
+DATA_ROOT="${SUGAR_DATA_ROOT:-/storage/Abhinay/home_ab5298/dataset/datasets/processed/sugar/golden_set_evaluation}"
+SOURCE_ROOT="${SUGAR_SOURCE_ROOT:-/storage/Abhinay/home_ab5298/dataset/datasets/processed/gshell/golden_set_evaluation}"
+GROUND_TRUTH_ROOT="${SUGAR_GROUND_TRUTH_ROOT:-/storage/Abhinay/home_ab5298/dataset/datasets/processed/gshell/golden_set_evaluation}"
 OUTPUT_ROOT="${SUGAR_OUTPUT_ROOT:-${SUGAR_ROOT}/output/golden_set_evaluation_blender_pilot}"
 MESH_METRICS_ROOT="${SUGAR_MESH_METRICS_ROOT:-${PROJECT_ROOT}/mesh_metrics/output/evaluations/sugar}"
+DATASET_VARIANT="${SUGAR_DATASET_VARIANT:-full}"
+
+if [[ "${DATASET_VARIANT}" == "turntable" ]]; then
+    PREPARE_COMMAND="prepare-sugar-turntable"
+    VALIDATE_COMMAND="validate-sugar-turntable"
+elif [[ "${DATASET_VARIANT}" == "full" ]]; then
+    PREPARE_COMMAND="prepare-sugar"
+    VALIDATE_COMMAND="validate-sugar"
+else
+    echo "Unsupported SUGAR_DATASET_VARIANT: ${DATASET_VARIANT}" >&2
+    exit 2
+fi
 
 usage() {
     cat <<'EOF'
@@ -31,7 +44,7 @@ The resumable pipeline prepares/validates the dataset, trains vanilla 3DGS for
 7,000 iterations, trains bounded dn-consistency SuGaR for 15,000 iterations,
 extracts a one-million-vertex coarse mesh, refines for 15,000 iterations with
 one Gaussian per triangle, exports textured and geometry meshes, evaluates the
-30 explicit held-out views, and computes shared similarity-aligned mesh metrics.
+explicit held-out views, and computes shared similarity-aligned mesh metrics.
 EOF
 }
 
@@ -82,7 +95,7 @@ run_pipeline() {
     echo "Physical GPU: ${physical_gpu}"
     echo "Dataset: ${scene_parent}"
     echo "Output: ${run_dir}"
-    echo "Contract: 150 train / 30 test, RGBA masks, white background"
+    echo "Dataset variant: ${DATASET_VARIANT}"
 
     local stale_scene=0
     local prepared_scene=0
@@ -93,23 +106,28 @@ run_pipeline() {
     fi
     if [[ "${overwrite_data}" == "1" || ! -d "${scene_parent}" ||
           "${stale_scene}" == "1" ]]; then
-        prepare_args=(prepare-sugar --shoe "${shoe}" --gpu "${physical_gpu}")
+        prepare_args=("${PREPARE_COMMAND}" --shoe "${shoe}" --gpu "${physical_gpu}")
         if [[ "${overwrite_data}" == "1" || -d "${scene_parent}" ]]; then
             prepare_args+=(--overwrite)
         fi
         run_stage "${TOOLS_PYTHON}" "${PIPELINE}" "${prepare_args[@]}"
         prepared_scene=1
     fi
-    if ! run_stage "${TOOLS_PYTHON}" "${PIPELINE}" validate-sugar --shoe "${shoe}"; then
+    if ! run_stage "${TOOLS_PYTHON}" "${PIPELINE}" "${VALIDATE_COMMAND}" --shoe "${shoe}"; then
         if [[ "${prepared_scene}" == "1" ]]; then
             echo "Prepared SuGaR scene still failed validation: ${scene_parent}" >&2
             exit 1
         fi
         echo "[$(timestamp)] Existing SuGaR scene is stale; rebuilding once."
         run_stage "${TOOLS_PYTHON}" "${PIPELINE}" \
-            prepare-sugar --shoe "${shoe}" --gpu "${physical_gpu}" --overwrite
-        run_stage "${TOOLS_PYTHON}" "${PIPELINE}" validate-sugar --shoe "${shoe}"
+            "${PREPARE_COMMAND}" --shoe "${shoe}" --gpu "${physical_gpu}" --overwrite
+        run_stage "${TOOLS_PYTHON}" "${PIPELINE}" "${VALIDATE_COMMAND}" --shoe "${shoe}"
     fi
+
+    local train_views test_views
+    train_views="$(jq '.frames | length' "${scene}/transforms_train.json")"
+    test_views="$(jq '.frames | length' "${scene}/transforms_test.json")"
+    echo "Contract: ${train_views} train / ${test_views} test, RGBA masks, white background"
 
     local gs_dir="${run_dir}/vanilla_3dgs"
     local gs_ply="${gs_dir}/point_cloud/iteration_7000/point_cloud.ply"
@@ -227,6 +245,7 @@ PY
             run_stage "${TOOLS_PYTHON}" -m mesh_metrics.evaluate_mesh \
                 --prediction "${geometry_mesh}" \
                 --scene "${SOURCE_ROOT}/${shoe}" \
+                --ground-truth "${GROUND_TRUTH_ROOT}/${shoe}/reference_mesh.ply" \
                 --output "${metric_output}" \
                 --training-view-set train \
                 --save-aligned
@@ -239,20 +258,21 @@ PY
     completed="$(date +%s)"
     elapsed="$((completed - started))"
     "${TOOLS_PYTHON}" - "${run_dir}" "${shoe}" "${physical_gpu}" \
-        "${scene}" "${textured_mesh}" "${geometry_mesh}" "${elapsed}" <<'PY'
+        "${scene}" "${textured_mesh}" "${geometry_mesh}" "${elapsed}" \
+        "${train_views}" "${test_views}" <<'PY'
 import json
 import sys
 from pathlib import Path
 
-run, shoe, gpu, scene, textured, geometry, elapsed = sys.argv[1:]
+run, shoe, gpu, scene, textured, geometry, elapsed, train_views, test_views = sys.argv[1:]
 payload = {
     "protocol": "golden_set_evaluation_blender_sugar_v1",
     "shoe": shoe,
     "physical_gpu": int(gpu),
     "scene": scene,
     "training": {
-        "train_views": 150,
-        "test_views": 30,
+        "train_views": int(train_views),
+        "test_views": int(test_views),
         "vanilla_3dgs_iterations": 7000,
         "coarse_regularization": "dn_consistency",
         "coarse_iterations": 15000,
@@ -342,8 +362,10 @@ cmd=(
     "SUGAR_PROJECT_ROOT=${PROJECT_ROOT}"
     "SUGAR_DATA_ROOT=${DATA_ROOT}"
     "SUGAR_SOURCE_ROOT=${SOURCE_ROOT}"
+    "SUGAR_GROUND_TRUTH_ROOT=${GROUND_TRUTH_ROOT}"
     "SUGAR_OUTPUT_ROOT=${OUTPUT_ROOT}"
     "SUGAR_MESH_METRICS_ROOT=${MESH_METRICS_ROOT}"
+    "SUGAR_DATASET_VARIANT=${DATASET_VARIANT}"
     "SUGAR_PYTHON=${SUGAR_PYTHON}"
     "SUGAR_TOOLS_PYTHON=${TOOLS_PYTHON}"
     bash

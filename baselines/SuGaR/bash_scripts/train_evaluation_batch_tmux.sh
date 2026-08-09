@@ -163,6 +163,11 @@ cmd=(
     "SUGAR_BATCH_OVERWRITE_DATA=${OVERWRITE_DATA}"
     "SUGAR_BATCH_GPUS=${GPUS}"
     "SUGAR_BATCH_RETRIES=${RETRIES}"
+    "SUGAR_DATA_ROOT=${SUGAR_DATA_ROOT:-/storage/Abhinay/home_ab5298/dataset/datasets/processed/sugar/golden_set_evaluation}"
+    "SUGAR_SOURCE_ROOT=${SUGAR_SOURCE_ROOT:-/storage/Abhinay/home_ab5298/dataset/datasets/processed/gshell/golden_set_evaluation}"
+    "SUGAR_GROUND_TRUTH_ROOT=${SUGAR_GROUND_TRUTH_ROOT:-/storage/Abhinay/home_ab5298/dataset/datasets/processed/gshell/golden_set_evaluation}"
+    "SUGAR_MESH_METRICS_ROOT=${SUGAR_MESH_METRICS_ROOT:-${PROJECT_ROOT}/mesh_metrics/output/evaluations/sugar}"
+    "SUGAR_DATASET_VARIANT=${SUGAR_DATASET_VARIANT:-full}"
     bash
     "${SCRIPT_PATH}"
 )
