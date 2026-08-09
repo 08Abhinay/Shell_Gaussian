@@ -19,7 +19,7 @@ if [[ -z "${MODE}" ]]; then
 fi
 shift
 
-DATASET_ROOT="${GSHELL_DATASET_ROOT:-/storage/Abhinay/home_ab5298/dataset/datasets/processed/gshell_shoes_size_metadata}"
+DATASET_ROOT="${GSHELL_DATASET_ROOT:-/storage/Abhinay/home_ab5298/dataset/datasets/processed/gshell/shoes_size_metadata}"
 CONFIG_PATH="${GSHELL_CONFIG:-${SCRIPT_DIR}/shoes_mc_bottom_slab_fixed_anchor_009_512.json}"
 OUT_ROOT="${GSHELL_OUT_ROOT:-/storage/Abhinay/home_ab5298/Outputs/FootShellGaussian/bottom_slab_fixed_anchor_009}"
 ENV_DIR="${FOOTSHELL_ENV_DIR:-/home/ab5298/anaconda3/envs/shellgaussianenv}"
