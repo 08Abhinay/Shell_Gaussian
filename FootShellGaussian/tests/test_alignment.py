@@ -10,9 +10,11 @@ import pytest
 
 from foot_prior.alignment import (
     build_axis_scale_xz_transform,
+    build_initial_alignment,
     make_supr_to_shoe_axis_remap,
     transform_points,
 )
+from foot_prior.footbed import identify_footbed_surface
 from foot_prior.mesh import TriangleMesh, load_triangle_mesh
 from foot_prior.supr_foot import load_neutral_supr_foot
 
@@ -84,3 +86,76 @@ def test_rejects_invalid_length_ratio(ratio: float) -> None:
     )
     with pytest.raises(ValueError, match="length_ratio"):
         build_axis_scale_xz_transform(mesh, mesh, ratio)
+
+
+def raw_plantar_sheet() -> TriangleMesh:
+    return TriangleMesh(
+        np.asarray(
+            [[-0.5, 0.0, -2.0], [0.5, 0.0, -2.0], [0.5, 0.0, 2.0], [-0.5, 0.0, 2.0]]
+        ),
+        np.asarray([[0, 1, 2], [0, 2, 3]], dtype=np.int64),
+    )
+
+
+def shoe_sheet(y_left: float, y_right: float) -> TriangleMesh:
+    return TriangleMesh(
+        np.asarray(
+            [
+                [-5.0, y_left, -2.0],
+                [5.0, y_right, -2.0],
+                [5.0, y_right, 2.0],
+                [-5.0, y_left, 2.0],
+            ]
+        ),
+        np.asarray([[0, 1, 2], [0, 2, 3]], dtype=np.int64),
+    )
+
+
+def test_flat_footbed_first_contact() -> None:
+    foot = raw_plantar_sheet()
+    shoe = shoe_sheet(1.0, 1.0)
+    alignment = build_initial_alignment(
+        foot, shoe, identify_footbed_surface(shoe), length_ratio=0.85
+    )
+    assert alignment.translation[1] == pytest.approx(1.0)
+    assert alignment.footbed_contact_coverage == pytest.approx(1.0)
+    assert alignment.minimum_footbed_gap == pytest.approx(0.0, abs=1e-14)
+    assert alignment.maximum_footbed_gap == pytest.approx(0.0, abs=1e-14)
+
+
+def test_sloped_footbed_first_contact_has_no_negative_gaps() -> None:
+    foot = raw_plantar_sheet()
+    shoe = shoe_sheet(0.5, 1.5)
+    alignment = build_initial_alignment(
+        foot, shoe, identify_footbed_surface(shoe), length_ratio=0.85
+    )
+    assert alignment.minimum_footbed_gap == pytest.approx(0.0, abs=1e-14)
+    assert alignment.maximum_footbed_gap > 0.0
+    assert alignment.minimum_footbed_gap >= 0.0
+
+
+def test_canvas_first_contact_coverage_gaps_and_round_trip() -> None:
+    scene = Path(os.environ.get("FOOTSHELL_EVAL_ROOT", DEFAULT_EVAL_ROOT)) / "canvas_shoe"
+    if not scene.is_dir():
+        pytest.skip(f"external canvas dataset is unavailable: {scene}")
+    foot = load_neutral_supr_foot(SUPR_MODEL)
+    shoe = load_triangle_mesh(scene / "reference_mesh.ply")
+    footbed = identify_footbed_surface(shoe)
+    alignment = build_initial_alignment(foot, shoe, footbed)
+    assert alignment.plantar_sample_count == 107
+    assert alignment.covered_plantar_sample_count == 104
+    assert alignment.footbed_contact_coverage == pytest.approx(104 / 107)
+    assert alignment.footbed_contact_coverage >= 0.95
+    assert alignment.translation[1] == pytest.approx(-0.8870308744255349, abs=1e-12)
+    assert alignment.minimum_footbed_gap == pytest.approx(0.0, abs=1e-14)
+    assert alignment.maximum_footbed_gap == pytest.approx(0.021287513665358193, abs=1e-12)
+    assert alignment.minimum_footbed_gap >= 0.0
+    np.testing.assert_allclose(
+        alignment.shoe_to_foot @ alignment.foot_to_shoe, np.eye(4), atol=1e-12
+    )
+    samples = foot.vertices[[0, 96, 265]]
+    np.testing.assert_allclose(
+        alignment.shoe_points_to_foot(alignment.foot_points_to_shoe(samples)),
+        samples,
+        atol=1e-12,
+    )
