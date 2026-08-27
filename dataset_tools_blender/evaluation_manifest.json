@@ -4,7 +4,7 @@
   "shoes": [
     {
       "name": "adidas_yeezy_boost_350_v2_zyon",
-      "model": "adidas_yeezy_boost_350_v2_zyon.glb",
+      "model": "curated_subsets/cavity_clean_no_footbed_3/adidas_yeezy_boost_350_v2_zyon.glb",
       "sha256": "1f2e9e3b8cb7bd996a5bfd565da63375e26a1aff76c4b2735ef74b6bb7f1287c",
       "reviewed": true,
       "source_axes": {"length": "-Y", "width": "X", "up": "Z"},
@@ -13,7 +13,7 @@
     },
     {
       "name": "air_jordan_1",
-      "model": "air_jordan_1.glb",
+      "model": "curated_subsets/cavity_clean_no_footbed_3/air_jordan_1.glb",
       "sha256": "8c74c2a60e438962af606fd97d842d342d81044203108f8e96f6c463e67d4468",
       "reviewed": true,
       "source_axes": {"length": "-Y", "width": "X", "up": "Z"},
@@ -22,7 +22,7 @@
     },
     {
       "name": "aj_12_basketball_sneakers",
-      "model": "aj_12_basketball_sneakers.glb",
+      "model": "curated_subsets/footbed_clean_13/aj_12_basketball_sneakers.glb",
       "sha256": "e42552fd7bd9a61918c5097ae4c06371596533b3470f4fb4fc65acc0f5932716",
       "reviewed": true,
       "source_axes": {"length": "X", "width": "Y", "up": "Z"},
@@ -31,7 +31,7 @@
     },
     {
       "name": "birkenstock_arizona_sandal",
-      "model": "birkenstock_arizona_sandal.glb",
+      "model": "curated_subsets/footbed_clean_13/birkenstock_arizona_sandal.glb",
       "sha256": "fb9ca5924b9b50ceed4d237695f553de98057df81b360d53c4cae9940cf39d11",
       "reviewed": true,
       "source_axes": {"length": "X", "width": "Y", "up": "Z"},
@@ -40,7 +40,7 @@
     },
     {
       "name": "canvas_shoe",
-      "model": "canvas_shoe.glb",
+      "model": "curated_subsets/footbed_clean_13/canvas_shoe.glb",
       "sha256": "94d07dd323112c9896bcab73934c6879e2a303b39f264a0606e7a47c0873ddc8",
       "reviewed": true,
       "source_axes": {"length": "-Y", "width": "X", "up": "Z"},
@@ -49,7 +49,7 @@
     },
     {
       "name": "crocs_shoe",
-      "model": "crocs_shoe.glb",
+      "model": "curated_subsets/footbed_clean_13/crocs_shoe.glb",
       "sha256": "d3ccea8f404f0d115715d18fa09e727b08f9966442f626d0995adb33a60d236f",
       "reviewed": true,
       "source_axes": {"length": "-X", "width": "-Y", "up": "Z"},
@@ -58,7 +58,7 @@
     },
     {
       "name": "duinn_shoes_womens_hiking_sandal_sport",
-      "model": "duinn_shoes_womens_hiking_sandal_sport.glb",
+      "model": "curated_subsets/footbed_clean_13/duinn_shoes_womens_hiking_sandal_sport.glb",
       "sha256": "d6d5d1cc4171ff6e581a8e2251ef69b8a0fed8295acdb9b7fc42f3362735de91",
       "reviewed": true,
       "source_axes": {"length": "-Y", "width": "X", "up": "Z"},
@@ -67,7 +67,7 @@
     },
     {
       "name": "female_gymnasts_shoes",
-      "model": "female_gymnasts_shoes.glb",
+      "model": "curated_subsets/invalid_interior_5/female_gymnasts_shoes.glb",
       "sha256": "2a0381d44085f3833f4e856fa8dbd5bbd48228041dd57174bc7f01bddabbef9d",
       "reviewed": true,
       "source_axes": {"length": "Y", "width": "X", "up": "Z"},
@@ -76,7 +76,7 @@
     },
     {
       "name": "nike_air_jordan",
-      "model": "nike_air_jordan.glb",
+      "model": "curated_subsets/footbed_clean_13/nike_air_jordan.glb",
       "sha256": "adad2cfed819fcc2804bed10515d3a4410a840c81242b201995b3eeb17d318fe",
       "reviewed": true,
       "source_axes": {"length": "-X", "width": "Y", "up": "Z"},
@@ -85,7 +85,7 @@
     },
     {
       "name": "nike_air_zoom_pegasus_36",
-      "model": "nike_air_zoom_pegasus_36.glb",
+      "model": "curated_subsets/partial_or_repair_1/nike_air_zoom_pegasus_36.glb",
       "sha256": "d81874d66f97b013841368c35ac663e8434634a8e71be759b72a4566a669d424",
       "reviewed": true,
       "source_axes": {"length": "Y", "width": "X", "up": "Z"},
@@ -94,7 +94,7 @@
     },
     {
       "name": "pb129_shoe_low",
-      "model": "pb129_shoe_low.glb",
+      "model": "curated_subsets/footbed_clean_13/pb129_shoe_low.glb",
       "sha256": "ac2402f5cb85f292c90f931b8a365d62db0ac883fd3cf34d5fddd0a11c149d44",
       "reviewed": true,
       "source_axes": {"length": "X", "width": "Y", "up": "Z"},
@@ -103,7 +103,7 @@
     },
     {
       "name": "priest_karol_wojtyas_sports_shoes",
-      "model": "priest_karol_wojtyas_sports_shoes.glb",
+      "model": "curated_subsets/footbed_clean_13/priest_karol_wojtyas_sports_shoes.glb",
       "sha256": "d270c2cb994b40eb3c8d5308be32accc35dc5e727204ecc896e0ccb8849379af",
       "reviewed": true,
       "source_axes": {"length": "-Y", "width": "X", "up": "Z"},
@@ -112,7 +112,7 @@
     },
     {
       "name": "red_high_heel_shoes",
-      "model": "red_high-heel_shoes.glb",
+      "model": "curated_subsets/footbed_clean_13/red_high-heel_shoes.glb",
       "sha256": "8cfbebb47f2d52a4d3712a6554af0f1ceba5ab12c65568d53267d64612e5c2e5",
       "reviewed": true,
       "source_axes": {"length": "-X", "width": "-Y", "up": "Z"},
@@ -121,7 +121,7 @@
     },
     {
       "name": "reebok_crossfit_nano_shoe_3d_scan",
-      "model": "reebok_crossfit_nano_shoe_3d_scan.glb",
+      "model": "curated_subsets/invalid_interior_5/reebok_crossfit_nano_shoe_3d_scan.glb",
       "sha256": "dd118f05eee074c51a565852a6089527c93150b39d8ac6d66dffd3d4dadafd25",
       "reviewed": true,
       "source_axes": {"length": "-Y", "width": "-X", "up": "Z"},
@@ -130,7 +130,7 @@
     },
     {
       "name": "reserved_shoe_sneakers_3d_scan",
-      "model": "reserved_shoe_sneakers_3d_scan.glb",
+      "model": "curated_subsets/invalid_interior_5/reserved_shoe_sneakers_3d_scan.glb",
       "sha256": "7d5e64bbe1a3b5791ba0a64b282486fc877c419bf5b0bf5f81edfbb9c3b3d464",
       "reviewed": true,
       "source_axes": {"length": "X", "width": "Y", "up": "Z"},
@@ -139,7 +139,7 @@
     },
     {
       "name": "sandal_1",
-      "model": "sandal_1.glb",
+      "model": "curated_subsets/footbed_clean_13/sandal_1.glb",
       "sha256": "039d21d61addf626bd32577eb6a50e0dad745fc34f9a80a70a5e1ba4a9c0da09",
       "reviewed": true,
       "source_axes": {"length": "-X", "width": "-Y", "up": "Z"},
@@ -148,7 +148,7 @@
     },
     {
       "name": "sandals_0001",
-      "model": "sandals_0001.glb",
+      "model": "curated_subsets/footbed_clean_13/sandals_0001.glb",
       "sha256": "1bd16a14701952895b2c411fc030a049889b4964efc9fd216c3fad3946b52ba0",
       "reviewed": true,
       "source_axes": {"length": "-Y", "width": "X", "up": "Z"},
@@ -157,7 +157,7 @@
     },
     {
       "name": "scanned_adidas_sports_shoe",
-      "model": "scanned_adidas_sports_shoe.glb",
+      "model": "curated_subsets/invalid_interior_5/scanned_adidas_sports_shoe.glb",
       "sha256": "0b90cfce26fd1883149d4eb44f3b70733970087d4189b281c34392660ae3f846",
       "reviewed": true,
       "source_axes": {"length": "-X", "width": "-Y", "up": "Z"},
@@ -166,7 +166,7 @@
     },
     {
       "name": "sneaker",
-      "model": "sneaker.glb",
+      "model": "curated_subsets/invalid_interior_5/sneaker.glb",
       "sha256": "3afc9e7d2edb7bb04a0e5d531c1157d29c06c9c805d7c1dc311c20467af02779",
       "reviewed": true,
       "source_axes": {"length": "X", "width": "-Y", "up": "Z"},
@@ -175,7 +175,7 @@
     },
     {
       "name": "sneaker_grafiti",
-      "model": "sneaker_grafiti.glb",
+      "model": "curated_subsets/cavity_clean_no_footbed_3/sneaker_grafiti.glb",
       "sha256": "3feb5a2762849f5cde38e63f56f7c05dcef96f77903e7861b0f57292d9400b6c",
       "reviewed": true,
       "source_axes": {"length": "-Y", "width": "-X", "up": "Z"},
@@ -184,7 +184,7 @@
     },
     {
       "name": "sneaker_vibe",
-      "model": "sneaker_vibe.glb",
+      "model": "curated_subsets/footbed_clean_13/sneaker_vibe.glb",
       "sha256": "225da89a26b28c8b564dc40fa50ba0e4145ba63cdd13bdc16207bf490108cc14",
       "reviewed": true,
       "source_axes": {"length": "X", "width": "Y", "up": "Z"},
@@ -193,7 +193,7 @@
     },
     {
       "name": "sneakers_seen",
-      "model": "sneakers_seen.glb",
+      "model": "curated_subsets/footbed_clean_13/sneakers_seen.glb",
       "sha256": "53c17a663d8fc660aef9c3b2d6c88f7a080a9f4fabf0867cbc6d3caee51236d2",
       "reviewed": true,
       "source_axes": {"length": "-X", "width": "-Y", "up": "Z"},

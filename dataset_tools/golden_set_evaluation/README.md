@@ -8,7 +8,12 @@ workers or explicit trainer adapters.
 
 ```text
 external/golden_set_eval_glb/
-  <shoe>.glb
+  curated_subsets/
+    audit_v1.json
+    footbed_clean_13/<shoe>.glb
+    cavity_clean_no_footbed_3/<shoe>.glb
+    partial_or_repair_1/<shoe>.glb
+    invalid_interior_5/<shoe>.glb
 
 raw/golden_set_evaluation/
   <shoe>/

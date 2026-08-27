@@ -290,7 +290,11 @@ def load_manifest(
         models.add(model)
         records.append(record)
 
-    source_models = {path.name for path in source_root.glob("*.glb")}
+    source_models = {
+        path.relative_to(source_root).as_posix()
+        for path in source_root.rglob("*.glb")
+        if path.is_file()
+    }
     if source_models != models:
         missing = sorted(models - source_models)
         unreviewed = sorted(source_models - models)

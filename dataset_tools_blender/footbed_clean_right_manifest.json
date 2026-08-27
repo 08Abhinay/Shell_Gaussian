@@ -1,0 +1,159 @@
+{
+  "version": 1,
+  "description": "Growing footbed-clean collection canonicalized to right shoes; new entries require manual review before publishing.",
+  "shoes": [
+    {
+      "name": "aj_12_basketball_sneakers",
+      "model": "aj_12_basketball_sneakers.glb",
+      "sha256": "e42552fd7bd9a61918c5097ae4c06371596533b3470f4fb4fc65acc0f5932716",
+      "reviewed": true,
+      "source_axes": {"length": "X", "width": "Y", "up": "Z"},
+      "selection": {"mode": "axis-side", "axis": "Y", "side": "min", "separate_loose_parts": true},
+      "mirror_width": false
+    },
+    {
+      "name": "birkenstock_arizona_sandal",
+      "model": "birkenstock_arizona_sandal.glb",
+      "sha256": "fb9ca5924b9b50ceed4d237695f553de98057df81b360d53c4cae9940cf39d11",
+      "reviewed": true,
+      "source_axes": {"length": "X", "width": "Y", "up": "Z"},
+      "selection": {"mode": "all"},
+      "mirror_width": true
+    },
+    {
+      "name": "canvas_shoe",
+      "model": "canvas_shoe.glb",
+      "sha256": "94d07dd323112c9896bcab73934c6879e2a303b39f264a0606e7a47c0873ddc8",
+      "reviewed": true,
+      "source_axes": {"length": "-Y", "width": "X", "up": "Z"},
+      "selection": {"mode": "all"},
+      "mirror_width": true
+    },
+    {
+      "name": "crocs_shoe",
+      "model": "crocs_shoe.glb",
+      "sha256": "d3ccea8f404f0d115715d18fa09e727b08f9966442f626d0995adb33a60d236f",
+      "reviewed": true,
+      "source_axes": {"length": "-X", "width": "-Y", "up": "Z"},
+      "selection": {"mode": "all"},
+      "mirror_width": false
+    },
+    {
+      "name": "crocs",
+      "model": "crocs.glb",
+      "sha256": "daf48c0690e3b8411a8a2e7c3186bf4ec5bca735d8ce642f67e390a5e2881775",
+      "reviewed": true,
+      "source_axes": {"length": "-Y", "width": "X", "up": "Z"},
+      "selection": {"mode": "all"},
+      "mirror_width": false
+    },
+    {
+      "name": "crocs_by_speedyart_studio",
+      "model": "crocs_by_speedyart_studio.glb",
+      "sha256": "304ddbf6ea07efeccdda71e9d8298c9c09dcc1da766f75f1e9237b6130694281",
+      "reviewed": true,
+      "source_axes": {"length": "-Y", "width": "X", "up": "Z"},
+      "selection": {"mode": "all"},
+      "mirror_width": false
+    },
+    {
+      "name": "duinn_shoes_womens_hiking_sandal_sport",
+      "model": "duinn_shoes_womens_hiking_sandal_sport.glb",
+      "sha256": "d6d5d1cc4171ff6e581a8e2251ef69b8a0fed8295acdb9b7fc42f3362735de91",
+      "reviewed": true,
+      "source_axes": {"length": "-Y", "width": "X", "up": "Z"},
+      "selection": {"mode": "all"},
+      "mirror_width": true
+    },
+    {
+      "name": "nike_air_jordan",
+      "model": "nike_air_jordan.glb",
+      "sha256": "adad2cfed819fcc2804bed10515d3a4410a840c81242b201995b3eeb17d318fe",
+      "reviewed": true,
+      "source_axes": {"length": "-X", "width": "Y", "up": "Z"},
+      "selection": {"mode": "axis-side", "axis": "Y", "side": "min", "separate_loose_parts": true},
+      "mirror_width": false
+    },
+    {
+      "name": "pb129_shoe_low",
+      "model": "pb129_shoe_low.glb",
+      "sha256": "ac2402f5cb85f292c90f931b8a365d62db0ac883fd3cf34d5fddd0a11c149d44",
+      "reviewed": true,
+      "source_axes": {"length": "X", "width": "Y", "up": "Z"},
+      "selection": {"mode": "all"},
+      "mirror_width": false
+    },
+    {
+      "name": "plateau_sandal_heels",
+      "model": "plateau_sandal_heels.glb",
+      "sha256": "8186804db398df028a3c752acb0302ebed591a11ac5093527479a06241a2f4ef",
+      "reviewed": true,
+      "source_axes": {"length": "-Y", "width": "X", "up": "Z"},
+      "selection": {"mode": "all"},
+      "mirror_width": true
+    },
+    {
+      "name": "priest_karol_wojtyas_sports_shoes",
+      "model": "priest_karol_wojtyas_sports_shoes.glb",
+      "sha256": "d270c2cb994b40eb3c8d5308be32accc35dc5e727204ecc896e0ccb8849379af",
+      "reviewed": true,
+      "source_axes": {"length": "-Y", "width": "X", "up": "Z"},
+      "selection": {"mode": "axis-side", "axis": "Y", "side": "min", "separate_loose_parts": true},
+      "mirror_width": false
+    },
+    {
+      "name": "red_high_heel_shoes",
+      "model": "red_high-heel_shoes.glb",
+      "sha256": "8cfbebb47f2d52a4d3712a6554af0f1ceba5ab12c65568d53267d64612e5c2e5",
+      "reviewed": true,
+      "source_axes": {"length": "-X", "width": "-Y", "up": "Z"},
+      "selection": {"mode": "axis-side", "axis": "X", "side": "max", "separate_loose_parts": true},
+      "mirror_width": false
+    },
+    {
+      "name": "sandal_1",
+      "model": "sandal_1.glb",
+      "sha256": "039d21d61addf626bd32577eb6a50e0dad745fc34f9a80a70a5e1ba4a9c0da09",
+      "reviewed": true,
+      "source_axes": {"length": "-X", "width": "-Y", "up": "Z"},
+      "selection": {"mode": "all"},
+      "mirror_width": false
+    },
+    {
+      "name": "sandals_0001",
+      "model": "sandals_0001.glb",
+      "sha256": "1bd16a14701952895b2c411fc030a049889b4964efc9fd216c3fad3946b52ba0",
+      "reviewed": true,
+      "source_axes": {"length": "-Y", "width": "X", "up": "Z"},
+      "selection": {"mode": "all"},
+      "mirror_width": true
+    },
+    {
+      "name": "shoes_mockup_asset_vans_skate_old_skool_shoes",
+      "model": "shoes_mockup_asset_-_vans_skate_old_skool_shoes.glb",
+      "sha256": "6142000ab7bb8504289351d4e03e10f35dc5c8eaad8d4b728bd84ae707bb40e7",
+      "reviewed": true,
+      "source_axes": {"length": "-Y", "width": "X", "up": "Z"},
+      "selection": {"mode": "axis-side", "axis": "Y", "side": "min", "separate_loose_parts": true},
+      "mirror_width": false
+    },
+    {
+      "name": "sneaker_vibe",
+      "model": "sneaker_vibe.glb",
+      "sha256": "225da89a26b28c8b564dc40fa50ba0e4145ba63cdd13bdc16207bf490108cc14",
+      "reviewed": true,
+      "source_axes": {"length": "X", "width": "Y", "up": "Z"},
+      "selection": {"mode": "all"},
+      "mirror_width": false
+    },
+    {
+      "name": "sneakers_seen",
+      "model": "sneakers_seen.glb",
+      "sha256": "53c17a663d8fc660aef9c3b2d6c88f7a080a9f4fabf0867cbc6d3caee51236d2",
+      "reviewed": true,
+      "source_axes": {"length": "-X", "width": "-Y", "up": "Z"},
+      "selection": {"mode": "axis-side", "axis": "Y", "side": "min", "separate_loose_parts": true},
+      "mirror_width": false
+    }
+  ]
+}

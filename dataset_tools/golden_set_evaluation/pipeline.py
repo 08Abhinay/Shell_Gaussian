@@ -141,14 +141,18 @@ def discover_glbs(source_root: Path) -> list[dict[str, Any]]:
         raise FileNotFoundError(source_root)
     records: list[dict[str, Any]] = []
     names: dict[str, Path] = {}
-    for model in sorted(path for path in source_root.iterdir() if path.suffix.lower() == ".glb"):
+    for model in sorted(path for path in source_root.rglob("*.glb") if path.is_file()):
         name = shoe_name(model)
         if name in names:
             raise ValueError(
                 f"GLB name collision after normalization: {names[name].name!r} and {model.name!r}"
             )
         names[name] = model
-        record: dict[str, Any] = {"name": name, "model": model.name, "source_axes": "auto"}
+        record: dict[str, Any] = {
+            "name": name,
+            "model": model.relative_to(source_root).as_posix(),
+            "source_axes": "auto",
+        }
         record.update(RENDER_OVERRIDES.get(name, {}))
         records.append(record)
     if not records:
