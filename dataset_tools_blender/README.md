@@ -206,6 +206,28 @@ published only after image, mask, camera, sparse-point, and bounding-box checks
 pass. Optional overrides are `--input-root`, `--output-root`, and
 `--colmap-bin`.
 
+## MILo Export
+
+The MILo exporter consumes the validated G-Shell images, masks, and exact
+Blender cameras. It writes MILo's Blender-style JSON layout and triangulates
+the initial sparse point cloud from training images only. Test images are
+available for evaluation but never appear in COLMAP point tracks. The output
+has no top-level `sparse/` directory, so stock MILo honors the explicit split.
+
+```bash
+$PYTHON $PIPELINE prepare-milo --shoe air_jordan_1 --gpu 0
+$PYTHON $PIPELINE validate-milo --shoe air_jordan_1
+$PYTHON $PIPELINE prepare-milo-turntable --shoe air_jordan_1 --gpu 0
+$PYTHON $PIPELINE validate-milo-turntable --shoe air_jordan_1
+```
+
+The pilot-first five-shoe workflow runs both variants in a detached tmux
+session and records persistent validation logs under the MILo output root:
+
+```bash
+bash dataset_tools_blender/milo/prepare_five_tmux.sh --gpus 0,1
+```
+
 ## NeuralUDF Export
 
 NeuralUDF expects the IDR/NeuS camera archive convention. The exporter uses the

@@ -12,6 +12,7 @@ if __package__ in {None, ""}:
 
 from dataset_tools_blender.core import *  # noqa: F403
 from dataset_tools_blender.gshell import pipeline as gshell_pipeline
+from dataset_tools_blender.milo import pipeline as milo_pipeline
 from dataset_tools_blender.neuraludf import pipeline as neuraludf_pipeline
 from dataset_tools_blender.neuraludf.pipeline import (
     effective_neuraludf_frames,
@@ -347,6 +348,52 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=DEFAULT_SUGAR_TURNTABLE_OUTPUT_ROOT,  # noqa: F405
     )
+
+    for command, help_text, variant, prepare in (
+        (
+            "prepare-milo",
+            "Create a 180-view MILo scene with train-only sparse points.",
+            milo_pipeline.FULL_VARIANT,
+            True,
+        ),
+        (
+            "validate-milo",
+            "Validate a 180-view MILo scene.",
+            milo_pipeline.FULL_VARIANT,
+            False,
+        ),
+        (
+            "prepare-milo-turntable",
+            "Create a 36-view MILo scene with train-only sparse points.",
+            milo_pipeline.TURNTABLE_VARIANT,
+            True,
+        ),
+        (
+            "validate-milo-turntable",
+            "Validate a 36-view MILo scene.",
+            milo_pipeline.TURNTABLE_VARIANT,
+            False,
+        ),
+    ):
+        milo_command = commands.add_parser(command, help=help_text)
+        add_common(milo_command)
+        add_selection(milo_command)
+        if prepare:
+            add_gpus(milo_command)
+        milo_command.add_argument(
+            "--input-root", type=Path, default=variant.default_input_root
+        )
+        milo_command.add_argument(
+            "--full-input-root", type=Path, default=DEFAULT_OUTPUT_ROOT  # noqa: F405
+        )
+        milo_command.add_argument(
+            "--output-root", type=Path, default=variant.default_output_root
+        )
+        if prepare:
+            milo_command.add_argument(
+                "--colmap-bin", type=Path, default=DEFAULT_COLMAP  # noqa: F405
+            )
+            milo_command.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
 
@@ -385,6 +432,14 @@ def main() -> None:
         ),
         "validate-sugar-turntable": (
             sugar_pipeline.run_validate_sugar_turntable
+        ),
+        "prepare-milo": milo_pipeline.run_prepare_milo,
+        "validate-milo": milo_pipeline.run_validate_milo,
+        "prepare-milo-turntable": (
+            milo_pipeline.run_prepare_milo_turntable
+        ),
+        "validate-milo-turntable": (
+            milo_pipeline.run_validate_milo_turntable
         ),
     }
     handlers[args.command](args)
