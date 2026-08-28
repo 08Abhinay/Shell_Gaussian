@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 
 import numpy as np
 import pytest
@@ -159,3 +162,52 @@ def test_canvas_first_contact_coverage_gaps_and_round_trip() -> None:
         samples,
         atol=1e-12,
     )
+
+
+def test_canvas_runner_artifacts_and_overwrite_contract(tmp_path: Path) -> None:
+    scene = Path(os.environ.get("FOOTSHELL_EVAL_ROOT", DEFAULT_EVAL_ROOT)) / "canvas_shoe"
+    if not scene.is_dir():
+        pytest.skip(f"external canvas dataset is unavailable: {scene}")
+    output = tmp_path / "alignment"
+    output.mkdir()
+    unrelated = output / "keep.txt"
+    unrelated.write_text("preserve me\n", encoding="utf-8")
+    command = [
+        sys.executable,
+        str(REPOSITORY_ROOT / "FootShellGaussian/scripts/run_alignment.py"),
+        "--shoe-mesh",
+        str(scene / "reference_mesh.ply"),
+        "--supr-model",
+        str(SUPR_MODEL),
+        "--output-dir",
+        str(output),
+    ]
+    first = subprocess.run(command, capture_output=True, text=True, check=False)
+    assert first.returncode == 0, first.stderr
+    expected = {
+        "alignment.json",
+        "foot_aligned.ply",
+        "footbed_surface.ply",
+        "alignment_overlay.ply",
+        "keep.txt",
+    }
+    assert {path.name for path in output.iterdir()} == expected
+    payload = json.loads((output / "alignment.json").read_text())
+    assert payload["schema_version"] == 1
+    assert Path(payload["inputs"]["shoe_mesh"]).is_absolute()
+    assert Path(payload["inputs"]["supr_model"]).is_absolute()
+    assert payload["plantar_contact"]["coverage"] == pytest.approx(104 / 107)
+    assert load_triangle_mesh(output / "foot_aligned.ply").vertices.shape == (266, 3)
+    assert load_triangle_mesh(output / "footbed_surface.ply").faces.shape == (350, 3)
+    overlay = load_triangle_mesh(output / "alignment_overlay.ply")
+    assert overlay.vertices.shape == (15030, 3)
+    assert overlay.faces.shape == (26883, 3)
+
+    refused = subprocess.run(command, capture_output=True, text=True, check=False)
+    assert refused.returncode != 0
+    assert "already exist" in refused.stderr
+    replaced = subprocess.run(
+        [*command, "--overwrite"], capture_output=True, text=True, check=False
+    )
+    assert replaced.returncode == 0, replaced.stderr
+    assert unrelated.read_text() == "preserve me\n"
