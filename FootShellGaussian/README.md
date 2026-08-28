@@ -19,9 +19,16 @@ pytest
 
 ## Coordinate contract
 
-The evaluation shoe frame is `X = heel-to-toe`, `Y = down toward the sole`,
-and `Z = width`. Raw SUPR is interpreted as `X = width`, `Y = anatomical
-height`, and `Z = heel-to-toe`. The fixed remap is therefore:
+This project accepts canonical **right shoes only**. The evaluation shoe frame
+is `+X = heel-to-toe`, `+Y = down toward the sole`, and `+Z = width`. The
+canonicalization metadata must declare
+`effective_gshell_x_length_y_down_z_width`; incompatible or missing metadata is
+rejected instead of inferring a frame with PCA. A metadata `mirror_width` value
+records how the source asset was canonicalized and does not trigger additional
+runtime mirroring.
+
+Raw SUPR is interpreted as `X = width`, `Y = anatomical height`, and
+`Z = heel-to-toe`. The fixed remap is therefore:
 
 ```text
 shoe X =  SUPR Z
@@ -29,7 +36,7 @@ shoe Y = -SUPR Y
 shoe Z =  SUPR X
 ```
 
-No PCA or data-dependent rotation is used.
+No PCA, data-dependent rotation, or runtime left/right mirroring is used.
 
 ## Run the canvas example
 
