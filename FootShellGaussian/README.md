@@ -58,3 +58,23 @@ footbed is saved separately in green so the overlay does not duplicate its
 triangles. Neutral SUPR first contact does not conform the foot to toe spring
 or the full shoe cavity; those remaining gaps are measurements, not fitting
 errors corrected by this milestone.
+
+## Verified canvas result and limitations
+
+The checked canvas run selects an interior sheet with 207 vertices and 350
+faces. It covers 94.99% of the shoe length and 86.42% of its width. The initial
+alignment covers 104 of 107 plantar samples (97.20%), reaches a zero minimum
+gap at first contact, and leaves a maximum covered plantar gap of approximately
+0.02129 shoe-frame units.
+
+Visual inspection confirms heel-to-toe orientation along positive X, upright
+placement, plausible horizontal scale, and no catastrophic intersection in
+this example. Canvas canonicalization records `mirror_width: true` in the
+reviewed right-shoe dataset; no independent medial/lateral landmark is present
+for a stronger handedness assertion.
+
+The selected canvas footbed contains one small rectangular hole in the source
+topology. The implementation reports projection misses rather than repairing
+that hole. It also does not pose the neutral foot, conform it to toe spring,
+optimize cavity clearance, or provide a general collision-free fitting
+guarantee.
