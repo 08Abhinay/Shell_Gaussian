@@ -38,6 +38,33 @@ shoe Z =  SUPR X
 
 No PCA, data-dependent rotation, or runtime left/right mirroring is used.
 
+## Interior support detection
+
+Footbed detection does not assume that the support surface is a disconnected
+mesh component. It first keeps nondegenerate triangles whose normals are within
+60 degrees of either vertical direction. Using the absolute normal direction
+makes this step insensitive to globally reversed face winding while excluding
+vertical sidewalls.
+
+The projected triangles are indexed on an adaptive X/Z grid with 256 cells
+along shoe length and square cells across shoe width. Exact barycentric
+intersections are evaluated at the grid samples. Support patches are grouped
+across 8-neighbour cells when their adjacent heights differ by no more than 2%
+of shoe length. Broad patches are kept separate so a valid footbed cannot be
+absorbed into an upper or outsole through a chain of locally shallow faces.
+
+A candidate must cover at least 65% of shoe length and 40% of shoe width, lie
+within the lower 60% of the shoe, have a sufficiently coherent footprint, and
+have consistent face orientation. The opening-facing candidate with the
+smallest median Y is selected. Its compact output consists only of contributing
+original shoe faces: the detector does not repair topology, fill holes, invent
+heights, or use a fixed-Y fallback. Height queries are evaluated against those
+exact source triangles, so uncovered regions remain invalid.
+
+This detector has been run deterministically on the 15 normal-shoe assets in
+`footbed_clean_right`. The two heel assets, `red_high_heel_shoes` and
+`plateau_sandal_heels`, remain explicitly deferred.
+
 ## Run the canvas example
 
 ```bash
