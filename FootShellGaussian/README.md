@@ -54,12 +54,19 @@ of shoe length. Broad patches are kept separate so a valid footbed cannot be
 absorbed into an upper or outsole through a chain of locally shallow faces.
 
 A candidate must cover at least 65% of shoe length and 40% of shoe width, lie
-within the lower 60% of the shoe, have a sufficiently coherent footprint, and
-have consistent face orientation. The opening-facing candidate with the
-smallest median Y is selected. Its compact output consists only of contributing
-original shoe faces: the detector does not repair topology, fill holes, invent
-heights, or use a fixed-Y fallback. Height queries are evaluated against those
-exact source triangles, so uncovered regions remain invalid.
+within the lower 60% of the shoe, and have consistent face orientation. It must
+also contain support within the middle 20% of shoe width along at least 65% of
+shoe length. This central-support check prevents separated upper panels from
+qualifying merely because their outermost points span a broad rectangle.
+
+`footprint_fill_fraction` is retained in diagnostics for compatibility. It is
+the projected surface completeness: the fraction of grid cells occupied inside
+the candidate's own X/Z bounding rectangle. The opening-facing candidate with
+the smallest median Y is selected after all qualification checks. Its compact
+output consists only of contributing original shoe faces: the detector does
+not repair topology, fill holes, invent heights, or use a fixed-Y fallback.
+Height queries use those exact source triangles, so uncovered regions remain
+invalid.
 
 This detector has been run deterministically on the 15 normal-shoe assets in
 `footbed_clean_right`. The two heel assets, `red_high_heel_shoes` and

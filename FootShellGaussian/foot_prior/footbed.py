@@ -15,8 +15,10 @@ from .mesh import TriangleMesh
 GRID_LENGTH_RESOLUTION = 256
 SUPPORT_NORMAL_ABS_Y_MIN = float(np.cos(np.deg2rad(60.0)))
 MAX_LAYER_HEIGHT_STEP_RATIO = 0.02
+CENTRAL_BAND_WIDTH_FRACTION = 0.20
 MIN_LENGTH_COVERAGE = 0.65
 MIN_WIDTH_COVERAGE = 0.40
+MIN_CENTRAL_SUPPORT_LENGTH_COVERAGE = 0.65
 LOWER_REGION_START_FRACTION = 0.40
 MIN_FOOTPRINT_FILL_FRACTION = 0.25
 MAX_HEIGHT_RANGE_RATIO = 0.15
@@ -40,6 +42,7 @@ class FootbedSurface:
     valid_mask: np.ndarray
     length_coverage: float
     width_coverage: float
+    central_support_length_coverage: float
     upward_facing_area_fraction: float
     support_like_area_fraction: float
     area_weighted_median_y: float
@@ -67,6 +70,9 @@ class FootbedSurface:
             ],
             "length_coverage": self.length_coverage,
             "width_coverage": self.width_coverage,
+            "central_support_length_coverage": (
+                self.central_support_length_coverage
+            ),
             "upward_facing_area_fraction": self.upward_facing_area_fraction,
             "support_like_area_fraction": self.support_like_area_fraction,
             "area_weighted_median_y": self.area_weighted_median_y,
@@ -167,6 +173,22 @@ def _make_grid(shoe_mesh: TriangleMesh) -> _Grid:
         x_centers=(x_edges[:-1] + x_edges[1:]) / 2.0,
         z_centers=(z_edges[:-1] + z_edges[1:]) / 2.0,
     )
+
+
+def _central_support_length_coverage(
+    x_indices: np.ndarray,
+    z_indices: np.ndarray,
+    grid_shape: tuple[int, int],
+) -> float:
+    """Measure shoe-length coverage inside the centered width band."""
+
+    x_count, z_count = grid_shape
+    band_count = max(1, int(np.ceil(CENTRAL_BAND_WIDTH_FRACTION * z_count)))
+    band_start = (z_count - band_count) // 2
+    inside_band = (z_indices >= band_start) & (
+        z_indices < band_start + band_count
+    )
+    return float(len(np.unique(x_indices[inside_band])) / x_count)
 
 
 def _center_index_range(
@@ -545,6 +567,9 @@ def identify_footbed_surface(shoe_mesh: TriangleMesh) -> FootbedSurface:
         width_coverage = float(
             (z_indices.max() - z_indices.min() + 1) * grid.dz / shoe_extents[2]
         )
+        central_support_length_coverage = _central_support_length_coverage(
+            x_indices, z_indices, grid.shape
+        )
         median_y = float(np.median(heights))
         unique_cell_count = int(
             len(np.unique(x_indices * grid.shape[1] + z_indices))
@@ -557,6 +582,8 @@ def identify_footbed_surface(shoe_mesh: TriangleMesh) -> FootbedSurface:
         qualifies = bool(
             length_coverage >= MIN_LENGTH_COVERAGE
             and width_coverage >= MIN_WIDTH_COVERAGE
+            and central_support_length_coverage
+            >= MIN_CENTRAL_SUPPORT_LENGTH_COVERAGE
             and (shoe_extents[1] <= np.finfo(np.float64).eps or median_y >= lower_y)
             and unique_cell_count / bounding_cell_count >= MIN_FOOTPRINT_FILL_FRACTION
             and np.ptp(heights) / shoe_extents[0] <= MAX_HEIGHT_RANGE_RATIO
@@ -577,6 +604,9 @@ def identify_footbed_surface(shoe_mesh: TriangleMesh) -> FootbedSurface:
                 "height_range_ratio": float(np.ptp(heights) / shoe_extents[0]),
                 "length_coverage": length_coverage,
                 "width_coverage": width_coverage,
+                "central_support_length_coverage": (
+                    central_support_length_coverage
+                ),
                 "footprint_fill_fraction": float(
                     unique_cell_count / bounding_cell_count
                 ),
@@ -665,6 +695,9 @@ def identify_footbed_surface(shoe_mesh: TriangleMesh) -> FootbedSurface:
         valid_mask=valid_mask,
         length_coverage=float(selected["length_coverage"]),
         width_coverage=float(selected["width_coverage"]),
+        central_support_length_coverage=float(
+            selected["central_support_length_coverage"]
+        ),
         upward_facing_area_fraction=(upward_area / total_area),
         support_like_area_fraction=(support_like_area / total_area),
         area_weighted_median_y=_weighted_median(centroid_y, selected_areas),

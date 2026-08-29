@@ -32,6 +32,23 @@ NORMAL_SHOES = (
     "sneaker_vibe",
     "sneakers_seen",
 )
+EXPECTED_SUPPORT_FACE_COUNTS = {
+    "aj_12_basketball_sneakers": 2252,
+    "birkenstock_arizona_sandal": 8937,
+    "canvas_shoe": 350,
+    "crocs": 974,
+    "crocs_by_speedyart_studio": 11017,
+    "crocs_shoe": 80790,
+    "duinn_shoes_womens_hiking_sandal_sport": 4812,
+    "nike_air_jordan": 286,
+    "pb129_shoe_low": 713,
+    "priest_karol_wojtyas_sports_shoes": 2340,
+    "sandal_1": 14023,
+    "sandals_0001": 5909,
+    "shoes_mockup_asset_vans_skate_old_skool_shoes": 602,
+    "sneaker_vibe": 390,
+    "sneakers_seen": 240,
+}
 
 
 def evaluation_root() -> Path:
@@ -121,6 +138,28 @@ def ring_sheet() -> TriangleMesh:
     return TriangleMesh(vertices, np.asarray(faces, dtype=np.int64))
 
 
+def u_shaped_upper(y: float, upward: bool = True) -> TriangleMesh:
+    """Build a broad surface whose middle is supported only near the toe."""
+
+    x_values = (-5.0, 3.0, 5.0)
+    z_values = (-2.0, -1.0, 1.0, 2.0)
+    vertices = np.asarray([[x, y, z] for x in x_values for z in z_values])
+    faces: list[list[int]] = []
+    for x_index in range(2):
+        for z_index in range(3):
+            if (x_index, z_index) == (0, 1):
+                continue
+            first = x_index * 4 + z_index
+            second = (x_index + 1) * 4 + z_index
+            faces.extend(
+                [[first, second, second + 1], [first, second + 1, first + 1]]
+            )
+    face_array = np.asarray(faces, dtype=np.int64)
+    if not upward:
+        face_array = face_array[:, ::-1]
+    return TriangleMesh(vertices, face_array)
+
+
 @pytest.mark.parametrize("reversed_winding", [False, True])
 def test_selects_inner_sheet_independently_of_face_winding(
     reversed_winding: bool,
@@ -145,6 +184,32 @@ def test_selects_inner_sheet_independently_of_face_winding(
     assert result.width_coverage == pytest.approx(1.0)
 
 
+@pytest.mark.parametrize("reversed_winding", [False, True])
+def test_rejects_broad_upper_without_central_support(
+    reversed_winding: bool,
+) -> None:
+    upward = not reversed_winding
+    height_marker = sheet((-1.0, 1.0), (-0.2, 0.2), (-1.0,) * 4, upward)
+    upper = u_shaped_upper(0.0, upward)
+    footbed = sheet((-5.0, 5.0), (-2.0, 2.0), (0.5,) * 4, upward)
+    outsole = sheet((-5.0, 5.0), (-2.0, 2.0), (1.0,) * 4, upward)
+
+    result = identify_footbed_surface(
+        combine(height_marker, upper, footbed, outsole)
+    )
+
+    assert result.original_face_indices.tolist() == [12, 13]
+    assert result.central_support_length_coverage == pytest.approx(1.0)
+    false_upper = next(
+        layer for layer in result.diagnostics if layer["source_face_count"] == 10
+    )
+    assert false_upper["length_coverage"] >= 0.65
+    assert false_upper["width_coverage"] >= 0.40
+    assert false_upper["footprint_fill_fraction"] >= 0.25
+    assert false_upper["central_support_length_coverage"] < 0.65
+    assert not false_upper["qualifies"]
+
+
 def test_extracts_footbed_faces_when_connected_to_sidewall() -> None:
     result = identify_footbed_surface(connected_footbed_and_sidewall())
     assert result.original_face_indices.tolist() == [0, 1]
@@ -159,6 +224,7 @@ def test_rejects_narrow_and_vertical_surfaces() -> None:
         identify_footbed_surface(mesh)
     message = str(error.value)
     assert '"length_coverage"' in message
+    assert '"central_support_length_coverage"' in message
     assert '"footprint_fill_fraction"' in message
 
 
@@ -205,6 +271,7 @@ def test_known_canvas_component_and_sampling() -> None:
     assert np.count_nonzero(footbed.valid_mask) == 15922
     assert footbed.length_coverage == pytest.approx(0.94921875)
     assert footbed.width_coverage == pytest.approx(0.864583333333331)
+    assert footbed.central_support_length_coverage == pytest.approx(0.94921875)
     assert footbed.upward_facing_area_fraction == pytest.approx(1.0)
     assert footbed.support_like_area_fraction == pytest.approx(1.0)
     assert footbed.area_weighted_median_y == pytest.approx(0.028700418, abs=1e-9)
@@ -214,6 +281,28 @@ def test_known_canvas_component_and_sampling() -> None:
     np.testing.assert_array_equal(valid, [True, False])
     assert np.isfinite(heights[0])
     assert np.isnan(heights[1])
+
+
+def test_pb129_selects_complete_interior_footbed() -> None:
+    path = evaluation_root() / "pb129_shoe_low/reference_mesh.ply"
+    if not path.is_file():
+        pytest.skip(f"external PB129 dataset is unavailable: {path}")
+    footbed = identify_footbed_surface(load_triangle_mesh(path))
+    assert footbed.original_face_indices[0] == 2001
+    assert footbed.original_face_indices[-1] == 6995
+    assert footbed.mesh.vertices.shape == (400, 3)
+    assert footbed.mesh.faces.shape == (713, 3)
+    np.testing.assert_allclose(
+        footbed.bounds,
+        [
+            [-0.09381073, 0.00014681, -0.03388835],
+            [0.08254347, 0.02671137, 0.03761325],
+        ],
+        atol=1e-8,
+    )
+    assert footbed.height_grid.shape == (256, 119)
+    assert np.count_nonzero(footbed.valid_mask) == 14486
+    assert footbed.central_support_length_coverage == pytest.approx(0.81640625)
 
 
 @pytest.mark.parametrize("shoe_name", NORMAL_SHOES)
@@ -226,8 +315,10 @@ def test_all_normal_shoes_select_opening_facing_support(shoe_name: str) -> None:
     np.testing.assert_array_equal(
         first.original_face_indices, second.original_face_indices
     )
+    assert len(first.original_face_indices) == EXPECTED_SUPPORT_FACE_COUNTS[shoe_name]
     assert first.length_coverage >= 0.65
     assert first.width_coverage >= 0.40
+    assert first.central_support_length_coverage >= 0.65
     assert first.upward_facing_area_fraction >= 0.90
     assert first.support_like_area_fraction == pytest.approx(1.0)
     assert np.count_nonzero(first.valid_mask) > 0
