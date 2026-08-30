@@ -247,19 +247,26 @@ tmux new-session -d -s heading-pilot-audit \
   2>&1 | tee /home/ab5298/Outputs/FootShellGaussian/heading_pilot_v1/logs/audit.log'
 ```
 
-Inspect all five audit views for every shoe before building. Then run:
+Inspect all five audit views for every shoe before building. The exact
+three-GPU pilot build command is:
 
 ```bash
 tmux new-session -d -s heading-pilot-build \
-  'cd /storage/Abhinay/Shell_Gaussian && \
-  MANIFEST=/storage/Abhinay/Shell_Gaussian/dataset_tools_blender/footbed_clean_right_heading_pilot_v1_manifest.json \
-  SOURCE_ROOT=/home/ab5298/dataset/datasets/external/golden_set_eval_glb/curated_subsets/footbed_clean \
-  OUTPUT_ROOT=/home/ab5298/dataset/datasets/processed/gshell/footbed_clean_right_heading_v1 \
-  AUDIT_ROOT=/home/ab5298/Outputs/FootShellGaussian/heading_pilot_v1/audit \
-  GPU=0 dataset_tools_blender/run_footbed_clean_right.sh build \
-  canvas_shoe leather_boots ww_ii_german_jack_boots crocs_shoe sandal_1 pb129_shoe_low \
-  2>&1 | tee /home/ab5298/Outputs/FootShellGaussian/heading_pilot_v1/logs/build.log'
+  "bash -lc 'set -o pipefail; \
+  cd /storage/Abhinay/Shell_Gaussian; \
+  /home/ab5298/anaconda3/envs/shellgaussianenv/bin/python \
+  /storage/Abhinay/Shell_Gaussian/dataset_tools_blender/pipeline.py build \
+  --all --gpus 0,1,2 \
+  --source-root /home/ab5298/dataset/datasets/external/golden_set_eval_glb/curated_subsets/footbed_clean \
+  --manifest /storage/Abhinay/Shell_Gaussian/dataset_tools_blender/footbed_clean_right_heading_pilot_v1_manifest.json \
+  --output-root /home/ab5298/dataset/datasets/processed/gshell/footbed_clean_right_heading_v1 \
+  --blender /home/ab5298/anaconda3/envs/shellgaussianenv/bin/blender \
+  2>&1 | tee /home/ab5298/Outputs/FootShellGaussian/heading_pilot_v1/logs/build-3gpu.log'"
 ```
+
+The pipeline validates and skips an already completed shoe. It distributes
+unfinished shoes over the three listed physical GPUs and publishes each shoe
+only after its transactional validation passes.
 
 After the build session exits successfully, validate without Blender:
 
