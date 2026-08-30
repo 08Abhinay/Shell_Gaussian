@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PYTHON=/home/ab5298/anaconda3/envs/shellgaussianenv/bin/python
-BLENDER=/home/ab5298/anaconda3/envs/shellgaussianenv/bin/blender
-PIPELINE=/storage/Abhinay/Shell_Gaussian/dataset_tools_blender/pipeline.py
-MANIFEST=/storage/Abhinay/Shell_Gaussian/dataset_tools_blender/footbed_clean_right_manifest.json
-SOURCE_ROOT=/home/ab5298/dataset/datasets/external/golden_set_eval_glb/curated_subsets/footbed_clean
-OUTPUT_ROOT=/home/ab5298/dataset/datasets/processed/gshell/footbed_clean_right
-AUDIT_ROOT=/home/ab5298/Outputs/FootShellGaussian/canonicalization_audit
+PYTHON=${PYTHON:-/home/ab5298/anaconda3/envs/shellgaussianenv/bin/python}
+BLENDER=${BLENDER:-/home/ab5298/anaconda3/envs/shellgaussianenv/bin/blender}
+PIPELINE=${PIPELINE:-/storage/Abhinay/Shell_Gaussian/dataset_tools_blender/pipeline.py}
+MANIFEST=${MANIFEST:-/storage/Abhinay/Shell_Gaussian/dataset_tools_blender/footbed_clean_right_manifest.json}
+SOURCE_ROOT=${SOURCE_ROOT:-/home/ab5298/dataset/datasets/external/golden_set_eval_glb/curated_subsets/footbed_clean}
+OUTPUT_ROOT=${OUTPUT_ROOT:-/home/ab5298/dataset/datasets/processed/gshell/footbed_clean_right}
+AUDIT_ROOT=${AUDIT_ROOT:-/home/ab5298/Outputs/FootShellGaussian/canonicalization_audit}
 
 ACTION=${1:-}
 if [[ -z "$ACTION" ]]; then
@@ -23,6 +23,10 @@ else
 fi
 
 GPU=${GPU:-0}
+BUILD_ARGS=()
+if [[ ${OVERWRITE:-0} == 1 ]]; then
+    BUILD_ARGS+=(--overwrite)
+fi
 
 run_audit() {
     local shoe
@@ -46,7 +50,8 @@ run_build() {
             --manifest "$MANIFEST" \
             --output-root "$OUTPUT_ROOT" \
             --blender "$BLENDER" \
-            --gpu "$GPU"
+            --gpu "$GPU" \
+            "${BUILD_ARGS[@]}"
     done
 }
 

@@ -19,6 +19,11 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
+from dataset_tools_blender.horizontal_alignment import (
+    validate_horizontal_alignment_config,
+    validate_horizontal_alignment_metadata,
+)
+
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_SOURCE_ROOT = Path(
@@ -232,11 +237,28 @@ def load_manifest(
     ):
         raise ValueError(f"Unsupported manifest schema: {path}")
 
+    inventory_policy = payload.get("inventory_policy", "exact")
+    if inventory_policy not in {"exact", "listed_subset"}:
+        raise ValueError(
+            f"Unsupported inventory_policy: {inventory_policy!r}"
+        )
+    horizontal_alignment = payload.get("horizontal_alignment")
+    if horizontal_alignment is not None:
+        validate_horizontal_alignment_config(horizontal_alignment)
+
     records: list[dict[str, Any]] = []
     names: set[str] = set()
     models: set[str] = set()
     axis_tokens = {"X", "Y", "Z", "-X", "-Y", "-Z"}
-    for record in payload["shoes"]:
+    for raw_record in payload["shoes"]:
+        record = dict(raw_record)
+        if "horizontal_alignment" in record:
+            raise ValueError(
+                "horizontal_alignment is a manifest-level setting, not a "
+                f"per-shoe setting: {record.get('name', '')}"
+            )
+        if horizontal_alignment is not None:
+            record["horizontal_alignment"] = dict(horizontal_alignment)
         name = str(record.get("name", ""))
         model = str(record.get("model", ""))
         if name != normalized_name(model):
@@ -295,7 +317,12 @@ def load_manifest(
         for path in source_root.rglob("*.glb")
         if path.is_file()
     }
-    if source_models != models:
+    inventory_mismatch = (
+        source_models != models
+        if inventory_policy == "exact"
+        else not models.issubset(source_models)
+    )
+    if inventory_mismatch:
         missing = sorted(models - source_models)
         unreviewed = sorted(source_models - models)
         raise ValueError(
@@ -474,7 +501,9 @@ def validate_frame_payload(
 
 
 def validate_scene(
-    scene: Path, validate_pixels: bool = True
+    scene: Path,
+    validate_pixels: bool = True,
+    expected_record: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     errors: list[str] = []
     expected_files = {
@@ -538,6 +567,18 @@ def validate_scene(
             errors.append(
                 "reference mesh projection validation did not pass"
             )
+        expected_alignment = (
+            expected_record.get("horizontal_alignment")
+            if expected_record is not None
+            else None
+        )
+        if expected_alignment is not None:
+            canonical = metadata.get("canonical_geometry", {})
+            errors.extend(
+                validate_horizontal_alignment_metadata(
+                    canonical, expected_alignment
+                )
+            )
 
     mesh_path = scene / "reference_mesh.ply"
     if not mesh_path.is_file():
@@ -546,6 +587,15 @@ def validate_scene(
         try:
             vertex_count, face_count = ply_counts(mesh_path)
             mesh_metadata = metadata.get("reference_mesh", {})
+            if (
+                expected_record is not None
+                and expected_record.get("horizontal_alignment") is not None
+                and mesh_metadata.get("coordinate_system")
+                != "effective_gshell_x_length_y_down_z_width"
+            ):
+                errors.append(
+                    "reference mesh has the wrong coordinate system"
+                )
             if (
                 vertex_count != mesh_metadata.get("vertices")
                 or face_count != mesh_metadata.get("faces")
@@ -722,7 +772,7 @@ def build_record(
     name = str(record["name"])
     target = args.output_root.resolve() / name
     if target.exists() and not args.overwrite:
-        validation = validate_scene(target)
+        validation = validate_scene(target, expected_record=record)
         print(f"[skip] {name}: existing scene is valid", flush=True)
         return validation
     args.output_root.mkdir(parents=True, exist_ok=True)
@@ -733,7 +783,7 @@ def build_record(
     try:
         print(f"[build] {name} on physical GPU {gpu}", flush=True)
         run_blender(blender_command(args, "build", record, temporary), gpu)
-        validation = validate_scene(temporary)
+        validation = validate_scene(temporary, expected_record=record)
         if target.exists():
             shutil.rmtree(target)
         temporary.rename(target)
@@ -842,6 +892,7 @@ def run_validate(args: argparse.Namespace) -> None:
     )
     for record in records:
         result = validate_scene(
-            args.output_root.resolve() / str(record["name"])
+            args.output_root.resolve() / str(record["name"]),
+            expected_record=record,
         )
         print(json.dumps(result, sort_keys=True))

@@ -211,6 +211,71 @@ tmux attach -t footbed-clean-build
 Do not set `reviewed: true` merely to make `build` run. The audit is the manual
 semantic gate that establishes the coordinate and right-shoe contract.
 
+### Six-shoe automatic-heading pilot
+
+The versioned pilot manifest
+[`footbed_clean_right_heading_pilot_v1_manifest.json`](footbed_clean_right_heading_pilot_v1_manifest.json)
+rebuilds six selected shoes from their raw GLBs into:
+
+```text
+/home/ab5298/dataset/datasets/processed/gshell/footbed_clean_right_heading_v1
+```
+
+This pilot uses `inventory_policy = "listed_subset"`. Every listed file must
+exist and match its checksum, but later GLBs added to the same raw directory do
+not change this frozen six-shoe experiment.
+
+After source-axis mapping and right-shoe selection, the worker estimates the
+remaining top-view heading from triangle centroids in the lowest 20% of
+physical height. Triangle area supplies the statistical weight. The dominant
+axis of the resulting two-dimensional covariance matrix is rotated onto `+X`.
+The full selected shoe receives this rotation before its complete bounding box
+is centered and uniformly scaled. Footbed detection is not used in this step.
+
+Run the semantic audit first in a detached `tmux` session:
+
+```bash
+mkdir -p /home/ab5298/Outputs/FootShellGaussian/heading_pilot_v1/logs
+tmux new-session -d -s heading-pilot-audit \
+  'cd /storage/Abhinay/Shell_Gaussian && \
+  MANIFEST=/storage/Abhinay/Shell_Gaussian/dataset_tools_blender/footbed_clean_right_heading_pilot_v1_manifest.json \
+  SOURCE_ROOT=/home/ab5298/dataset/datasets/external/golden_set_eval_glb/curated_subsets/footbed_clean \
+  OUTPUT_ROOT=/home/ab5298/dataset/datasets/processed/gshell/footbed_clean_right_heading_v1 \
+  AUDIT_ROOT=/home/ab5298/Outputs/FootShellGaussian/heading_pilot_v1/audit \
+  GPU=0 dataset_tools_blender/run_footbed_clean_right.sh audit \
+  canvas_shoe leather_boots ww_ii_german_jack_boots crocs_shoe sandal_1 pb129_shoe_low \
+  2>&1 | tee /home/ab5298/Outputs/FootShellGaussian/heading_pilot_v1/logs/audit.log'
+```
+
+Inspect all five audit views for every shoe before building. Then run:
+
+```bash
+tmux new-session -d -s heading-pilot-build \
+  'cd /storage/Abhinay/Shell_Gaussian && \
+  MANIFEST=/storage/Abhinay/Shell_Gaussian/dataset_tools_blender/footbed_clean_right_heading_pilot_v1_manifest.json \
+  SOURCE_ROOT=/home/ab5298/dataset/datasets/external/golden_set_eval_glb/curated_subsets/footbed_clean \
+  OUTPUT_ROOT=/home/ab5298/dataset/datasets/processed/gshell/footbed_clean_right_heading_v1 \
+  AUDIT_ROOT=/home/ab5298/Outputs/FootShellGaussian/heading_pilot_v1/audit \
+  GPU=0 dataset_tools_blender/run_footbed_clean_right.sh build \
+  canvas_shoe leather_boots ww_ii_german_jack_boots crocs_shoe sandal_1 pb129_shoe_low \
+  2>&1 | tee /home/ab5298/Outputs/FootShellGaussian/heading_pilot_v1/logs/build.log'
+```
+
+After the build session exits successfully, validate without Blender:
+
+```bash
+MANIFEST=/storage/Abhinay/Shell_Gaussian/dataset_tools_blender/footbed_clean_right_heading_pilot_v1_manifest.json \
+SOURCE_ROOT=/home/ab5298/dataset/datasets/external/golden_set_eval_glb/curated_subsets/footbed_clean \
+OUTPUT_ROOT=/home/ab5298/dataset/datasets/processed/gshell/footbed_clean_right_heading_v1 \
+dataset_tools_blender/run_footbed_clean_right.sh validate \
+canvas_shoe leather_boots ww_ii_german_jack_boots crocs_shoe sandal_1 pb129_shoe_low
+```
+
+The measured angle, applied correction, confidence ratio, rotation matrix, and
+complete source-to-canonical matrix are recorded in both the audit and
+canonicalization metadata. Existing manifests without a
+`horizontal_alignment` block retain the previous no-correction behavior.
+
 ## SuGaR Export
 
 SuGaR needs a COLMAP model and an initial sparse point cloud. The exporter

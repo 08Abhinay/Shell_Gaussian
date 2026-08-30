@@ -8,13 +8,22 @@ import json
 import math
 import os
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
 
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import bpy
 import numpy as np
 from mathutils import Matrix, Vector
+
+from dataset_tools_blender.horizontal_alignment import (
+    estimate_horizontal_alignment,
+    validate_horizontal_alignment_config,
+)
 
 
 RESOLUTION_X = 1536
@@ -73,7 +82,12 @@ def manifest_entry(path: Path, shoe: str) -> dict[str, Any]:
     matches = [record for record in payload["shoes"] if record["name"] == shoe]
     if len(matches) != 1:
         raise ValueError(f"Manifest does not contain exactly one entry for {shoe!r}")
-    return matches[0]
+    entry = dict(matches[0])
+    horizontal_alignment = payload.get("horizontal_alignment")
+    if horizontal_alignment is not None:
+        validate_horizontal_alignment_config(horizontal_alignment)
+        entry["horizontal_alignment"] = dict(horizontal_alignment)
+    return entry
 
 
 def reset_scene(resolution_x: int = RESOLUTION_X, resolution_y: int = RESOLUTION_Y) -> None:
@@ -415,28 +429,74 @@ def canonicalize(entry: dict[str, Any], model_path: Path) -> tuple[list[bpy.type
         objects, entry.get("selection", {"mode": "all"})
     )
     points = all_vertices(objects)
-    bbox_min = points.min(axis=0)
-    bbox_max = points.max(axis=0)
-    center = 0.5 * (bbox_min + bbox_max)
+    source_bbox_min = points.min(axis=0)
+    source_bbox_max = points.max(axis=0)
+    heading_config = entry.get("horizontal_alignment")
+    heading_summary = None
+    heading_matrix = np.eye(4, dtype=np.float64)
+    if heading_config is not None:
+        vertices, triangles = mesh_triangles(objects)
+        alignment = estimate_horizontal_alignment(
+            vertices,
+            triangles,
+            lower_height_fraction=float(
+                heading_config["lower_height_fraction"]
+            ),
+            minimum_axis_ratio=float(
+                heading_config["minimum_axis_ratio"]
+            ),
+            maximum_abs_angle_degrees=float(
+                heading_config["maximum_abs_angle_degrees"]
+            ),
+        )
+        apply_axis_transform(objects, alignment.rotation_3x3)
+        heading_summary = alignment.to_dict()
+        heading_matrix = alignment.rotation_4x4
+    aligned_points = all_vertices(objects)
+    aligned_bbox_min = aligned_points.min(axis=0)
+    aligned_bbox_max = aligned_points.max(axis=0)
+    center = 0.5 * (aligned_bbox_min + aligned_bbox_max)
     translate_objects(objects, -center)
     centered_points = all_vertices(objects)
     schedule = camera_schedule()
     scale, framing = scale_for_camera_contract(centered_points, schedule)
     scale_objects(objects, scale)
     canonical_points = all_vertices(objects)
+    axis_matrix_4x4 = np.eye(4, dtype=np.float64)
+    axis_matrix_4x4[:3, :3] = axis_matrix
+    translation_matrix = np.eye(4, dtype=np.float64)
+    translation_matrix[:3, 3] = -center
+    scale_matrix = np.diag([scale, scale, scale, 1.0])
+    source_to_canonical = (
+        scale_matrix
+        @ translation_matrix
+        @ heading_matrix
+        @ axis_matrix_4x4
+    )
     summary = {
         "source_axes": entry["source_axes"],
         "mirror_width": bool(entry.get("mirror_width", False)),
         "axis_matrix": axis_matrix.tolist(),
         "selection": selection_summary,
-        "source_bbox_min": bbox_min.tolist(),
-        "source_bbox_max": bbox_max.tolist(),
+        "source_bbox_min": source_bbox_min.tolist(),
+        "source_bbox_max": source_bbox_max.tolist(),
+        "heading_aligned_bbox_min": aligned_bbox_min.tolist(),
+        "heading_aligned_bbox_max": aligned_bbox_max.tolist(),
         "center_offset": (-center).tolist(),
         "uniform_scale": scale,
+        "source_to_canonical_matrix": source_to_canonical.tolist(),
         "canonical_bbox_min": canonical_points.min(axis=0).tolist(),
         "canonical_bbox_max": canonical_points.max(axis=0).tolist(),
         "framing": framing,
     }
+    if heading_summary is not None:
+        summary["horizontal_alignment"] = heading_summary
+        print(
+            f"[heading] {entry['name']}: "
+            f"measured={heading_summary['measured_angle_degrees']:.6f}deg, "
+            f"correction={heading_summary['correction_angle_degrees']:.6f}deg, "
+            f"axis_ratio={heading_summary['axis_ratio']:.6f}"
+        )
     print(
         f"[setup] {entry['name']}: objects={len(objects)}, scale={scale:.8g}, "
         f"occupancy={framing['reference_occupancy']:.4f}, "
@@ -780,9 +840,9 @@ def audit(entry: dict[str, Any], source_root: Path, output: Path) -> None:
     views = (
         ("side", -90.0, 0.0),
         ("toe", 0.0, 0.0),
-        ("opposite", 90.0, 0.0),
         ("heel", 180.0, 0.0),
         ("top", -90.0, 65.0),
+        ("bottom", -90.0, -65.0),
     )
     temp_dir = Path(tempfile.mkdtemp(prefix=f"{entry['name']}_audit_"))
     try:

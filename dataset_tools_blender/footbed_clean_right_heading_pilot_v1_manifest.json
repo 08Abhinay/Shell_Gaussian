@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "description": "Frozen six-shoe pilot for automatic canonical heading alignment from raw GLBs.",
+  "inventory_policy": "listed_subset",
+  "horizontal_alignment": {
+    "method": "lower_geometry_area_weighted_pca",
+    "lower_height_fraction": 0.20,
+    "minimum_axis_ratio": 2.0,
+    "maximum_abs_angle_degrees": 45.0
+  },
+  "shoes": [
+    {
+      "name": "canvas_shoe",
+      "model": "canvas_shoe.glb",
+      "sha256": "94d07dd323112c9896bcab73934c6879e2a303b39f264a0606e7a47c0873ddc8",
+      "reviewed": true,
+      "source_axes": {"length": "-Y", "width": "X", "up": "Z"},
+      "selection": {"mode": "all"},
+      "mirror_width": true
+    },
+    {
+      "name": "crocs_shoe",
+      "model": "crocs_shoe.glb",
+      "sha256": "d3ccea8f404f0d115715d18fa09e727b08f9966442f626d0995adb33a60d236f",
+      "reviewed": true,
+      "source_axes": {"length": "X", "width": "Y", "up": "Z"},
+      "selection": {"mode": "all"},
+      "mirror_width": false
+    },
+    {
+      "name": "leather_boots",
+      "model": "leather_boots.glb",
+      "sha256": "c61b1a2b86feb1f8f76ea26c8647a65e04ce4806e9c76d7f662f282e9904cc30",
+      "reviewed": true,
+      "source_axes": {"length": "-Y", "width": "X", "up": "Z"},
+      "selection": {"mode": "all"},
+      "mirror_width": false
+    },
+    {
+      "name": "pb129_shoe_low",
+      "model": "pb129_shoe_low.glb",
+      "sha256": "ac2402f5cb85f292c90f931b8a365d62db0ac883fd3cf34d5fddd0a11c149d44",
+      "reviewed": true,
+      "source_axes": {"length": "X", "width": "Y", "up": "Z"},
+      "selection": {"mode": "all"},
+      "mirror_width": false
+    },
+    {
+      "name": "sandal_1",
+      "model": "sandal_1.glb",
+      "sha256": "039d21d61addf626bd32577eb6a50e0dad745fc34f9a80a70a5e1ba4a9c0da09",
+      "reviewed": true,
+      "source_axes": {"length": "-X", "width": "-Y", "up": "Z"},
+      "selection": {"mode": "all"},
+      "mirror_width": false
+    },
+    {
+      "name": "ww_ii_german_jack_boots",
+      "model": "ww_ii_german_jack_boots.glb",
+      "sha256": "4d924ce41d2310f03976910998b91d2f227bbb1970ae2de6727ce7e23c96d9b6",
+      "reviewed": true,
+      "source_axes": {"length": "-Y", "width": "X", "up": "Z"},
+      "selection": {"mode": "axis-side", "axis": "Y", "side": "min", "separate_loose_parts": true},
+      "mirror_width": false
+    }
+  ]
+}

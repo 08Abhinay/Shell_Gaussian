@@ -123,6 +123,17 @@ A new raw GLB must first be audited, built, and validated by
 <processed-root>/<shoe>/blender_canonicalization.json
 ```
 
+Residual top-view heading is corrected in the Blender dataset stage, before
+this project detects a footbed. The heading-v1 pilot input root is:
+
+```text
+/home/ab5298/dataset/datasets/processed/gshell/footbed_clean_right_heading_v1
+```
+
+Footbed detection must not be used to rotate a shoe. It consumes the already
+oriented `reference_mesh.ply` and supplies only the support geometry needed by
+functional normalization.
+
 Shoe preparation then performs the following operations in a fixed order:
 
 1. Validate that the metadata declares the canonical right-shoe coordinate
@@ -175,6 +186,24 @@ toe panel, or shaft. Only accept `shoe_normalized.ply` and the normalization in
 `shoe_preparation.json` after that support surface is visually accepted. If the
 footbed is wrong, the derived normalization is also invalid and must not be used
 for SUPR placement.
+
+To prepare the complete six-shoe heading pilot in `tmux`, run:
+
+```bash
+mkdir -p /home/ab5298/Outputs/FootShellGaussian/heading_pilot_v1/logs
+tmux new-session -d -s heading-pilot-normalization \
+  'cd /storage/Abhinay/Shell_Gaussian/FootShellGaussian && \
+  INPUT_ROOT=/home/ab5298/dataset/datasets/processed/gshell/footbed_clean_right_heading_v1 \
+  OUTPUT_ROOT=/home/ab5298/Outputs/FootShellGaussian/heading_pilot_v1/normalization \
+  scripts/run_footbed_clean_right_preparation.sh \
+  canvas_shoe leather_boots ww_ii_german_jack_boots crocs_shoe sandal_1 pb129_shoe_low \
+  2>&1 | tee /home/ab5298/Outputs/FootShellGaussian/heading_pilot_v1/logs/normalization.log'
+```
+
+This command runs Checkpoint 2 followed by Checkpoint 3 for each shoe. A
+failure or incorrect green support overlay is a reason to stop and diagnose
+that shoe; it is not permission to change footbed thresholds during the
+heading milestone.
 
 ## Run the canvas example
 
