@@ -1,10 +1,12 @@
 # FootShellGaussian
 
 `FootShellGaussian` is a small, deterministic first-stage geometry project for
-placing a neutral right SUPR foot inside an evaluation shoe mesh. The initial
-milestone uses a fixed coordinate remap, uniform length scaling, horizontal
-bounding-box centering, detected-footbed first contact, and explicit forward
-and inverse coordinate transforms.
+preparing a canonical right shoe and placing a neutral right SUPR foot inside
+it. Shoe preparation validates the coordinate frame, detects the interior
+support, and constructs a reversible functional-length normalization. The
+initial foot milestone uses a fixed coordinate remap, uniform length scaling,
+horizontal bounding-box centering, detected-footbed first contact, and explicit
+forward and inverse coordinate transforms.
 
 The project intentionally does not include pose fitting, PCA alignment, SDFs,
 CUDA, learned optimization, or shoe reconstruction. The archived prototype is
@@ -71,6 +73,45 @@ invalid.
 This detector has been run deterministically on the 15 normal-shoe assets in
 `footbed_clean_right`. The two heel assets, `red_high_heel_shoes` and
 `plateau_sandal_heels`, remain explicitly deferred.
+
+## Functional-length normalization
+
+Shoe normalization is derived from the selected support grid rather than the
+outer shoe bounding box. The largest 8-neighbour footprint is retained, and
+the functional heel-to-toe range is the longest run of columns whose support
+width is at least 10% of the median non-empty width. This trims narrow decorative
+extensions while preserving real holes and disconnected noise as absent data.
+
+The origin uses the functional heel X coordinate, the median rear centerline Z,
+and the median rear support height within the central half of local width. A
+matching front statistic defines the toe landmark. The transform translates the
+heel origin to zero and scales every axis uniformly by the reciprocal functional
+length. It performs no rotation, mirroring, anisotropic scaling, topology repair,
+or mesh modification.
+
+Run shoe preparation with:
+
+```bash
+python scripts/run_shoe_preparation.py \
+  --shoe-mesh /home/ab5298/dataset/datasets/processed/gshell/footbed_clean_right/canvas_shoe/reference_mesh.ply \
+  --canonicalization /home/ab5298/dataset/datasets/processed/gshell/footbed_clean_right/canvas_shoe/blender_canonicalization.json \
+  --output-dir /home/ab5298/Outputs/FootShellGaussian/checkpoint3_normalization/canvas_shoe
+```
+
+The preparation output contains:
+
+```text
+shoe_preparation.json
+footbed_surface.ply
+footbed_overlay.ply
+shoe_normalized.ply
+```
+
+The footbed and gray-shoe/green-footbed overlay remain in the original frame.
+The normalized shoe has functional heel `X=0`, functional toe `X=1`, unchanged
+axis signs, and an exact inverse transform recorded in the JSON. Pass
+`--overwrite` to replace only these four artifacts; unrelated output files are
+preserved.
 
 ## Run the canvas example
 
