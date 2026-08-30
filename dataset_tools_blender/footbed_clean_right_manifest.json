@@ -66,6 +66,15 @@
       "mirror_width": true
     },
     {
+      "name": "leather_boots",
+      "model": "leather_boots.glb",
+      "sha256": "c61b1a2b86feb1f8f76ea26c8647a65e04ce4806e9c76d7f662f282e9904cc30",
+      "reviewed": true,
+      "source_axes": {"length": "-Y", "width": "X", "up": "Z"},
+      "selection": {"mode": "all"},
+      "mirror_width": false
+    },
+    {
       "name": "nike_air_jordan",
       "model": "nike_air_jordan.glb",
       "sha256": "adad2cfed819fcc2804bed10515d3a4410a840c81242b201995b3eeb17d318fe",
@@ -152,6 +161,15 @@
       "sha256": "53c17a663d8fc660aef9c3b2d6c88f7a080a9f4fabf0867cbc6d3caee51236d2",
       "reviewed": true,
       "source_axes": {"length": "-X", "width": "-Y", "up": "Z"},
+      "selection": {"mode": "axis-side", "axis": "Y", "side": "min", "separate_loose_parts": true},
+      "mirror_width": false
+    },
+    {
+      "name": "ww_ii_german_jack_boots",
+      "model": "ww_ii_german_jack_boots.glb",
+      "sha256": "4d924ce41d2310f03976910998b91d2f227bbb1970ae2de6727ce7e23c96d9b6",
+      "reviewed": true,
+      "source_axes": {"length": "-Y", "width": "X", "up": "Z"},
       "selection": {"mode": "axis-side", "axis": "Y", "side": "min", "separate_loose_parts": true},
       "mirror_width": false
     }

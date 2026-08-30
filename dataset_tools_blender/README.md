@@ -157,6 +157,60 @@ $PYTHON $PIPELINE validate --all
 Useful optional overrides are `--source-root`, `--output-root`, `--manifest`,
 and `--blender`.
 
+## Growing The Right-Shoe Footbed-Clean Set
+
+The project-specific raw and processed roots are:
+
+```text
+/home/ab5298/dataset/datasets/external/golden_set_eval_glb/curated_subsets/footbed_clean
+/home/ab5298/dataset/datasets/processed/gshell/footbed_clean_right
+```
+
+The corresponding reviewed inventory is
+[`footbed_clean_right_manifest.json`](footbed_clean_right_manifest.json). Its
+size is not fixed: add one record for every GLB currently present in the raw
+root. The manifest and raw-root file sets must match exactly so an unregistered
+download cannot silently enter a production build.
+
+For every new GLB:
+
+1. Compute its SHA256 and add a manifest record with provisional orthogonal
+   source axes and `reviewed: false`.
+2. Record whether the file contains one shoe or a pair. For one shoe, use
+   `selection.mode = "all"`. For a pair, audit which source axis separates the
+   shoes and use `selection.mode = "axis-side"` to retain the right shoe. Enable
+   `separate_loose_parts` when selection must operate on disconnected parts.
+3. Render the five audit views. Confirm physical up, heel-to-toe direction,
+   right-side selection, and handedness. Correct `source_axes`, `selection`, and
+   `mirror_width`, then rerun the audit until the result is correct.
+4. Set `reviewed: true` deliberately. Production build and validation reject
+   unreviewed entries.
+5. Build and validate. The published directory will contain the canonical
+   `reference_mesh.ply` and `blender_canonicalization.json` required by
+   FootShellGaussian, together with the complete 180-view GShell dataset.
+
+The reusable project runner has `audit`, `build`, `validate`, and `all` actions.
+Shoe names following the action are optional; when omitted it currently targets
+`leather_boots` and `ww_ii_german_jack_boots`. Select a GPU with the `GPU`
+environment variable:
+
+```bash
+cd /storage/Abhinay/Shell_Gaussian
+GPU=0 dataset_tools_blender/run_footbed_clean_right.sh audit leather_boots ww_ii_german_jack_boots
+```
+
+Run a reviewed build in `tmux` and write a persistent log with:
+
+```bash
+mkdir -p /home/ab5298/Outputs/FootShellGaussian/logs
+tmux new-session -d -s footbed-clean-build \
+  'cd /storage/Abhinay/Shell_Gaussian && GPU=0 dataset_tools_blender/run_footbed_clean_right.sh build leather_boots ww_ii_german_jack_boots 2>&1 | tee /home/ab5298/Outputs/FootShellGaussian/logs/footbed-clean-build.log'
+tmux attach -t footbed-clean-build
+```
+
+Do not set `reviewed: true` merely to make `build` run. The audit is the manual
+semantic gate that establishes the coordinate and right-shoe contract.
+
 ## SuGaR Export
 
 SuGaR needs a COLMAP model and an initial sparse point cloud. The exporter

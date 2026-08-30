@@ -113,6 +113,69 @@ axis signs, and an exact inverse transform recorded in the JSON. Pass
 `--overwrite` to replace only these four artifacts; unrelated output files are
 preserved.
 
+### Prepare newly canonicalized shoes through Checkpoints 2 and 3
+
+A new raw GLB must first be audited, built, and validated by
+`../dataset_tools_blender/`. This produces the two inputs used here:
+
+```text
+<processed-root>/<shoe>/reference_mesh.ply
+<processed-root>/<shoe>/blender_canonicalization.json
+```
+
+Shoe preparation then performs the following operations in a fixed order:
+
+1. Validate that the metadata declares the canonical right-shoe coordinate
+   frame.
+2. Load the canonical `reference_mesh.ply` without repairing its topology.
+3. Detect the interior support surface. This is Checkpoint 2.
+4. Build the functional heel, toe, origin, length, and reversible transforms
+   from that detected support. This is Checkpoint 3.
+5. Write the footbed inspection meshes, normalized shoe, and JSON diagnostics.
+
+Checkpoint 2 is therefore always calculated before Checkpoint 3. They do not
+need separate commands: `run_shoe_preparation.py` executes them sequentially
+and stops if either calculation fails. It writes artifacts only after all
+calculations succeed.
+
+The reusable batch wrapper targets `leather_boots` and
+`ww_ii_german_jack_boots` when no shoe names are supplied. Explicit names can
+be supplied for any future canonical right shoes:
+
+```bash
+cd /storage/Abhinay/Shell_Gaussian/FootShellGaussian
+scripts/run_footbed_clean_right_preparation.sh \
+  leather_boots \
+  ww_ii_german_jack_boots
+```
+
+By default, existing preparation artifacts are not replaced. Set `OVERWRITE=1`
+only when deliberately regenerating the four known artifacts for each shoe.
+
+To run the two boots in `tmux` with a persistent log:
+
+```bash
+mkdir -p /home/ab5298/Outputs/FootShellGaussian/logs
+tmux new-session -d -s boots-normalization \
+  "cd /storage/Abhinay/Shell_Gaussian/FootShellGaussian && bash -o pipefail -c \
+  'scripts/run_footbed_clean_right_preparation.sh leather_boots ww_ii_german_jack_boots \
+  2>&1 | tee /home/ab5298/Outputs/FootShellGaussian/logs/boots-normalization.log'"
+```
+
+Monitor the job without interrupting it:
+
+```bash
+tmux attach -t boots-normalization
+tail -f /home/ab5298/Outputs/FootShellGaussian/logs/boots-normalization.log
+```
+
+After the job finishes, inspect `footbed_overlay.ply` first. The green geometry
+must be the interior surface on which the foot stands, not the outsole, upper,
+toe panel, or shaft. Only accept `shoe_normalized.ply` and the normalization in
+`shoe_preparation.json` after that support surface is visually accepted. If the
+footbed is wrong, the derived normalization is also invalid and must not be used
+for SUPR placement.
+
 ## Run the canvas example
 
 ```bash
