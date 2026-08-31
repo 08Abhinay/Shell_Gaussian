@@ -16,6 +16,7 @@ from foot_prior.mesh import (
 )
 from foot_prior.normalization import (
     EXPECTED_SHOE_COORDINATE_SYSTEM,
+    HIGH_HEEL_SHOE_PROFILE,
     SHOE_AXIS_SEMANTICS,
     SHOE_SIDE,
     build_shoe_normalization,
@@ -48,10 +49,14 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def run(args: argparse.Namespace) -> dict[str, object]:
+def run(args: argparse.Namespace) -> dict[str, object] | None:
     shoe_path = args.shoe_mesh.expanduser().resolve(strict=True)
     canonicalization_path = args.canonicalization.expanduser().resolve(strict=True)
     output_dir = args.output_dir.expanduser().resolve()
+    shoe_profile = validate_shoe_frame_metadata(canonicalization_path)
+    if shoe_profile == HIGH_HEEL_SHOE_PROFILE:
+        return None
+
     targets = {name: output_dir / name for name in ARTIFACT_NAMES}
     existing = [path for path in targets.values() if path.exists()]
     if existing and not args.overwrite:
@@ -61,7 +66,6 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             f"{formatted}; pass --overwrite to replace them"
         )
 
-    validate_shoe_frame_metadata(canonicalization_path)
     shoe = load_triangle_mesh(shoe_path)
     footbed = identify_footbed_surface(shoe)
     normalization = build_shoe_normalization(shoe, footbed)
@@ -72,6 +76,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
 
     payload: dict[str, object] = {
         "schema_version": 1,
+        "shoe_profile": shoe_profile,
         "inputs": {
             "shoe_mesh": str(shoe_path),
             "canonicalization": str(canonicalization_path),
@@ -106,6 +111,12 @@ def main() -> None:
         payload = run(parser_args)
     except (FileExistsError, FileNotFoundError, TypeError, ValueError) as error:
         raise SystemExit(f"shoe preparation failed: {error}") from error
+    if payload is None:
+        print(
+            "[deferred-support] shoe_profile='high_heel'; "
+            "footbed detection and normalization were not run"
+        )
+        return
     normalization = payload["normalization"]
     assert isinstance(normalization, dict)
     print(

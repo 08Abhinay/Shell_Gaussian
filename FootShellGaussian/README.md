@@ -25,9 +25,16 @@ This project accepts canonical **right shoes only**. The evaluation shoe frame
 is `+X = heel-to-toe`, `+Y = down toward the sole`, and `+Z = width`. The
 canonicalization metadata must declare
 `effective_gshell_x_length_y_down_z_width`; incompatible or missing metadata is
-rejected instead of inferring a frame with PCA. A metadata `mirror_width` value
+rejected instead of inferring a frame with PCA. It must also declare exactly
+one `shoe_profile`: `normal` or `high_heel`. A metadata `mirror_width` value
 records how the source asset was canonicalized and does not trigger additional
 runtime mirroring.
+
+The current support detector and normalization are approved only for the
+`normal` profile. A `high_heel` input is reported as `[deferred-support]` before
+the mesh is loaded and produces no preparation artifacts. A missing or unknown
+profile is an error. This is routing metadata only; it never changes the
+canonical shoe geometry.
 
 Raw SUPR is interpreted as `X = width`, `Y = anatomical height`, and
 `Z = heel-to-toe`. The fixed remap is therefore:
@@ -85,9 +92,10 @@ not repair topology, fill holes, invent heights, or use a fixed-Y fallback.
 Height queries use those exact source triangles, so uncovered regions remain
 invalid.
 
-This detector has been run deterministically on all 17 normal-shoe assets in
-`golden_set_evaluation`. The two heel assets, `red_high_heel_shoes` and
-`plateau_sandal_heels`, remain explicitly deferred.
+This detector has been run deterministically on all 17 `normal` assets in
+`golden_set_evaluation`. The two `high_heel` assets,
+`red_high_heel_shoes` and `plateau_sandal_heels`, are explicitly deferred by
+the profile gate.
 
 ## Functional-length normalization
 
@@ -151,9 +159,10 @@ functional normalization.
 
 Shoe preparation then performs the following operations in a fixed order:
 
-1. Validate that the metadata declares the canonical right-shoe coordinate
-   frame.
-2. Load the canonical `reference_mesh.ply` without repairing its topology.
+1. Validate the explicit shoe profile and canonical right-shoe coordinate
+   frame. Stop cleanly with no output for `high_heel`.
+2. For `normal`, load the canonical `reference_mesh.ply` without repairing its
+   topology.
 3. Detect the interior support surface. This is Checkpoint 2.
 4. Build the functional heel, toe, origin, length, and reversible transforms
    from that detected support. This is Checkpoint 3.
@@ -164,8 +173,10 @@ need separate commands: `run_shoe_preparation.py` executes them sequentially
 and stops if either calculation fails. It writes artifacts only after all
 calculations succeed.
 
-The reusable batch wrapper prepares all 17 reviewed normal shoes when no shoe
-names are supplied. Explicit names can be supplied to prepare a subset:
+The reusable batch wrapper visits all 19 reviewed shoes when no shoe names are
+supplied. It prepares the 17 `normal` shoes and reports the two `high_heel`
+shoes as deferred without creating their output directories. Explicit names
+can be supplied to process a subset:
 
 ```bash
 cd /storage/Abhinay/Shell_Gaussian/FootShellGaussian
@@ -177,7 +188,7 @@ scripts/prepare_golden_set_evaluation_shoes.sh \
 By default, existing preparation artifacts are not replaced. Set `OVERWRITE=1`
 only when deliberately regenerating the four known artifacts for each shoe.
 
-To prepare all 17 shoes in `tmux` with a persistent log:
+To route all 19 shoes in `tmux` with a persistent log:
 
 ```bash
 mkdir -p /home/ab5298/Outputs/FootShellGaussian/golden_set_evaluation/logs

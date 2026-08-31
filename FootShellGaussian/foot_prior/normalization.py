@@ -15,6 +15,9 @@ from .mesh import TriangleMesh, transform_mesh
 
 EXPECTED_SHOE_COORDINATE_SYSTEM = "effective_gshell_x_length_y_down_z_width"
 SHOE_SIDE = "right"
+NORMAL_SHOE_PROFILE = "normal"
+HIGH_HEEL_SHOE_PROFILE = "high_heel"
+SHOE_PROFILES = frozenset({NORMAL_SHOE_PROFILE, HIGH_HEEL_SHOE_PROFILE})
 SHOE_AXIS_SEMANTICS = {
     "+X": "heel_to_toe",
     "+Y": "down_toward_sole",
@@ -124,8 +127,8 @@ class ShoeNormalization:
         }
 
 
-def validate_shoe_frame_metadata(path: str | Path) -> None:
-    """Require metadata for the project's fixed canonical right-shoe frame."""
+def validate_shoe_frame_metadata(path: str | Path) -> str:
+    """Validate the canonical frame and return its explicit shoe profile."""
 
     source = Path(path)
     if not source.is_file():
@@ -137,6 +140,13 @@ def validate_shoe_frame_metadata(path: str | Path) -> None:
     if not isinstance(metadata, dict):
         raise ValueError("shoe-frame metadata must contain a JSON object")
 
+    shoe_profile = metadata.get("shoe_profile")
+    if shoe_profile not in SHOE_PROFILES:
+        raise ValueError(
+            "invalid or missing shoe_profile: expected one of "
+            f"{sorted(SHOE_PROFILES)}, received {shoe_profile!r}"
+        )
+
     reference_mesh = metadata.get("reference_mesh")
     if not isinstance(reference_mesh, dict):
         raise ValueError("shoe-frame metadata is missing reference_mesh")
@@ -147,6 +157,7 @@ def validate_shoe_frame_metadata(path: str | Path) -> None:
             f"expected {EXPECTED_SHOE_COORDINATE_SYSTEM!r}, "
             f"received {coordinate_system!r}"
         )
+    return str(shoe_profile)
 
 
 def _transform_points(points: np.ndarray, matrix: np.ndarray) -> np.ndarray:

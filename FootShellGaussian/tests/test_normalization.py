@@ -16,6 +16,8 @@ from foot_prior.footbed import FootbedSurface, identify_footbed_surface
 from foot_prior.mesh import TriangleMesh, load_triangle_mesh
 from foot_prior.normalization import (
     EXPECTED_SHOE_COORDINATE_SYSTEM,
+    HIGH_HEEL_SHOE_PROFILE,
+    NORMAL_SHOE_PROFILE,
     SHOE_AXIS_SEMANTICS,
     SHOE_SIDE,
     build_shoe_normalization,
@@ -105,10 +107,16 @@ def evaluation_root() -> Path:
     return Path(os.environ.get("FOOTSHELL_EVAL_ROOT", DEFAULT_EVAL_ROOT))
 
 
-def write_metadata(path: Path, coordinate_system: object, mirror_width: bool) -> None:
+def write_metadata(
+    path: Path,
+    coordinate_system: object,
+    mirror_width: bool,
+    shoe_profile: object = NORMAL_SHOE_PROFILE,
+) -> None:
     path.write_text(
         json.dumps(
             {
+                "shoe_profile": shoe_profile,
                 "canonical_geometry": {"mirror_width": mirror_width},
                 "reference_mesh": {"coordinate_system": coordinate_system},
             }
@@ -215,7 +223,22 @@ def test_accepts_canonical_metadata_regardless_of_source_mirroring(
 ) -> None:
     path = tmp_path / "blender_canonicalization.json"
     write_metadata(path, EXPECTED_SHOE_COORDINATE_SYSTEM, mirror_width)
-    assert validate_shoe_frame_metadata(path) is None
+    assert validate_shoe_frame_metadata(path) == NORMAL_SHOE_PROFILE
+
+
+@pytest.mark.parametrize("shoe_profile", [None, "heel", "NORMAL", 1])
+def test_rejects_missing_or_unknown_shoe_profile(
+    tmp_path: Path, shoe_profile: object
+) -> None:
+    path = tmp_path / "blender_canonicalization.json"
+    write_metadata(
+        path,
+        EXPECTED_SHOE_COORDINATE_SYSTEM,
+        False,
+        shoe_profile,
+    )
+    with pytest.raises(ValueError, match="invalid or missing shoe_profile"):
+        validate_shoe_frame_metadata(path)
 
 
 def test_rejects_incompatible_coordinate_system(tmp_path: Path) -> None:
@@ -227,7 +250,10 @@ def test_rejects_incompatible_coordinate_system(tmp_path: Path) -> None:
 
 def test_rejects_missing_reference_mesh_metadata(tmp_path: Path) -> None:
     path = tmp_path / "blender_canonicalization.json"
-    path.write_text("{}", encoding="utf-8")
+    path.write_text(
+        json.dumps({"shoe_profile": NORMAL_SHOE_PROFILE}),
+        encoding="utf-8",
+    )
     with pytest.raises(ValueError, match="missing reference_mesh"):
         validate_shoe_frame_metadata(path)
 
@@ -255,9 +281,16 @@ def test_all_evaluation_metadata_uses_the_canonical_frame() -> None:
     if not root.is_dir():
         pytest.skip(f"external evaluation dataset is unavailable: {root}")
     scenes = sorted(path for path in root.iterdir() if path.is_dir())
-    assert len(scenes) == 17
+    assert len(scenes) == 19
+    profiles = []
     for scene in scenes:
-        validate_shoe_frame_metadata(scene / "blender_canonicalization.json")
+        profiles.append(
+            validate_shoe_frame_metadata(
+                scene / "blender_canonicalization.json"
+            )
+        )
+    assert profiles.count(NORMAL_SHOE_PROFILE) == 17
+    assert profiles.count(HIGH_HEEL_SHOE_PROFILE) == 2
 
 
 def test_flat_support_trims_narrow_ends_and_maps_landmarks() -> None:
@@ -483,11 +516,12 @@ def test_canvas_preparation_runner_and_overwrite_contract(tmp_path: Path) -> Non
 
     payload = json.loads((output / "shoe_preparation.json").read_text())
     assert payload["schema_version"] == 1
+    assert payload["shoe_profile"] == NORMAL_SHOE_PROFILE
     assert Path(payload["inputs"]["shoe_mesh"]).is_absolute()
     assert Path(payload["inputs"]["canonicalization"]).is_absolute()
     assert payload["coordinate_contract"]["side"] == "right"
     assert payload["normalization"]["functional_length"] == pytest.approx(
-        0.20201157484552823
+        0.20201217103749514
     )
     shoe = load_triangle_mesh(scene / "reference_mesh.ply")
     normalized = load_triangle_mesh(output / "shoe_normalized.ply")
@@ -506,3 +540,34 @@ def test_canvas_preparation_runner_and_overwrite_contract(tmp_path: Path) -> Non
     )
     assert replaced.returncode == 0, replaced.stderr
     assert unrelated.read_text(encoding="utf-8") == "preserve me\n"
+
+
+def test_high_heel_runner_defers_without_writing_artifacts(
+    tmp_path: Path,
+) -> None:
+    shoe_mesh = tmp_path / "high_heel.ply"
+    shoe_mesh.write_bytes(b"not loaded because the profile gate runs first")
+    canonicalization = tmp_path / "blender_canonicalization.json"
+    write_metadata(
+        canonicalization,
+        EXPECTED_SHOE_COORDINATE_SYSTEM,
+        False,
+        HIGH_HEEL_SHOE_PROFILE,
+    )
+    output = tmp_path / "preparation"
+    command = [
+        sys.executable,
+        str(PROJECT_ROOT / "scripts/run_shoe_preparation.py"),
+        "--shoe-mesh",
+        str(shoe_mesh),
+        "--canonicalization",
+        str(canonicalization),
+        "--output-dir",
+        str(output),
+    ]
+
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stderr
+    assert "[deferred-support]" in result.stdout
+    assert not output.exists()

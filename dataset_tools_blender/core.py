@@ -99,6 +99,7 @@ NEUS2_CAMERA_ATOL = 5e-6
 OPENGL_TO_OPENCV_CAMERA = np.diag([1.0, -1.0, -1.0, 1.0])
 DERIVED_MANIFEST_VERSION = 2
 SOURCE_DATASET_ID = "gshell/golden_set_evaluation"
+SHOE_PROFILES = frozenset({"normal", "high_heel"})
 
 
 def rotation_x(angle_rad: float) -> np.ndarray:
@@ -248,11 +249,19 @@ def load_manifest(
     if horizontal_alignment is not None:
         validate_horizontal_alignment_config(horizontal_alignment)
 
+    raw_records = payload["shoes"]
+    profile_presence = ["shoe_profile" in record for record in raw_records]
+    if any(profile_presence) and not all(profile_presence):
+        raise ValueError(
+            "Manifest shoe_profile tagging is incomplete; every shoe must "
+            "declare 'normal' or 'high_heel'"
+        )
+
     records: list[dict[str, Any]] = []
     names: set[str] = set()
     models: set[str] = set()
     axis_tokens = {"X", "Y", "Z", "-X", "-Y", "-Z"}
-    for raw_record in payload["shoes"]:
+    for raw_record in raw_records:
         record = dict(raw_record)
         if "horizontal_alignment" in record:
             raise ValueError(
@@ -271,6 +280,15 @@ def load_manifest(
             raise ValueError(f"Duplicate manifest entry: {name}")
         if require_reviewed and record.get("reviewed") is not True:
             raise ValueError(f"Production entry is not reviewed: {name}")
+        if (
+            "shoe_profile" in record
+            and record["shoe_profile"] not in SHOE_PROFILES
+        ):
+            raise ValueError(
+                f"Invalid shoe_profile for {name}: "
+                f"expected one of {sorted(SHOE_PROFILES)}, "
+                f"received {record['shoe_profile']!r}"
+            )
         axes = record.get("source_axes")
         if (
             not isinstance(axes, dict)
@@ -581,6 +599,14 @@ def validate_scene(
                     canonical, expected_alignment
                 )
             )
+        if expected_record is not None and "shoe_profile" in expected_record:
+            if (
+                metadata.get("shoe_profile")
+                != expected_record["shoe_profile"]
+            ):
+                errors.append(
+                    "canonicalization metadata has the wrong shoe_profile"
+                )
 
     mesh_path = scene / "reference_mesh.ply"
     if not mesh_path.is_file():

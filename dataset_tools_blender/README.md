@@ -76,9 +76,11 @@ is the source of truth for the broader baseline-export inventory used by Milo,
 SuGaR, and the public pipeline defaults. The FootShellGaussian golden-set
 workflow has its own manifest described below.
 
-Each manifest entry has an explicit heel-to-toe, width, and physical-up axis
-plus a SHA256 checksum. `build` and `validate` reject an unreviewed, missing,
-additional, or changed GLB.
+Each profiled manifest entry has an explicit `shoe_profile` (`normal` or
+`high_heel`), heel-to-toe, width, and physical-up axis plus a SHA256 checksum.
+Partially tagged manifests and unknown profile values are rejected. The profile
+is descriptive metadata only: it does not alter selection, heading correction,
+centering, scaling, cameras, rendering, or exported geometry.
 
 When replacing or adding a download, add its checksum and provisional explicit
 axes with `reviewed: false`, render temporary cardinal views with `audit`, then
@@ -178,10 +180,13 @@ processed dataset:
 ```
 
 [`golden_set_evaluation_manifest.json`](golden_set_evaluation_manifest.json)
-is the reviewed source of truth for these 17 normal right shoes. It uses
+is the reviewed source of truth for 19 right shoes: 17 `normal` shoes and two
+`high_heel` shoes. It uses
 `inventory_policy = "listed_subset"`: every listed GLB must exist and match its
 checksum, while unrelated future files in the raw directory do not invalidate
-the reviewed set. The two high-heel assets remain deferred.
+the reviewed set. The worker copies each entry's `shoe_profile` into both
+`audit.json` and `blender_canonicalization.json`; it does not use the tag to
+change geometry.
 
 After source-axis mapping and right-shoe selection, the worker estimates the
 remaining top-view heading from lower-shoe geometry and rotates the dominant
@@ -190,7 +195,8 @@ selected shoe. Footbed detection is not part of dataset orientation.
 
 For a new or changed GLB:
 
-1. Add its checksum and provisional reviewed axes to the manifest.
+1. Add its checksum, `shoe_profile`, and provisional reviewed axes to the
+   manifest.
 2. Record whether the source contains one shoe or a pair, including the rule
    that selects the right shoe.
 3. Run the Blender audit and inspect side, toe, heel, top, and bottom views.
@@ -202,6 +208,14 @@ Build the complete dataset in `tmux` on five GPUs:
 ```bash
 cd /storage/Abhinay/Shell_Gaussian
 dataset_tools_blender/build_golden_set_evaluation.sh
+```
+
+Existing valid scenes are normally validated and skipped. When a deliberate
+manifest metadata change requires republishing every scene, use the same
+transactional build with `OVERWRITE=1`:
+
+```bash
+OVERWRITE=1 dataset_tools_blender/build_golden_set_evaluation.sh
 ```
 
 Monitor it with:

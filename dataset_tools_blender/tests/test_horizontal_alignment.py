@@ -160,6 +160,28 @@ class HorizontalAlignmentTest(unittest.TestCase):
 
 
 class HeadingManifestTest(unittest.TestCase):
+    def test_golden_manifest_has_all_nineteen_explicit_profiles(self) -> None:
+        root = Path(
+            "/home/ab5298/dataset/datasets/external/"
+            "golden_set_eval_glb/curated_subsets/footbed_clean"
+        )
+        manifest = core.SCRIPT_DIR / "golden_set_evaluation_manifest.json"
+        records = core.load_manifest(manifest, root)
+
+        self.assertEqual(len(records), 19)
+        self.assertEqual(
+            sum(record["shoe_profile"] == "normal" for record in records),
+            17,
+        )
+        self.assertEqual(
+            {
+                record["name"]
+                for record in records
+                if record["shoe_profile"] == "high_heel"
+            },
+            {"plateau_sandal_heels", "red_high_heel_shoes"},
+        )
+
     def manifest_payload(
         self, model: Path, inventory_policy: str
     ) -> dict[str, object]:
@@ -178,6 +200,7 @@ class HeadingManifestTest(unittest.TestCase):
                     "model": model.name,
                     "sha256": core.sha256_file(model),
                     "reviewed": True,
+                    "shoe_profile": "normal",
                     "source_axes": {
                         "length": "X",
                         "width": "Y",
@@ -231,6 +254,41 @@ class HeadingManifestTest(unittest.TestCase):
                 core.load_manifest(manifest, root)
             model.unlink()
             with self.assertRaises(FileNotFoundError):
+                core.load_manifest(manifest, root)
+
+    def test_rejects_unknown_shoe_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            model = root / "pilot_shoe.glb"
+            model.write_bytes(b"pilot")
+            payload = self.manifest_payload(model, "listed_subset")
+            payload["shoes"][0]["shoe_profile"] = "heel"
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Invalid shoe_profile"):
+                core.load_manifest(manifest, root)
+
+    def test_rejects_partially_tagged_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            first = root / "pilot_shoe.glb"
+            second = root / "second_shoe.glb"
+            first.write_bytes(b"pilot")
+            second.write_bytes(b"second")
+            payload = self.manifest_payload(first, "exact")
+            second_record = dict(payload["shoes"][0])
+            second_record.update(
+                {
+                    "name": "second_shoe",
+                    "model": second.name,
+                    "sha256": core.sha256_file(second),
+                }
+            )
+            second_record.pop("shoe_profile")
+            payload["shoes"].append(second_record)
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "tagging is incomplete"):
                 core.load_manifest(manifest, root)
 
 

@@ -28,6 +28,11 @@ LOG_FILE="${LOG_DIR}/dataset-build.log"
 
 GPUS="0,1,2,3,4"
 
+OVERWRITE_ARG=""
+if [[ ${OVERWRITE:-0} == 1 ]]; then
+    OVERWRITE_ARG="--overwrite"
+fi
+
 
 # ------------------------------------------------------------
 # Create output/log directory
@@ -62,6 +67,7 @@ echo "Source root : ${SOURCE_ROOT}"
 echo "Manifest    : ${MANIFEST}"
 echo "Output root : ${OUTPUT_ROOT}"
 echo "GPUs        : ${GPUS}"
+echo "Overwrite   : ${OVERWRITE:-0}"
 echo "Log         : ${LOG_FILE}"
 echo
 
@@ -80,6 +86,7 @@ tmux new-session -d -s "${SESSION_NAME}" \
     --manifest \"${MANIFEST}\" \
     --output-root \"${OUTPUT_ROOT}\" \
     --blender \"${BLENDER}\" \
+    ${OVERWRITE_ARG} \
     2>&1 | tee \"${LOG_FILE}\"
 '"
 

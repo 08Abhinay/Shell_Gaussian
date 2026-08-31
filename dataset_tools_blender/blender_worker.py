@@ -827,6 +827,8 @@ def build(entry: dict[str, Any], source_root: Path, output: Path) -> None:
             "passed": max_error <= PROJECTION_BBOX_TOLERANCE_PX,
         },
     }
+    if "shoe_profile" in entry:
+        metadata["shoe_profile"] = entry["shoe_profile"]
     json_dump(output / "blender_canonicalization.json", metadata)
 
 
@@ -857,21 +859,21 @@ def audit(entry: dict[str, Any], source_root: Path, output: Path) -> None:
             )
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
-    json_dump(
-        output / "audit.json",
-        {
-            "shoe": entry["name"],
-            "source_model": entry["model"],
-            "canonical_geometry": canonicalization,
-            "expected_semantics": {
-                "+X": "heel_to_toe",
-                "+Y": "width",
-                "+Z": "physical_up",
-                "side_view": "camera_at_-Y_toe_points_right",
-            },
-            "mesh_objects": len(objects),
+    audit_metadata = {
+        "shoe": entry["name"],
+        "source_model": entry["model"],
+        "canonical_geometry": canonicalization,
+        "expected_semantics": {
+            "+X": "heel_to_toe",
+            "+Y": "width",
+            "+Z": "physical_up",
+            "side_view": "camera_at_-Y_toe_points_right",
         },
-    )
+        "mesh_objects": len(objects),
+    }
+    if "shoe_profile" in entry:
+        audit_metadata["shoe_profile"] = entry["shoe_profile"]
+    json_dump(output / "audit.json", audit_metadata)
 
 
 def main() -> None:

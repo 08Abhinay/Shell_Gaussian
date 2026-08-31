@@ -20,7 +20,9 @@ else
         leather_boots
         nike_air_jordan
         pb129_shoe_low
+        plateau_sandal_heels
         priest_karol_wojtyas_sports_shoes
+        red_high_heel_shoes
         sandal_1
         sandals_0001
         shoes_mockup_asset_vans_skate_old_skool_shoes
