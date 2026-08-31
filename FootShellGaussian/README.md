@@ -61,6 +61,21 @@ also contain support within the middle 20% of shoe width along at least 65% of
 shoe length. This central-support check prevents separated upper panels from
 qualifying merely because their outermost points span a broad rectangle.
 
+The component-layer detector remains the primary path. A local-height tracing
+fallback runs only when that primary path would return a consistently
+downward-facing outsole while an opening-facing layer above it passes every
+rule except central support. The fallback joins measurements in neighbouring
+grid cells only when they are mutual closest-height matches, the local height
+step is at most 2% of shoe length, and the complete traced height range remains
+within 15% of shoe length. It then reapplies the same strict qualification
+thresholds; none are lowered.
+
+If the fallback cannot find one unambiguous opening-facing support above the
+suspicious outsole, detection fails instead of guessing. A traced output uses
+only the original source faces responsible for its grid measurements. JSON
+diagnostics record whether selection used `component_layers` or
+`local_height_trace`, which primary layer was rejected, and why tracing ran.
+
 `footprint_fill_fraction` is retained in diagnostics for compatibility. It is
 the projected surface completeness: the fraction of grid cells occupied inside
 the candidate's own X/Z bounding rectangle. The opening-facing candidate with

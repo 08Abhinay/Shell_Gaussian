@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 
@@ -10,10 +11,14 @@ import pytest
 
 from foot_prior.footbed import identify_footbed_surface, sample_footbed_y
 from foot_prior.mesh import TriangleMesh, load_triangle_mesh
+from foot_prior.normalization import build_shoe_normalization
 
 
 DEFAULT_EVAL_ROOT = Path(
     "/home/ab5298/dataset/datasets/processed/gshell/footbed_clean_right"
+)
+DEFAULT_CORRECTED_EVAL_ROOT = Path(
+    "/home/ab5298/dataset/datasets/processed/gshell/footbed_clean_correct_orientation"
 )
 NORMAL_SHOES = (
     "aj_12_basketball_sneakers",
@@ -49,10 +54,71 @@ EXPECTED_SUPPORT_FACE_COUNTS = {
     "sneaker_vibe": 390,
     "sneakers_seen": 240,
 }
+CORRECTED_SUPPORT_FACE_DIGESTS = {
+    "aj_12_basketball_sneakers": (
+        "73c1a29ce794759a576a72be2ddccd9fc5c15195db7511d889cb32c3383d92bd"
+    ),
+    "birkenstock_arizona_sandal": (
+        "0a621bfe9df5252527cfbd94cd87a7d0f291a3a78d94e32d203c73a8759dee76"
+    ),
+    "canvas_shoe": (
+        "85b7229c82defdcf2d7a417a50b914b5ffdbb29c9233bfd3f332444af9e38803"
+    ),
+    "crocs": (
+        "a68699182c39d494eef2112a047373b5e92071bdad6b448b4f8708e5be567e8c"
+    ),
+    "crocs_by_speedyart_studio": (
+        "d4c4d2ed2f2052b93a07c3944d1629dcb84193b188400f9042eaa172d245fe00"
+    ),
+    "crocs_shoe": (
+        "10ca8464700abb8fe2c95e5b96d579487b0cbf1b2812cef25c0e13ff13ea65ed"
+    ),
+    "duinn_shoes_womens_hiking_sandal_sport": (
+        "7c7ea9c01aa55ba13c898fda70abcc6f2098ede8626759f68a4435de5efef5ff"
+    ),
+    "leather_boots": (
+        "f1364c7a4761a2d9ab5e5a29a2a98adf02c910d83dfba50a84f731b9d4e18138"
+    ),
+    "nike_air_jordan": (
+        "98d306f0deb807c355e9e446a3c434c324fae6c22fe10514558d6f3aba159c75"
+    ),
+    "pb129_shoe_low": (
+        "e477afecae101e2af221ba8bdd473c3728a5bc86dd2beeca2e24cdb8accb5964"
+    ),
+    "priest_karol_wojtyas_sports_shoes": (
+        "7934b15d57d946a5d881ca6b188edb8fc48294c8e4297ff01afc1e20d5c5ec72"
+    ),
+    "sandal_1": (
+        "af1f55fcfdcbc0868be5e05387fb8e53929ad35ce945e8b5c50c80b6b04800b7"
+    ),
+    "sandals_0001": (
+        "21f4e401c80b42a1d95dfd7dd3615af10aeff66b5151c1495378afec8782e696"
+    ),
+    "shoes_mockup_asset_vans_skate_old_skool_shoes": (
+        "9f3f4052e14cb0e38689e2080fd2d10cf09b52fae5d3eeb3bfe5efed881cd024"
+    ),
+    "sneaker_vibe": (
+        "d6437ea39711c75c2e7369fa1155b19e5973f4f82b30cd8bf47a8fedb1abbe45"
+    ),
+    "sneakers_seen": (
+        "6a08d6bf87e987b8e2f83d135c839c90039d9c81e63f9e09daadf173b9c2bca8"
+    ),
+    "ww_ii_german_jack_boots": (
+        "9ba2e26fc61cf7a9f9b7cef7ea09cb77637d9d3e2b1f1f3fa4c63be77156d430"
+    ),
+}
 
 
 def evaluation_root() -> Path:
     return Path(os.environ.get("FOOTSHELL_EVAL_ROOT", DEFAULT_EVAL_ROOT))
+
+
+def corrected_evaluation_root() -> Path:
+    return Path(
+        os.environ.get(
+            "FOOTSHELL_CORRECTED_EVAL_ROOT", DEFAULT_CORRECTED_EVAL_ROOT
+        )
+    )
 
 
 def sheet(
@@ -182,6 +248,7 @@ def test_selects_inner_sheet_independently_of_face_winding(
     assert result.area_weighted_median_y == pytest.approx(0.0)
     assert result.length_coverage == pytest.approx(1.0)
     assert result.width_coverage == pytest.approx(1.0)
+    assert result.selection_method == "component_layers"
 
 
 @pytest.mark.parametrize("reversed_winding", [False, True])
@@ -208,6 +275,53 @@ def test_rejects_broad_upper_without_central_support(
     assert false_upper["footprint_fill_fraction"] >= 0.25
     assert false_upper["central_support_length_coverage"] < 0.65
     assert not false_upper["qualifies"]
+
+
+def birkenstock_like_layers(*, reverse_all_faces: bool = False) -> TriangleMesh:
+    """Build a split smooth support above a downward-facing outsole."""
+
+    mesh = combine(
+        sheet((-1.0, 1.0), (-0.2, 0.2), (-1.0,) * 4),
+        u_shaped_upper(0.0),
+        sheet((-3.0, 3.0), (-1.0, 1.0), (0.0,) * 4),
+        sheet((-5.0, 5.0), (-2.0, 2.0), (0.5,) * 4, upward=False),
+    )
+    if not reverse_all_faces:
+        return mesh
+    return TriangleMesh(mesh.vertices, mesh.faces[:, ::-1])
+
+
+def test_local_height_trace_recovers_split_smooth_support() -> None:
+    result = identify_footbed_surface(birkenstock_like_layers())
+
+    assert result.selection_method == "local_height_trace"
+    assert result.fallback_reason is not None
+    assert result.central_support_length_coverage >= 0.65
+    assert result.upward_facing_area_fraction == pytest.approx(1.0)
+    assert not np.isin([14, 15], result.original_face_indices).any()
+    assert any(
+        layer["selection_method"] == "component_layers"
+        and layer["qualification_failures"] == ["central_support"]
+        for layer in result.diagnostics
+    )
+
+
+def test_global_winding_reversal_does_not_spuriously_trigger_fallback() -> None:
+    result = identify_footbed_surface(
+        birkenstock_like_layers(reverse_all_faces=True)
+    )
+    assert result.selection_method == "component_layers"
+    assert result.fallback_reason is None
+
+
+def test_ambiguous_outsole_case_fails_instead_of_guessing() -> None:
+    ambiguous = combine(
+        sheet((-1.0, 1.0), (-0.2, 0.2), (-1.0,) * 4),
+        u_shaped_upper(0.0),
+        sheet((-5.0, 5.0), (-2.0, 2.0), (0.5,) * 4, upward=False),
+    )
+    with pytest.raises(ValueError, match="local-height tracing found no"):
+        identify_footbed_surface(ambiguous)
 
 
 def test_extracts_footbed_faces_when_connected_to_sidewall() -> None:
@@ -322,3 +436,106 @@ def test_all_normal_shoes_select_opening_facing_support(shoe_name: str) -> None:
     assert first.upward_facing_area_fraction >= 0.90
     assert first.support_like_area_fraction == pytest.approx(1.0)
     assert np.count_nonzero(first.valid_mask) > 0
+
+
+@pytest.mark.parametrize("shoe_name", tuple(CORRECTED_SUPPORT_FACE_DIGESTS))
+def test_corrected_shoes_preserve_expected_support(shoe_name: str) -> None:
+    path = corrected_evaluation_root() / shoe_name / "reference_mesh.ply"
+    if not path.is_file():
+        pytest.skip(f"correctly oriented evaluation shoe is unavailable: {path}")
+
+    footbed = identify_footbed_surface(load_triangle_mesh(path))
+    digest = hashlib.sha256(
+        np.asarray(footbed.original_face_indices, dtype=np.int64).tobytes()
+    ).hexdigest()
+    assert digest == CORRECTED_SUPPORT_FACE_DIGESTS[shoe_name]
+
+    if shoe_name != "birkenstock_arizona_sandal":
+        assert footbed.selection_method == "component_layers"
+        return
+
+    assert footbed.selection_method == "local_height_trace"
+    assert footbed.fallback_reason is not None
+    assert footbed.mesh.vertices.shape == (6392, 3)
+    assert footbed.mesh.faces.shape == (8861, 3)
+    assert footbed.original_face_indices[0] == 875
+    assert footbed.original_face_indices[-1] == 77013
+    np.testing.assert_allclose(
+        footbed.bounds,
+        [
+            [-0.10193875432014465, 0.006601303815841675, -0.03334125876426697],
+            [0.10366135835647583, 0.027411580085754395, 0.03679308295249939],
+        ],
+        atol=1e-8,
+    )
+    assert footbed.length_coverage == pytest.approx(0.9375)
+    assert footbed.width_coverage == pytest.approx(0.8217821782178241)
+    assert footbed.central_support_length_coverage == pytest.approx(0.93359375)
+    assert footbed.upward_facing_area_fraction == pytest.approx(1.0)
+    normalization = build_shoe_normalization(load_triangle_mesh(path), footbed)
+    assert normalization.functional_length > 0.0
+
+
+def test_birkenstock_before_and_after_heading_selects_interior_support() -> None:
+    before_path = (
+        evaluation_root()
+        / "birkenstock_arizona_sandal"
+        / "reference_mesh.ply"
+    )
+    after_path = (
+        corrected_evaluation_root()
+        / "birkenstock_arizona_sandal"
+        / "reference_mesh.ply"
+    )
+    if not before_path.is_file() or not after_path.is_file():
+        pytest.skip("Birkenstock heading-regression meshes are unavailable")
+
+    before = identify_footbed_surface(load_triangle_mesh(before_path))
+    after = identify_footbed_surface(load_triangle_mesh(after_path))
+    overlap = np.intersect1d(
+        before.original_face_indices, after.original_face_indices
+    )
+
+    assert before.upward_facing_area_fraction == pytest.approx(1.0)
+    assert after.upward_facing_area_fraction == pytest.approx(1.0)
+    assert before.central_support_length_coverage >= 0.65
+    assert after.central_support_length_coverage >= 0.65
+    assert len(overlap) / min(
+        len(before.original_face_indices), len(after.original_face_indices)
+    ) >= 0.70
+
+
+@pytest.mark.parametrize("angle_degrees", [-2.983, -2.0, 2.0])
+def test_birkenstock_trace_is_stable_under_small_heading_changes(
+    angle_degrees: float,
+) -> None:
+    path = (
+        corrected_evaluation_root()
+        / "birkenstock_arizona_sandal"
+        / "reference_mesh.ply"
+    )
+    if not path.is_file():
+        pytest.skip(f"correctly oriented Birkenstock is unavailable: {path}")
+
+    mesh = load_triangle_mesh(path)
+    baseline = identify_footbed_surface(mesh)
+    angle = np.deg2rad(angle_degrees)
+    rotation = np.asarray(
+        [
+            [np.cos(angle), 0.0, np.sin(angle)],
+            [0.0, 1.0, 0.0],
+            [-np.sin(angle), 0.0, np.cos(angle)],
+        ]
+    )
+    rotated = TriangleMesh(mesh.vertices @ rotation.T, mesh.faces)
+    result = identify_footbed_surface(rotated)
+
+    assert result.selection_method in {"component_layers", "local_height_trace"}
+    assert result.central_support_length_coverage >= 0.65
+    assert result.upward_facing_area_fraction == pytest.approx(1.0)
+    overlap = np.intersect1d(
+        baseline.original_face_indices, result.original_face_indices
+    )
+    assert len(overlap) / min(
+        len(baseline.original_face_indices), len(result.original_face_indices)
+    ) >= 0.70

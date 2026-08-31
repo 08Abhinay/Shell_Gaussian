@@ -48,6 +48,9 @@ class FootbedSurface:
     area_weighted_median_y: float
     projected_xz_area: float
     diagnostics: tuple[dict[str, Any], ...]
+    selection_method: str = "component_layers"
+    fallback_reason: str | None = None
+    primary_selected_layer_index: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return JSON-compatible selection metrics without the dense grid."""
@@ -72,6 +75,12 @@ class FootbedSurface:
             "width_coverage": self.width_coverage,
             "central_support_length_coverage": (
                 self.central_support_length_coverage
+            ),
+            "selection_method": self.selection_method,
+            "fallback_reason": self.fallback_reason,
+            "primary_selected_layer_index": self.primary_selected_layer_index,
+            "primary_selection_rejected": (
+                self.selection_method != "component_layers"
             ),
             "upward_facing_area_fraction": self.upward_facing_area_fraction,
             "support_like_area_fraction": self.support_like_area_fraction,
@@ -107,6 +116,7 @@ class _LayerNode:
     z_index: int
     y: float
     face_components: tuple[int, ...]
+    face_indices: tuple[int, ...]
 
 
 def _face_connected_components(faces: np.ndarray) -> list[np.ndarray]:
@@ -180,7 +190,7 @@ def _central_support_length_coverage(
     z_indices: np.ndarray,
     grid_shape: tuple[int, int],
 ) -> float:
-    """Measure shoe-length coverage inside the centered width band."""
+    """Measure raw shoe-length coverage inside the centered width band."""
 
     x_count, z_count = grid_shape
     band_count = max(1, int(np.ceil(CENTRAL_BAND_WIDTH_FRACTION * z_count)))
@@ -314,6 +324,10 @@ def _cell_intersections(
                 y=float(np.mean(heights[group_start:group_end])),
                 face_components=tuple(
                     int(value) for value in np.unique(components[group_start:group_end])
+                ),
+                face_indices=tuple(
+                    int(value)
+                    for value in np.unique(candidates[group_start:group_end])
                 ),
             )
             cell_nodes[flat_index].append(len(nodes))
@@ -489,6 +503,221 @@ def _group_surface_patches_into_layers(
     return layers
 
 
+def _trace_local_height_surfaces(
+    nodes: list[_LayerNode],
+    cell_nodes: list[list[int]],
+    grid_shape: tuple[int, int],
+    maximum_adjacent_height_step: float,
+    maximum_surface_height_range: float,
+) -> list[np.ndarray]:
+    """Trace smooth height paths without treating source components atomically."""
+
+    parent = np.arange(len(nodes), dtype=np.int64)
+    rank = np.zeros(len(nodes), dtype=np.uint8)
+    group_min_y = np.asarray([node.y for node in nodes], dtype=np.float64)
+    group_max_y = group_min_y.copy()
+
+    def find(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = int(parent[index])
+        return index
+
+    def union(first: int, second: int) -> None:
+        first_root = find(first)
+        second_root = find(second)
+        if first_root == second_root:
+            return
+        combined_minimum = min(group_min_y[first_root], group_min_y[second_root])
+        combined_maximum = max(group_max_y[first_root], group_max_y[second_root])
+        if combined_maximum - combined_minimum > maximum_surface_height_range:
+            return
+        if rank[first_root] < rank[second_root]:
+            first_root, second_root = second_root, first_root
+        parent[second_root] = first_root
+        group_min_y[first_root] = combined_minimum
+        group_max_y[first_root] = combined_maximum
+        if rank[first_root] == rank[second_root]:
+            rank[first_root] += 1
+
+    x_count, z_count = grid_shape
+    previous_neighbours = ((-1, -1), (-1, 0), (-1, 1), (0, -1))
+    matches: set[tuple[float, int, int]] = set()
+    for x_index in range(x_count):
+        for z_index in range(z_count):
+            current = cell_nodes[x_index * z_count + z_index]
+            if not current:
+                continue
+            for x_offset, z_offset in previous_neighbours:
+                other_x = x_index + x_offset
+                other_z = z_index + z_offset
+                if not (0 <= other_x < x_count and 0 <= other_z < z_count):
+                    continue
+                other = cell_nodes[other_x * z_count + other_z]
+                if not other:
+                    continue
+
+                closest_from_current = {
+                    current_index: min(
+                        other,
+                        key=lambda other_index: (
+                            abs(nodes[current_index].y - nodes[other_index].y),
+                            other_index,
+                        ),
+                    )
+                    for current_index in current
+                }
+                closest_from_other = {
+                    other_index: min(
+                        current,
+                        key=lambda current_index: (
+                            abs(nodes[other_index].y - nodes[current_index].y),
+                            current_index,
+                        ),
+                    )
+                    for other_index in other
+                }
+                for current_index, other_index in closest_from_current.items():
+                    if closest_from_other[other_index] != current_index:
+                        continue
+                    height_difference = abs(
+                        nodes[current_index].y - nodes[other_index].y
+                    )
+                    if height_difference > maximum_adjacent_height_step:
+                        continue
+                    first, second = sorted((current_index, other_index))
+                    matches.add((float(height_difference), first, second))
+
+    for _, first, second in sorted(matches):
+        union(first, second)
+
+    groups: dict[int, list[int]] = {}
+    for node_index in range(len(nodes)):
+        groups.setdefault(find(node_index), []).append(node_index)
+    surfaces = [
+        np.asarray(sorted(indices), dtype=np.int64)
+        for indices in groups.values()
+    ]
+    surfaces.sort(key=lambda indices: int(indices[0]))
+    return surfaces
+
+
+def _evaluate_surface_candidate(
+    *,
+    method: str,
+    layer_index: int,
+    node_indices: np.ndarray,
+    original_face_indices: np.ndarray,
+    source_component_count: int,
+    nodes: list[_LayerNode],
+    areas: np.ndarray,
+    normals: np.ndarray,
+    grid: _Grid,
+    shoe_bounds: np.ndarray,
+    shoe_extents: np.ndarray,
+) -> dict[str, Any]:
+    """Measure one component layer or one locally traced height surface."""
+
+    layer = [nodes[int(index)] for index in node_indices]
+    x_indices = np.asarray([node.x_index for node in layer], dtype=np.int64)
+    z_indices = np.asarray([node.z_index for node in layer], dtype=np.int64)
+    heights = np.asarray([node.y for node in layer], dtype=np.float64)
+    original_faces = np.asarray(original_face_indices, dtype=np.int64)
+    represented_areas = areas[original_faces]
+    represented_area = float(represented_areas.sum())
+    upward_fraction = float(
+        represented_areas[
+            normals[original_faces, 1] <= -SUPPORT_NORMAL_ABS_Y_MIN
+        ].sum()
+        / represented_area
+    )
+    length_coverage = float(
+        (x_indices.max() - x_indices.min() + 1) * grid.dx / shoe_extents[0]
+    )
+    width_coverage = float(
+        (z_indices.max() - z_indices.min() + 1) * grid.dz / shoe_extents[2]
+    )
+    central_coverage = _central_support_length_coverage(
+        x_indices, z_indices, grid.shape
+    )
+    median_y = float(np.median(heights))
+    unique_cell_count = int(
+        len(np.unique(x_indices * grid.shape[1] + z_indices))
+    )
+    bounding_cell_count = int(
+        (x_indices.max() - x_indices.min() + 1)
+        * (z_indices.max() - z_indices.min() + 1)
+    )
+    footprint_fill_fraction = float(unique_cell_count / bounding_cell_count)
+    height_range_ratio = float(np.ptp(heights) / shoe_extents[0])
+    lower_y = float(shoe_bounds[0, 1]) + LOWER_REGION_START_FRACTION * float(
+        shoe_extents[1]
+    )
+    failures: list[str] = []
+    if length_coverage < MIN_LENGTH_COVERAGE:
+        failures.append("length_coverage")
+    if width_coverage < MIN_WIDTH_COVERAGE:
+        failures.append("width_coverage")
+    if central_coverage < MIN_CENTRAL_SUPPORT_LENGTH_COVERAGE:
+        failures.append("central_support")
+    if shoe_extents[1] > np.finfo(np.float64).eps and median_y < lower_y:
+        failures.append("lower_region")
+    if footprint_fill_fraction < MIN_FOOTPRINT_FILL_FRACTION:
+        failures.append("footprint_completeness")
+    if height_range_ratio > MAX_HEIGHT_RANGE_RATIO:
+        failures.append("height_range")
+    if max(upward_fraction, 1.0 - upward_fraction) < MIN_ORIENTATION_COHERENCE:
+        failures.append("orientation_coherence")
+
+    return {
+        "selection_method": method,
+        "layer_index": layer_index,
+        "minimum_original_face_index": int(original_faces.min()),
+        "sample_count": unique_cell_count,
+        "intersection_count": int(len(node_indices)),
+        "source_component_count": int(source_component_count),
+        "source_face_count": int(len(original_faces)),
+        "x_index_bounds": [int(x_indices.min()), int(x_indices.max())],
+        "z_index_bounds": [int(z_indices.min()), int(z_indices.max())],
+        "height_range": [float(heights.min()), float(heights.max())],
+        "height_range_ratio": height_range_ratio,
+        "length_coverage": length_coverage,
+        "width_coverage": width_coverage,
+        "central_support_length_coverage": central_coverage,
+        "footprint_fill_fraction": footprint_fill_fraction,
+        "upward_facing_area_fraction": upward_fraction,
+        "median_y": median_y,
+        "normalized_median_y": (
+            1.0
+            if shoe_extents[1] <= np.finfo(np.float64).eps
+            else float((median_y - shoe_bounds[0, 1]) / shoe_extents[1])
+        ),
+        "projected_xz_area": float(unique_cell_count * grid.dx * grid.dz),
+        "qualification_failures": failures,
+        "qualifies": not failures,
+        "node_indices": node_indices,
+        "original_face_indices": original_faces,
+    }
+
+
+def _candidate_sort_key(entry: dict[str, Any]) -> tuple[float, float, int]:
+    return (
+        float(entry["median_y"]),
+        -float(entry["projected_xz_area"]),
+        int(entry["minimum_original_face_index"]),
+    )
+
+
+def _serializable_diagnostics(
+    diagnostics: list[dict[str, Any]],
+) -> tuple[dict[str, Any], ...]:
+    hidden = {"node_indices", "original_face_indices"}
+    return tuple(
+        {key: value for key, value in entry.items() if key not in hidden}
+        for entry in diagnostics
+    )
+
+
 def identify_footbed_surface(shoe_mesh: TriangleMesh) -> FootbedSurface:
     """Select the top interior support layer without mesh-component assumptions."""
 
@@ -540,120 +769,121 @@ def identify_footbed_surface(shoe_mesh: TriangleMesh) -> FootbedSurface:
         MAX_HEIGHT_RANGE_RATIO * float(shoe_extents[0]),
     )
 
-    lower_y = float(shoe_bounds[0, 1]) + LOWER_REGION_START_FRACTION * float(
-        shoe_extents[1]
-    )
     diagnostics: list[dict[str, Any]] = []
     for layer_index, (node_indices, represented_components) in enumerate(layers):
-        layer = [nodes[int(index)] for index in node_indices]
-        x_indices = np.asarray([node.x_index for node in layer], dtype=np.int64)
-        z_indices = np.asarray([node.z_index for node in layer], dtype=np.int64)
-        heights = np.asarray([node.y for node in layer], dtype=np.float64)
         represented_faces = np.concatenate(
             [face_components[int(index)] for index in represented_components]
         )
-        original_faces = eligible_face_indices[represented_faces]
-        represented_areas = areas[original_faces]
-        represented_area = float(represented_areas.sum())
-        upward_fraction = float(
-            represented_areas[
-                normals[original_faces, 1] <= -SUPPORT_NORMAL_ABS_Y_MIN
-            ].sum()
-            / represented_area
-        )
-        length_coverage = float(
-            (x_indices.max() - x_indices.min() + 1) * grid.dx / shoe_extents[0]
-        )
-        width_coverage = float(
-            (z_indices.max() - z_indices.min() + 1) * grid.dz / shoe_extents[2]
-        )
-        central_support_length_coverage = _central_support_length_coverage(
-            x_indices, z_indices, grid.shape
-        )
-        median_y = float(np.median(heights))
-        unique_cell_count = int(
-            len(np.unique(x_indices * grid.shape[1] + z_indices))
-        )
-        projected_area = float(unique_cell_count * grid.dx * grid.dz)
-        bounding_cell_count = int(
-            (x_indices.max() - x_indices.min() + 1)
-            * (z_indices.max() - z_indices.min() + 1)
-        )
-        qualifies = bool(
-            length_coverage >= MIN_LENGTH_COVERAGE
-            and width_coverage >= MIN_WIDTH_COVERAGE
-            and central_support_length_coverage
-            >= MIN_CENTRAL_SUPPORT_LENGTH_COVERAGE
-            and (shoe_extents[1] <= np.finfo(np.float64).eps or median_y >= lower_y)
-            and unique_cell_count / bounding_cell_count >= MIN_FOOTPRINT_FILL_FRACTION
-            and np.ptp(heights) / shoe_extents[0] <= MAX_HEIGHT_RANGE_RATIO
-            and max(upward_fraction, 1.0 - upward_fraction)
-            >= MIN_ORIENTATION_COHERENCE
-        )
         diagnostics.append(
-            {
-                "layer_index": layer_index,
-                "minimum_original_face_index": int(original_faces.min()),
-                "sample_count": unique_cell_count,
-                "intersection_count": int(len(node_indices)),
-                "source_component_count": int(len(represented_components)),
-                "source_face_count": int(len(original_faces)),
-                "x_index_bounds": [int(x_indices.min()), int(x_indices.max())],
-                "z_index_bounds": [int(z_indices.min()), int(z_indices.max())],
-                "height_range": [float(heights.min()), float(heights.max())],
-                "height_range_ratio": float(np.ptp(heights) / shoe_extents[0]),
-                "length_coverage": length_coverage,
-                "width_coverage": width_coverage,
-                "central_support_length_coverage": (
-                    central_support_length_coverage
+            _evaluate_surface_candidate(
+                method="component_layers",
+                layer_index=layer_index,
+                node_indices=node_indices,
+                original_face_indices=np.sort(
+                    eligible_face_indices[represented_faces]
                 ),
-                "footprint_fill_fraction": float(
-                    unique_cell_count / bounding_cell_count
-                ),
-                "upward_facing_area_fraction": upward_fraction,
-                "median_y": median_y,
-                "normalized_median_y": (
-                    1.0
-                    if shoe_extents[1] <= np.finfo(np.float64).eps
-                    else float((median_y - shoe_bounds[0, 1]) / shoe_extents[1])
-                ),
-                "projected_xz_area": projected_area,
-                "qualifies": qualifies,
-                "node_indices": node_indices,
-                "represented_components": represented_components,
-            }
+                source_component_count=len(represented_components),
+                nodes=nodes,
+                areas=areas,
+                normals=normals,
+                grid=grid,
+                shoe_bounds=shoe_bounds,
+                shoe_extents=shoe_extents,
+            )
         )
 
     qualifying = [entry for entry in diagnostics if entry["qualifies"]]
-    serializable_diagnostics = tuple(
-        {
-            key: value
-            for key, value in entry.items()
-            if key not in {"node_indices", "represented_components"}
-        }
-        for entry in diagnostics
-    )
     if not qualifying:
         raise ValueError(
             "no coherent support layer satisfies the footbed criteria; layers="
-            + json.dumps(serializable_diagnostics, sort_keys=True)
+            + json.dumps(_serializable_diagnostics(diagnostics), sort_keys=True)
         )
-    selected = min(
-        qualifying,
-        key=lambda entry: (
-            entry["median_y"],
-            -entry["projected_xz_area"],
-            entry["minimum_original_face_index"],
-        ),
+    primary_selected = min(qualifying, key=_candidate_sort_key)
+    selected = primary_selected
+    fallback_reason: str | None = None
+
+    opening_facing_rejected_above = [
+        entry
+        for entry in diagnostics
+        if entry["upward_facing_area_fraction"] >= MIN_ORIENTATION_COHERENCE
+        and entry["median_y"] < primary_selected["median_y"]
+        and entry["qualification_failures"] == ["central_support"]
+    ]
+    suspicious_outsole = bool(
+        primary_selected["upward_facing_area_fraction"]
+        <= 1.0 - MIN_ORIENTATION_COHERENCE
+        and opening_facing_rejected_above
     )
+    if suspicious_outsole:
+        fallback_reason = (
+            "primary selection was a consistently downward-facing layer while "
+            "an opening-facing layer above it failed only central coverage"
+        )
+        traced_surfaces = _trace_local_height_surfaces(
+            nodes,
+            cell_nodes,
+            grid.shape,
+            MAX_LAYER_HEIGHT_STEP_RATIO * float(shoe_extents[0]),
+            MAX_HEIGHT_RANGE_RATIO * float(shoe_extents[0]),
+        )
+        minimum_possible_samples = int(
+            np.ceil(MIN_CENTRAL_SUPPORT_LENGTH_COVERAGE * grid.shape[0])
+        )
+        trace_diagnostics: list[dict[str, Any]] = []
+        for trace_index, node_indices in enumerate(traced_surfaces):
+            if len(node_indices) < minimum_possible_samples:
+                continue
+            relative_faces = np.unique(
+                np.concatenate(
+                    [nodes[int(index)].face_indices for index in node_indices]
+                )
+            )
+            represented_components = {
+                component
+                for index in node_indices
+                for component in nodes[int(index)].face_components
+            }
+            trace_diagnostics.append(
+                _evaluate_surface_candidate(
+                    method="local_height_trace",
+                    layer_index=trace_index,
+                    node_indices=node_indices,
+                    original_face_indices=np.sort(
+                        eligible_face_indices[relative_faces]
+                    ),
+                    source_component_count=len(represented_components),
+                    nodes=nodes,
+                    areas=areas,
+                    normals=normals,
+                    grid=grid,
+                    shoe_bounds=shoe_bounds,
+                    shoe_extents=shoe_extents,
+                )
+            )
+        diagnostics.extend(trace_diagnostics)
+        qualifying_traces = [
+            entry
+            for entry in trace_diagnostics
+            if entry["qualifies"]
+            and entry["upward_facing_area_fraction"]
+            >= MIN_ORIENTATION_COHERENCE
+            and entry["median_y"] < primary_selected["median_y"]
+        ]
+        if not qualifying_traces:
+            raise ValueError(
+                "primary support selection appears to be an outsole and local-height "
+                "tracing found no unambiguous interior support; fallback_reason="
+                + fallback_reason
+                + "; layers="
+                + json.dumps(_serializable_diagnostics(diagnostics), sort_keys=True)
+            )
+        selected = min(qualifying_traces, key=_candidate_sort_key)
+
+    serializable_diagnostics = _serializable_diagnostics(diagnostics)
     selected_nodes = np.asarray(selected["node_indices"], dtype=np.int64)
-    selected_components = np.asarray(
-        selected["represented_components"], dtype=np.int64
+    selected_faces = np.asarray(
+        selected["original_face_indices"], dtype=np.int64
     )
-    selected_relative_faces = np.concatenate(
-        [face_components[int(index)] for index in selected_components]
-    )
-    selected_faces = np.sort(eligible_face_indices[selected_relative_faces])
     original_faces = faces[selected_faces]
     original_vertices = np.unique(original_faces)
     remap = np.full(len(vertices), -1, dtype=np.int64)
@@ -703,6 +933,9 @@ def identify_footbed_surface(shoe_mesh: TriangleMesh) -> FootbedSurface:
         area_weighted_median_y=_weighted_median(centroid_y, selected_areas),
         projected_xz_area=float(selected["projected_xz_area"]),
         diagnostics=serializable_diagnostics,
+        selection_method=str(selected["selection_method"]),
+        fallback_reason=fallback_reason,
+        primary_selected_layer_index=int(primary_selected["layer_index"]),
     )
 
 
