@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_PATH="${SCRIPT_DIR}/$(basename "${BASH_SOURCE[0]}")"
 PROJECT_ROOT="${SUGAR_PROJECT_ROOT:-$(cd "${SCRIPT_DIR}/../../.." && pwd)}"
 PIPELINE="${SUGAR_PREP_PIPELINE:-${PROJECT_ROOT}/dataset_tools_blender/pipeline.py}"
-MANIFEST="${SUGAR_PREP_MANIFEST:-${PROJECT_ROOT}/dataset_tools_blender/evaluation_manifest.json}"
+MANIFEST="${SUGAR_PREP_MANIFEST:-${PROJECT_ROOT}/dataset_tools_blender/manifests/baseline_evaluation_manifest.json}"
 PYTHON="${SUGAR_PREP_PYTHON:-/storage/Abhinay/home_ab5298/anaconda3/envs/shellgaussianenv/bin/python}"
 DEFAULT_LOG_ROOT="${PROJECT_ROOT}/baselines/SuGaR/output/dataset_preparation_runs"
 
@@ -17,7 +17,7 @@ Usage:
   prepare_evaluation_dataset_tmux.sh --shoe-list FILE --gpus 2,3 [options]
 
 Options:
-  --all                 Prepare every shoe in evaluation_manifest.json.
+  --all                 Prepare every shoe in baseline_evaluation_manifest.json.
   --shoe NAME           Prepare one shoe; repeat for multiple shoes.
   --shoe-list FILE      Prepare newline-separated shoe names from FILE.
   --gpu ID              Use one physical GPU.

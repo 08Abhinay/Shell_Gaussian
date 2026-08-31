@@ -25,7 +25,7 @@ from foot_prior.supr_foot import load_neutral_supr_foot
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 SUPR_MODEL = REPOSITORY_ROOT / "baselines/SUPR/data/supr_male_right_foot.npy"
 DEFAULT_EVAL_ROOT = Path(
-    "/home/ab5298/dataset/datasets/processed/gshell/footbed_clean_right"
+    "/home/ab5298/dataset/datasets/processed/gshell/golden_set_evaluation"
 )
 
 
@@ -77,7 +77,7 @@ def test_exact_length_ratio_and_xz_centering_on_canvas() -> None:
     center = bounds.mean(axis=0)
     assert np.ptp(aligned[:, 0]) / shoe.extents[0] == pytest.approx(0.85, abs=1e-12)
     np.testing.assert_allclose(center[[0, 2]], shoe.center[[0, 2]], atol=1e-12)
-    assert scale == pytest.approx(0.6706355053488126, abs=1e-12)
+    assert scale == pytest.approx(0.6706374845794647, abs=1e-12)
     assert translation[1] == 0.0
     assert np.ptp(aligned[:, 2]) < shoe.extents[2]
 
@@ -146,12 +146,12 @@ def test_canvas_first_contact_coverage_gaps_and_round_trip() -> None:
     footbed = identify_footbed_surface(shoe)
     alignment = build_initial_alignment(foot, shoe, footbed)
     assert alignment.plantar_sample_count == 107
-    assert alignment.covered_plantar_sample_count == 104
-    assert alignment.footbed_contact_coverage == pytest.approx(104 / 107)
+    assert alignment.covered_plantar_sample_count == 103
+    assert alignment.footbed_contact_coverage == pytest.approx(103 / 107)
     assert alignment.footbed_contact_coverage >= 0.95
-    assert alignment.translation[1] == pytest.approx(-0.8870308744255349, abs=1e-12)
+    assert alignment.translation[1] == pytest.approx(-0.887054118428231, abs=1e-12)
     assert alignment.minimum_footbed_gap == pytest.approx(0.0, abs=1e-14)
-    assert alignment.maximum_footbed_gap == pytest.approx(0.021287513665358193, abs=1e-12)
+    assert alignment.maximum_footbed_gap == pytest.approx(0.02137128024453198, abs=1e-12)
     assert alignment.minimum_footbed_gap >= 0.0
     np.testing.assert_allclose(
         alignment.shoe_to_foot @ alignment.foot_to_shoe, np.eye(4), atol=1e-12
@@ -196,7 +196,7 @@ def test_canvas_runner_artifacts_and_overwrite_contract(tmp_path: Path) -> None:
     assert payload["schema_version"] == 1
     assert Path(payload["inputs"]["shoe_mesh"]).is_absolute()
     assert Path(payload["inputs"]["supr_model"]).is_absolute()
-    assert payload["plantar_contact"]["coverage"] == pytest.approx(104 / 107)
+    assert payload["plantar_contact"]["coverage"] == pytest.approx(103 / 107)
     assert load_triangle_mesh(output / "foot_aligned.ply").vertices.shape == (266, 3)
     assert load_triangle_mesh(output / "footbed_surface.ply").faces.shape == (350, 3)
     overlay = load_triangle_mesh(output / "alignment_overlay.ply")

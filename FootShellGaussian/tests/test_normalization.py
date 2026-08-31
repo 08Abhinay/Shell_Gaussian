@@ -24,7 +24,7 @@ from foot_prior.normalization import (
 
 
 DEFAULT_EVAL_ROOT = Path(
-    "/home/ab5298/dataset/datasets/processed/gshell/footbed_clean_right"
+    "/home/ab5298/dataset/datasets/processed/gshell/golden_set_evaluation"
 )
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 NORMAL_SHOES = (
@@ -35,6 +35,7 @@ NORMAL_SHOES = (
     "crocs_by_speedyart_studio",
     "crocs_shoe",
     "duinn_shoes_womens_hiking_sandal_sport",
+    "leather_boots",
     "nike_air_jordan",
     "pb129_shoe_low",
     "priest_karol_wojtyas_sports_shoes",
@@ -43,13 +44,14 @@ NORMAL_SHOES = (
     "shoes_mockup_asset_vans_skate_old_skool_shoes",
     "sneaker_vibe",
     "sneakers_seen",
+    "ww_ii_german_jack_boots",
 )
-CHECKPOINT2_FACE_DIGESTS = {
+EXPECTED_SUPPORT_FACE_DIGESTS = {
     "aj_12_basketball_sneakers": (
         "73c1a29ce794759a576a72be2ddccd9fc5c15195db7511d889cb32c3383d92bd"
     ),
     "birkenstock_arizona_sandal": (
-        "58eba623688ed5be0804f8f7057fc959e93f02e6b0392473f0cbacb0bcf242ad"
+        "0a621bfe9df5252527cfbd94cd87a7d0f291a3a78d94e32d203c73a8759dee76"
     ),
     "canvas_shoe": (
         "85b7229c82defdcf2d7a417a50b914b5ffdbb29c9233bfd3f332444af9e38803"
@@ -61,10 +63,13 @@ CHECKPOINT2_FACE_DIGESTS = {
         "d4c4d2ed2f2052b93a07c3944d1629dcb84193b188400f9042eaa172d245fe00"
     ),
     "crocs_shoe": (
-        "f5279b0f23bf2719485019b182ca980a103e4d7efa284620a39e16aebb626afd"
+        "10ca8464700abb8fe2c95e5b96d579487b0cbf1b2812cef25c0e13ff13ea65ed"
     ),
     "duinn_shoes_womens_hiking_sandal_sport": (
         "7c7ea9c01aa55ba13c898fda70abcc6f2098ede8626759f68a4435de5efef5ff"
+    ),
+    "leather_boots": (
+        "f1364c7a4761a2d9ab5e5a29a2a98adf02c910d83dfba50a84f731b9d4e18138"
     ),
     "nike_air_jordan": (
         "98d306f0deb807c355e9e446a3c434c324fae6c22fe10514558d6f3aba159c75"
@@ -76,7 +81,7 @@ CHECKPOINT2_FACE_DIGESTS = {
         "7934b15d57d946a5d881ca6b188edb8fc48294c8e4297ff01afc1e20d5c5ec72"
     ),
     "sandal_1": (
-        "e72c1abe45bf1621c86591078108af5105d9c6f238acda5ce6b418002a1212cd"
+        "af1f55fcfdcbc0868be5e05387fb8e53929ad35ce945e8b5c50c80b6b04800b7"
     ),
     "sandals_0001": (
         "21f4e401c80b42a1d95dfd7dd3615af10aeff66b5151c1495378afec8782e696"
@@ -89,6 +94,9 @@ CHECKPOINT2_FACE_DIGESTS = {
     ),
     "sneakers_seen": (
         "6a08d6bf87e987b8e2f83d135c839c90039d9c81e63f9e09daadf173b9c2bca8"
+    ),
+    "ww_ii_german_jack_boots": (
+        "9ba2e26fc61cf7a9f9b7cef7ea09cb77637d9d3e2b1f1f3fa4c63be77156d430"
     ),
 }
 
@@ -394,12 +402,12 @@ def test_known_canvas_functional_normalization() -> None:
 
     assert normalization.functional_column_range == (5, 246)
     assert normalization.functional_length == pytest.approx(
-        0.20201157484552823, abs=1e-14
+        0.20201217103749514, abs=1e-14
     )
     assert normalization.outer_length_ratio == pytest.approx(0.94140625)
     np.testing.assert_allclose(
         normalization.origin,
-        [-0.10268222830200102, 0.029422644665291035, 0.001246761938091364],
+        [-0.10268253507092595, 0.029422231794832464, -0.00041614383614311384],
         atol=1e-14,
     )
 
@@ -415,7 +423,7 @@ def test_all_normal_shoes_preserve_support_and_normalize_deterministically() -> 
         digest = hashlib.sha256(
             np.asarray(original_faces, dtype=np.int64).tobytes()
         ).hexdigest()
-        assert digest == CHECKPOINT2_FACE_DIGESTS[shoe_name]
+        assert digest == EXPECTED_SUPPORT_FACE_DIGESTS[shoe_name]
 
         first = build_shoe_normalization(shoe, footbed)
         second = build_shoe_normalization(shoe, footbed)

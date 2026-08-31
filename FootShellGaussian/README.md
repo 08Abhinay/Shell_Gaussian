@@ -85,8 +85,8 @@ not repair topology, fill holes, invent heights, or use a fixed-Y fallback.
 Height queries use those exact source triangles, so uncovered regions remain
 invalid.
 
-This detector has been run deterministically on the 15 normal-shoe assets in
-`footbed_clean_right`. The two heel assets, `red_high_heel_shoes` and
+This detector has been run deterministically on all 17 normal-shoe assets in
+`golden_set_evaluation`. The two heel assets, `red_high_heel_shoes` and
 `plateau_sandal_heels`, remain explicitly deferred.
 
 ## Functional-length normalization
@@ -108,9 +108,9 @@ Run shoe preparation with:
 
 ```bash
 python scripts/run_shoe_preparation.py \
-  --shoe-mesh /home/ab5298/dataset/datasets/processed/gshell/footbed_clean_right/canvas_shoe/reference_mesh.ply \
-  --canonicalization /home/ab5298/dataset/datasets/processed/gshell/footbed_clean_right/canvas_shoe/blender_canonicalization.json \
-  --output-dir /home/ab5298/Outputs/FootShellGaussian/checkpoint3_normalization/canvas_shoe
+  --shoe-mesh /home/ab5298/dataset/datasets/processed/gshell/golden_set_evaluation/canvas_shoe/reference_mesh.ply \
+  --canonicalization /home/ab5298/dataset/datasets/processed/gshell/golden_set_evaluation/canvas_shoe/blender_canonicalization.json \
+  --output-dir /home/ab5298/Outputs/FootShellGaussian/golden_set_evaluation/shoe_preparation/canvas_shoe
 ```
 
 The preparation output contains:
@@ -139,10 +139,10 @@ A new raw GLB must first be audited, built, and validated by
 ```
 
 Residual top-view heading is corrected in the Blender dataset stage, before
-this project detects a footbed. The heading-v1 pilot input root is:
+this project detects a footbed. The canonical input root is:
 
 ```text
-/home/ab5298/dataset/datasets/processed/gshell/footbed_clean_right_heading_v1
+/home/ab5298/dataset/datasets/processed/gshell/golden_set_evaluation
 ```
 
 Footbed detection must not be used to rotate a shoe. It consumes the already
@@ -164,13 +164,12 @@ need separate commands: `run_shoe_preparation.py` executes them sequentially
 and stops if either calculation fails. It writes artifacts only after all
 calculations succeed.
 
-The reusable batch wrapper targets `leather_boots` and
-`ww_ii_german_jack_boots` when no shoe names are supplied. Explicit names can
-be supplied for any future canonical right shoes:
+The reusable batch wrapper prepares all 17 reviewed normal shoes when no shoe
+names are supplied. Explicit names can be supplied to prepare a subset:
 
 ```bash
 cd /storage/Abhinay/Shell_Gaussian/FootShellGaussian
-scripts/run_footbed_clean_right_preparation.sh \
+scripts/prepare_golden_set_evaluation_shoes.sh \
   leather_boots \
   ww_ii_german_jack_boots
 ```
@@ -178,21 +177,21 @@ scripts/run_footbed_clean_right_preparation.sh \
 By default, existing preparation artifacts are not replaced. Set `OVERWRITE=1`
 only when deliberately regenerating the four known artifacts for each shoe.
 
-To run the two boots in `tmux` with a persistent log:
+To prepare all 17 shoes in `tmux` with a persistent log:
 
 ```bash
-mkdir -p /home/ab5298/Outputs/FootShellGaussian/logs
-tmux new-session -d -s boots-normalization \
-  "cd /storage/Abhinay/Shell_Gaussian/FootShellGaussian && bash -o pipefail -c \
-  'scripts/run_footbed_clean_right_preparation.sh leather_boots ww_ii_german_jack_boots \
-  2>&1 | tee /home/ab5298/Outputs/FootShellGaussian/logs/boots-normalization.log'"
+mkdir -p /home/ab5298/Outputs/FootShellGaussian/golden_set_evaluation/logs
+tmux new-session -d -s golden-set-shoe-preparation \
+  'cd /storage/Abhinay/Shell_Gaussian/FootShellGaussian && \
+  scripts/prepare_golden_set_evaluation_shoes.sh \
+  2>&1 | tee /home/ab5298/Outputs/FootShellGaussian/golden_set_evaluation/logs/shoe-preparation.log'
 ```
 
 Monitor the job without interrupting it:
 
 ```bash
-tmux attach -t boots-normalization
-tail -f /home/ab5298/Outputs/FootShellGaussian/logs/boots-normalization.log
+tmux attach -t golden-set-shoe-preparation
+tail -f /home/ab5298/Outputs/FootShellGaussian/golden_set_evaluation/logs/shoe-preparation.log
 ```
 
 After the job finishes, inspect `footbed_overlay.ply` first. The green geometry
@@ -202,29 +201,15 @@ toe panel, or shaft. Only accept `shoe_normalized.ply` and the normalization in
 footbed is wrong, the derived normalization is also invalid and must not be used
 for SUPR placement.
 
-To prepare the complete six-shoe heading pilot in `tmux`, run:
-
-```bash
-mkdir -p /home/ab5298/Outputs/FootShellGaussian/heading_pilot_v1/logs
-tmux new-session -d -s heading-pilot-normalization \
-  'cd /storage/Abhinay/Shell_Gaussian/FootShellGaussian && \
-  INPUT_ROOT=/home/ab5298/dataset/datasets/processed/gshell/footbed_clean_right_heading_v1 \
-  OUTPUT_ROOT=/home/ab5298/Outputs/FootShellGaussian/heading_pilot_v1/normalization \
-  scripts/run_footbed_clean_right_preparation.sh \
-  canvas_shoe leather_boots ww_ii_german_jack_boots crocs_shoe sandal_1 pb129_shoe_low \
-  2>&1 | tee /home/ab5298/Outputs/FootShellGaussian/heading_pilot_v1/logs/normalization.log'
-```
-
 This command runs Checkpoint 2 followed by Checkpoint 3 for each shoe. A
 failure or incorrect green support overlay is a reason to stop and diagnose
-that shoe; it is not permission to change footbed thresholds during the
-heading milestone.
+that shoe; it is not permission to change footbed thresholds.
 
 ## Run the canvas example
 
 ```bash
 python scripts/run_alignment.py \
-  --shoe-mesh /home/ab5298/dataset/datasets/processed/gshell/footbed_clean_right/canvas_shoe/reference_mesh.ply \
+  --shoe-mesh /home/ab5298/dataset/datasets/processed/gshell/golden_set_evaluation/canvas_shoe/reference_mesh.ply \
   --supr-model ../baselines/SUPR/data/supr_male_right_foot.npy \
   --output-dir /home/ab5298/Outputs/FootShellGaussian/alignment/canvas_shoe
 ```
@@ -251,10 +236,10 @@ errors corrected by this milestone.
 ## Verified canvas result and limitations
 
 The checked canvas run selects an interior sheet with 207 vertices and 350
-faces. It covers 94.99% of the shoe length and 86.42% of its width. The initial
-alignment covers 104 of 107 plantar samples (97.20%), reaches a zero minimum
+faces. It covers 94.92% of the shoe length and 86.46% of its width. The initial
+alignment covers 103 of 107 plantar samples (96.26%), reaches a zero minimum
 gap at first contact, and leaves a maximum covered plantar gap of approximately
-0.02129 shoe-frame units.
+0.02137 shoe-frame units.
 
 Visual inspection confirms heel-to-toe orientation along positive X, upright
 placement, plausible horizontal scale, and no catastrophic intersection in

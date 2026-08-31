@@ -71,10 +71,14 @@ directories.
 
 ## Reviewed Manifest
 
-[`evaluation_manifest.json`](evaluation_manifest.json) is the production source
-of truth for semantic orientation and pair selection. Each GLB has an explicit
-heel-to-toe, width, and physical-up axis plus a SHA256 checksum. `build` and
-`validate` reject an unreviewed, missing, additional, or changed GLB.
+[`manifests/baseline_evaluation_manifest.json`](manifests/baseline_evaluation_manifest.json)
+is the source of truth for the broader baseline-export inventory used by Milo,
+SuGaR, and the public pipeline defaults. The FootShellGaussian golden-set
+workflow has its own manifest described below.
+
+Each manifest entry has an explicit heel-to-toe, width, and physical-up axis
+plus a SHA256 checksum. `build` and `validate` reject an unreviewed, missing,
+additional, or changed GLB.
 
 When replacing or adding a download, add its checksum and provisional explicit
 axes with `reviewed: false`, render temporary cardinal views with `audit`, then
@@ -157,131 +161,69 @@ $PYTHON $PIPELINE validate --all
 Useful optional overrides are `--source-root`, `--output-root`, `--manifest`,
 and `--blender`.
 
-## Growing The Right-Shoe Footbed-Clean Set
+## Golden-Set Evaluation Workflow
 
-The project-specific raw and processed roots are:
+The active FootShellGaussian dataset has one stable manifest and one stable
+processed location:
 
 ```text
+raw GLBs:
 /home/ab5298/dataset/datasets/external/golden_set_eval_glb/curated_subsets/footbed_clean
-/home/ab5298/dataset/datasets/processed/gshell/footbed_clean_right
+
+manifest:
+/storage/Abhinay/Shell_Gaussian/dataset_tools_blender/golden_set_evaluation_manifest.json
+
+processed dataset:
+/home/ab5298/dataset/datasets/processed/gshell/golden_set_evaluation
 ```
 
-The corresponding reviewed inventory is
-[`footbed_clean_right_manifest.json`](footbed_clean_right_manifest.json). Its
-size is not fixed: add one record for every GLB currently present in the raw
-root. The manifest and raw-root file sets must match exactly so an unregistered
-download cannot silently enter a production build.
+[`golden_set_evaluation_manifest.json`](golden_set_evaluation_manifest.json)
+is the reviewed source of truth for these 17 normal right shoes. It uses
+`inventory_policy = "listed_subset"`: every listed GLB must exist and match its
+checksum, while unrelated future files in the raw directory do not invalidate
+the reviewed set. The two high-heel assets remain deferred.
 
-For every new GLB:
+After source-axis mapping and right-shoe selection, the worker estimates the
+remaining top-view heading from lower-shoe geometry and rotates the dominant
+length direction onto `+X`. It then centers and uniformly scales the complete
+selected shoe. Footbed detection is not part of dataset orientation.
 
-1. Compute its SHA256 and add a manifest record with provisional orthogonal
-   source axes and `reviewed: false`.
-2. Record whether the file contains one shoe or a pair. For one shoe, use
-   `selection.mode = "all"`. For a pair, audit which source axis separates the
-   shoes and use `selection.mode = "axis-side"` to retain the right shoe. Enable
-   `separate_loose_parts` when selection must operate on disconnected parts.
-3. Render the five audit views. Confirm physical up, heel-to-toe direction,
-   right-side selection, and handedness. Correct `source_axes`, `selection`, and
-   `mirror_width`, then rerun the audit until the result is correct.
-4. Set `reviewed: true` deliberately. Production build and validation reject
-   unreviewed entries.
-5. Build and validate. The published directory will contain the canonical
-   `reference_mesh.ply` and `blender_canonicalization.json` required by
-   FootShellGaussian, together with the complete 180-view GShell dataset.
+For a new or changed GLB:
 
-The reusable project runner has `audit`, `build`, `validate`, and `all` actions.
-Shoe names following the action are optional; when omitted it currently targets
-`leather_boots` and `ww_ii_german_jack_boots`. Select a GPU with the `GPU`
-environment variable:
+1. Add its checksum and provisional reviewed axes to the manifest.
+2. Record whether the source contains one shoe or a pair, including the rule
+   that selects the right shoe.
+3. Run the Blender audit and inspect side, toe, heel, top, and bottom views.
+4. Correct the manifest until physical up, heading, and handedness are right.
+5. Set `reviewed: true`, build, and validate transactionally.
+
+Build the complete dataset in `tmux` on five GPUs:
 
 ```bash
 cd /storage/Abhinay/Shell_Gaussian
-GPU=0 dataset_tools_blender/run_footbed_clean_right.sh audit leather_boots ww_ii_german_jack_boots
+dataset_tools_blender/build_golden_set_evaluation.sh
 ```
 
-Run a reviewed build in `tmux` and write a persistent log with:
+Monitor it with:
 
 ```bash
-mkdir -p /home/ab5298/Outputs/FootShellGaussian/logs
-tmux new-session -d -s footbed-clean-build \
-  'cd /storage/Abhinay/Shell_Gaussian && GPU=0 dataset_tools_blender/run_footbed_clean_right.sh build leather_boots ww_ii_german_jack_boots 2>&1 | tee /home/ab5298/Outputs/FootShellGaussian/logs/footbed-clean-build.log'
-tmux attach -t footbed-clean-build
+tmux attach -t golden-set-evaluation-build
+tail -f /home/ab5298/Outputs/FootShellGaussian/golden_set_evaluation/logs/dataset-build.log
 ```
 
-Do not set `reviewed: true` merely to make `build` run. The audit is the manual
-semantic gate that establishes the coordinate and right-shoe contract.
-
-### Six-shoe automatic-heading pilot
-
-The versioned pilot manifest
-[`footbed_clean_right_heading_pilot_v1_manifest.json`](footbed_clean_right_heading_pilot_v1_manifest.json)
-rebuilds six selected shoes from their raw GLBs into:
-
-```text
-/home/ab5298/dataset/datasets/processed/gshell/footbed_clean_right_heading_v1
-```
-
-This pilot uses `inventory_policy = "listed_subset"`. Every listed file must
-exist and match its checksum, but later GLBs added to the same raw directory do
-not change this frozen six-shoe experiment.
-
-After source-axis mapping and right-shoe selection, the worker estimates the
-remaining top-view heading from triangle centroids in the lowest 20% of
-physical height. Triangle area supplies the statistical weight. The dominant
-axis of the resulting two-dimensional covariance matrix is rotated onto `+X`.
-The full selected shoe receives this rotation before its complete bounding box
-is centered and uniformly scaled. Footbed detection is not used in this step.
-
-Run the semantic audit first in a detached `tmux` session:
+Validate the published dataset without rebuilding:
 
 ```bash
-mkdir -p /home/ab5298/Outputs/FootShellGaussian/heading_pilot_v1/logs
-tmux new-session -d -s heading-pilot-audit \
-  'cd /storage/Abhinay/Shell_Gaussian && \
-  MANIFEST=/storage/Abhinay/Shell_Gaussian/dataset_tools_blender/footbed_clean_right_heading_pilot_v1_manifest.json \
-  SOURCE_ROOT=/home/ab5298/dataset/datasets/external/golden_set_eval_glb/curated_subsets/footbed_clean \
-  OUTPUT_ROOT=/home/ab5298/dataset/datasets/processed/gshell/footbed_clean_right_heading_v1 \
-  AUDIT_ROOT=/home/ab5298/Outputs/FootShellGaussian/heading_pilot_v1/audit \
-  GPU=0 dataset_tools_blender/run_footbed_clean_right.sh audit \
-  canvas_shoe leather_boots ww_ii_german_jack_boots crocs_shoe sandal_1 pb129_shoe_low \
-  2>&1 | tee /home/ab5298/Outputs/FootShellGaussian/heading_pilot_v1/logs/audit.log'
-```
-
-Inspect all five audit views for every shoe before building. The exact
-three-GPU pilot build command is:
-
-```bash
-tmux new-session -d -s heading-pilot-build \
-  "bash -lc 'set -o pipefail; \
-  cd /storage/Abhinay/Shell_Gaussian; \
-  /home/ab5298/anaconda3/envs/shellgaussianenv/bin/python \
-  /storage/Abhinay/Shell_Gaussian/dataset_tools_blender/pipeline.py build \
-  --all --gpus 0,1,2 \
+/home/ab5298/anaconda3/envs/shellgaussianenv/bin/python \
+  dataset_tools_blender/pipeline.py validate --all \
   --source-root /home/ab5298/dataset/datasets/external/golden_set_eval_glb/curated_subsets/footbed_clean \
-  --manifest /storage/Abhinay/Shell_Gaussian/dataset_tools_blender/footbed_clean_right_heading_pilot_v1_manifest.json \
-  --output-root /home/ab5298/dataset/datasets/processed/gshell/footbed_clean_right_heading_v1 \
-  --blender /home/ab5298/anaconda3/envs/shellgaussianenv/bin/blender \
-  2>&1 | tee /home/ab5298/Outputs/FootShellGaussian/heading_pilot_v1/logs/build-3gpu.log'"
+  --manifest dataset_tools_blender/golden_set_evaluation_manifest.json \
+  --output-root /home/ab5298/dataset/datasets/processed/gshell/golden_set_evaluation
 ```
 
-The pipeline validates and skips an already completed shoe. It distributes
-unfinished shoes over the three listed physical GPUs and publishes each shoe
-only after its transactional validation passes.
-
-After the build session exits successfully, validate without Blender:
-
-```bash
-MANIFEST=/storage/Abhinay/Shell_Gaussian/dataset_tools_blender/footbed_clean_right_heading_pilot_v1_manifest.json \
-SOURCE_ROOT=/home/ab5298/dataset/datasets/external/golden_set_eval_glb/curated_subsets/footbed_clean \
-OUTPUT_ROOT=/home/ab5298/dataset/datasets/processed/gshell/footbed_clean_right_heading_v1 \
-dataset_tools_blender/run_footbed_clean_right.sh validate \
-canvas_shoe leather_boots ww_ii_german_jack_boots crocs_shoe sandal_1 pb129_shoe_low
-```
-
-The measured angle, applied correction, confidence ratio, rotation matrix, and
-complete source-to-canonical matrix are recorded in both the audit and
-canonicalization metadata. Existing manifests without a
-`horizontal_alignment` block retain the previous no-correction behavior.
+The manifest and dataset names remain stable. Future revisions are built into
+a temporary directory, validated, and then published at the same canonical
+location; Git history records how the dataset changed.
 
 ## SuGaR Export
 

@@ -3,13 +3,31 @@ set -euo pipefail
 
 PYTHON=${PYTHON:-/home/ab5298/anaconda3/envs/shellgaussianenv/bin/python}
 PROJECT_ROOT=/storage/Abhinay/Shell_Gaussian/FootShellGaussian
-INPUT_ROOT=${INPUT_ROOT:-/home/ab5298/dataset/datasets/processed/gshell/footbed_clean_right}
-OUTPUT_ROOT=${OUTPUT_ROOT:-/home/ab5298/Outputs/FootShellGaussian/checkpoint3_normalization}
+INPUT_ROOT=${INPUT_ROOT:-/home/ab5298/dataset/datasets/processed/gshell/golden_set_evaluation}
+OUTPUT_ROOT=${OUTPUT_ROOT:-/home/ab5298/Outputs/FootShellGaussian/golden_set_evaluation/shoe_preparation}
 
 if [[ $# -gt 0 ]]; then
     SHOES=("$@")
 else
-    SHOES=(leather_boots ww_ii_german_jack_boots)
+    SHOES=(
+        aj_12_basketball_sneakers
+        birkenstock_arizona_sandal
+        canvas_shoe
+        crocs
+        crocs_by_speedyart_studio
+        crocs_shoe
+        duinn_shoes_womens_hiking_sandal_sport
+        leather_boots
+        nike_air_jordan
+        pb129_shoe_low
+        priest_karol_wojtyas_sports_shoes
+        sandal_1
+        sandals_0001
+        shoes_mockup_asset_vans_skate_old_skool_shoes
+        sneaker_vibe
+        sneakers_seen
+        ww_ii_german_jack_boots
+    )
 fi
 
 EXTRA_ARGS=()

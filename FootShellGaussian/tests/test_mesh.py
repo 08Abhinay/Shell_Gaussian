@@ -19,7 +19,7 @@ from foot_prior.mesh import (
 
 
 DEFAULT_EVAL_ROOT = Path(
-    "/home/ab5298/dataset/datasets/processed/gshell/footbed_clean_right"
+    "/home/ab5298/dataset/datasets/processed/gshell/golden_set_evaluation"
 )
 
 
@@ -107,11 +107,15 @@ def test_known_canvas_mesh_counts_bounds_and_convention() -> None:
     np.testing.assert_allclose(
         mesh.bounds,
         [
-            [-0.10729245, -0.04618788, -0.03989644],
-            [0.10729246, 0.04618789, 0.03989644],
+            [-0.1072927713394165, -0.04618929326534271, -0.03994980826973915],
+            [0.1072927713394165, 0.04618929699063301, 0.03994980826973915],
         ],
         atol=1e-8,
     )
-    np.testing.assert_allclose(mesh.extents, [0.21458491, 0.09237577, 0.07979288], atol=1e-8)
+    np.testing.assert_allclose(
+        mesh.extents,
+        [0.214585542678833, 0.09237859025597572, 0.0798996165394783],
+        atol=1e-8,
+    )
     metadata = json.loads((scene / "blender_canonicalization.json").read_text())
     assert "x_length_y_down_z_width" in metadata["reference_mesh"]["coordinate_system"]

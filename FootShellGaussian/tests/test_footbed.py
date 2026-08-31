@@ -15,10 +15,7 @@ from foot_prior.normalization import build_shoe_normalization
 
 
 DEFAULT_EVAL_ROOT = Path(
-    "/home/ab5298/dataset/datasets/processed/gshell/footbed_clean_right"
-)
-DEFAULT_CORRECTED_EVAL_ROOT = Path(
-    "/home/ab5298/dataset/datasets/processed/gshell/footbed_clean_correct_orientation"
+    "/home/ab5298/dataset/datasets/processed/gshell/golden_set_evaluation"
 )
 NORMAL_SHOES = (
     "aj_12_basketball_sneakers",
@@ -28,6 +25,7 @@ NORMAL_SHOES = (
     "crocs_by_speedyart_studio",
     "crocs_shoe",
     "duinn_shoes_womens_hiking_sandal_sport",
+    "leather_boots",
     "nike_air_jordan",
     "pb129_shoe_low",
     "priest_karol_wojtyas_sports_shoes",
@@ -36,25 +34,28 @@ NORMAL_SHOES = (
     "shoes_mockup_asset_vans_skate_old_skool_shoes",
     "sneaker_vibe",
     "sneakers_seen",
+    "ww_ii_german_jack_boots",
 )
 EXPECTED_SUPPORT_FACE_COUNTS = {
     "aj_12_basketball_sneakers": 2252,
-    "birkenstock_arizona_sandal": 8937,
+    "birkenstock_arizona_sandal": 8861,
     "canvas_shoe": 350,
     "crocs": 974,
     "crocs_by_speedyart_studio": 11017,
-    "crocs_shoe": 80790,
+    "crocs_shoe": 79940,
     "duinn_shoes_womens_hiking_sandal_sport": 4812,
+    "leather_boots": 33,
     "nike_air_jordan": 286,
     "pb129_shoe_low": 713,
     "priest_karol_wojtyas_sports_shoes": 2340,
-    "sandal_1": 14023,
+    "sandal_1": 13872,
     "sandals_0001": 5909,
     "shoes_mockup_asset_vans_skate_old_skool_shoes": 602,
     "sneaker_vibe": 390,
     "sneakers_seen": 240,
+    "ww_ii_german_jack_boots": 94,
 }
-CORRECTED_SUPPORT_FACE_DIGESTS = {
+EXPECTED_SUPPORT_FACE_DIGESTS = {
     "aj_12_basketball_sneakers": (
         "73c1a29ce794759a576a72be2ddccd9fc5c15195db7511d889cb32c3383d92bd"
     ),
@@ -111,14 +112,6 @@ CORRECTED_SUPPORT_FACE_DIGESTS = {
 
 def evaluation_root() -> Path:
     return Path(os.environ.get("FOOTSHELL_EVAL_ROOT", DEFAULT_EVAL_ROOT))
-
-
-def corrected_evaluation_root() -> Path:
-    return Path(
-        os.environ.get(
-            "FOOTSHELL_CORRECTED_EVAL_ROOT", DEFAULT_CORRECTED_EVAL_ROOT
-        )
-    )
 
 
 def sheet(
@@ -375,20 +368,22 @@ def test_known_canvas_component_and_sampling() -> None:
     np.testing.assert_allclose(
         footbed.bounds,
         [
-            [-0.10368063, 0.01983586, -0.03464793],
-            [0.10016327, 0.02972209, 0.03431007],
+            [-0.10366863012313843, 0.019836466759443283, -0.034706223756074905],
+            [0.10016108304262161, 0.029722994193434715, 0.034283675253391266],
         ],
         atol=1e-8,
     )
     assert footbed.height_grid.shape == (256, 96)
     assert footbed.valid_mask.shape == footbed.height_grid.shape
-    assert np.count_nonzero(footbed.valid_mask) == 15922
+    assert np.count_nonzero(footbed.valid_mask) == 15893
     assert footbed.length_coverage == pytest.approx(0.94921875)
     assert footbed.width_coverage == pytest.approx(0.864583333333331)
     assert footbed.central_support_length_coverage == pytest.approx(0.94921875)
     assert footbed.upward_facing_area_fraction == pytest.approx(1.0)
     assert footbed.support_like_area_fraction == pytest.approx(1.0)
-    assert footbed.area_weighted_median_y == pytest.approx(0.028700418, abs=1e-9)
+    assert footbed.area_weighted_median_y == pytest.approx(
+        0.028701295455296833, abs=1e-9
+    )
     heights, valid = sample_footbed_y(
         footbed, np.asarray([[0.0, 0.0], [0.2, 0.0]])
     )
@@ -409,13 +404,13 @@ def test_pb129_selects_complete_interior_footbed() -> None:
     np.testing.assert_allclose(
         footbed.bounds,
         [
-            [-0.09381073, 0.00014681, -0.03388835],
-            [0.08254347, 0.02671137, 0.03761325],
+            [-0.09380015730857849, 0.00014682486653327942, -0.034268610179424286],
+            [0.08243507146835327, 0.02671499364078045, 0.03756712004542351],
         ],
         atol=1e-8,
     )
     assert footbed.height_grid.shape == (256, 119)
-    assert np.count_nonzero(footbed.valid_mask) == 14486
+    assert np.count_nonzero(footbed.valid_mask) == 14469
     assert footbed.central_support_length_coverage == pytest.approx(0.81640625)
 
 
@@ -438,9 +433,9 @@ def test_all_normal_shoes_select_opening_facing_support(shoe_name: str) -> None:
     assert np.count_nonzero(first.valid_mask) > 0
 
 
-@pytest.mark.parametrize("shoe_name", tuple(CORRECTED_SUPPORT_FACE_DIGESTS))
-def test_corrected_shoes_preserve_expected_support(shoe_name: str) -> None:
-    path = corrected_evaluation_root() / shoe_name / "reference_mesh.ply"
+@pytest.mark.parametrize("shoe_name", tuple(EXPECTED_SUPPORT_FACE_DIGESTS))
+def test_golden_set_shoes_preserve_expected_support(shoe_name: str) -> None:
+    path = evaluation_root() / shoe_name / "reference_mesh.ply"
     if not path.is_file():
         pytest.skip(f"correctly oriented evaluation shoe is unavailable: {path}")
 
@@ -448,7 +443,7 @@ def test_corrected_shoes_preserve_expected_support(shoe_name: str) -> None:
     digest = hashlib.sha256(
         np.asarray(footbed.original_face_indices, dtype=np.int64).tobytes()
     ).hexdigest()
-    assert digest == CORRECTED_SUPPORT_FACE_DIGESTS[shoe_name]
+    assert digest == EXPECTED_SUPPORT_FACE_DIGESTS[shoe_name]
 
     if shoe_name != "birkenstock_arizona_sandal":
         assert footbed.selection_method == "component_layers"
@@ -476,41 +471,12 @@ def test_corrected_shoes_preserve_expected_support(shoe_name: str) -> None:
     assert normalization.functional_length > 0.0
 
 
-def test_birkenstock_before_and_after_heading_selects_interior_support() -> None:
-    before_path = (
-        evaluation_root()
-        / "birkenstock_arizona_sandal"
-        / "reference_mesh.ply"
-    )
-    after_path = (
-        corrected_evaluation_root()
-        / "birkenstock_arizona_sandal"
-        / "reference_mesh.ply"
-    )
-    if not before_path.is_file() or not after_path.is_file():
-        pytest.skip("Birkenstock heading-regression meshes are unavailable")
-
-    before = identify_footbed_surface(load_triangle_mesh(before_path))
-    after = identify_footbed_surface(load_triangle_mesh(after_path))
-    overlap = np.intersect1d(
-        before.original_face_indices, after.original_face_indices
-    )
-
-    assert before.upward_facing_area_fraction == pytest.approx(1.0)
-    assert after.upward_facing_area_fraction == pytest.approx(1.0)
-    assert before.central_support_length_coverage >= 0.65
-    assert after.central_support_length_coverage >= 0.65
-    assert len(overlap) / min(
-        len(before.original_face_indices), len(after.original_face_indices)
-    ) >= 0.70
-
-
 @pytest.mark.parametrize("angle_degrees", [-2.983, -2.0, 2.0])
 def test_birkenstock_trace_is_stable_under_small_heading_changes(
     angle_degrees: float,
 ) -> None:
     path = (
-        corrected_evaluation_root()
+        evaluation_root()
         / "birkenstock_arizona_sandal"
         / "reference_mesh.ply"
     )

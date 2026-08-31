@@ -62,7 +62,9 @@ DEFAULT_BLENDER = Path(
     "shellgaussianenv/bin/blender"
 )
 DEFAULT_COLMAP = Path("/storage/Abhinay/conda_envs/colmap/bin/colmap")
-DEFAULT_MANIFEST = SCRIPT_DIR / "evaluation_manifest.json"
+DEFAULT_MANIFEST = (
+    SCRIPT_DIR / "manifests" / "baseline_evaluation_manifest.json"
+)
 
 RESOLUTION = (1536, 1024)
 FOV_X_DEG = 21.0
