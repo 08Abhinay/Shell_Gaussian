@@ -9,7 +9,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from foot_prior.footbed import identify_footbed_surface, sample_footbed_y
+from foot_prior.footbed import (
+    identify_footbed_surface,
+    identify_high_heel_support,
+    sample_footbed_y,
+)
 from foot_prior.mesh import TriangleMesh, load_triangle_mesh
 from foot_prior.normalization import build_shoe_normalization
 
@@ -107,6 +111,22 @@ EXPECTED_SUPPORT_FACE_DIGESTS = {
     "ww_ii_german_jack_boots": (
         "9ba2e26fc61cf7a9f9b7cef7ea09cb77637d9d3e2b1f1f3fa4c63be77156d430"
     ),
+}
+EXPECTED_HIGH_HEEL_SUPPORT = {
+    "red_high_heel_shoes": {
+        "face_count": 5658,
+        "vertex_count": 3930,
+        "digest": (
+            "2f6090e6a7594d94695e794eb8608eeab47203795024fd578314d728bf3e52a1"
+        ),
+    },
+    "plateau_sandal_heels": {
+        "face_count": 2249,
+        "vertex_count": 1555,
+        "digest": (
+            "31af6f829520d90a351852e0e632c2cec6b4357a17ca21d471f2dd969539ecfe"
+        ),
+    },
 }
 
 
@@ -219,6 +239,34 @@ def u_shaped_upper(y: float, upward: bool = True) -> TriangleMesh:
     return TriangleMesh(vertices, face_array)
 
 
+def heel_sheet(
+    x_bounds: tuple[float, float] = (-5.0, 5.0),
+    z_bounds: tuple[float, float] = (-2.0, 2.0),
+    offset: float = 0.0,
+    upward: bool = True,
+) -> TriangleMesh:
+    """Build a steep plane using y = 0.4*x + offset."""
+
+    first_y = 0.4 * x_bounds[0] + offset
+    last_y = 0.4 * x_bounds[1] + offset
+    return sheet(
+        x_bounds,
+        z_bounds,
+        (first_y, last_y, last_y, first_y),
+        upward=upward,
+    )
+
+
+def layered_high_heel(*, reverse_all_faces: bool = False) -> TriangleMesh:
+    mesh = combine(
+        heel_sheet(offset=0.0),
+        heel_sheet(offset=0.5, upward=False),
+    )
+    if not reverse_all_faces:
+        return mesh
+    return TriangleMesh(mesh.vertices, mesh.faces[:, ::-1])
+
+
 @pytest.mark.parametrize("reversed_winding", [False, True])
 def test_selects_inner_sheet_independently_of_face_winding(
     reversed_winding: bool,
@@ -315,6 +363,81 @@ def test_ambiguous_outsole_case_fails_instead_of_guessing() -> None:
     )
     with pytest.raises(ValueError, match="local-height tracing found no"):
         identify_footbed_surface(ambiguous)
+
+
+def test_high_heel_accepts_a_smooth_steep_support() -> None:
+    result = identify_high_heel_support(layered_high_heel())
+
+    assert result.orientation_mode == "canonical_opening_facing"
+    assert result.surface.selection_method == "high_heel_upper_envelope"
+    assert result.surface.original_face_indices.tolist() == [0, 1]
+    assert result.surface.central_support_length_coverage == pytest.approx(1.0)
+    assert result.underlying_support_column_fraction == pytest.approx(1.0)
+    assert np.ptp(result.surface.height_grid[result.surface.valid_mask]) > 1.5
+    assert result.heel_elevation > 0.0
+    assert np.isfinite(result.support_angle_degrees)
+
+
+def test_high_heel_retries_globally_reversed_winding() -> None:
+    result = identify_high_heel_support(
+        layered_high_heel(reverse_all_faces=True)
+    )
+
+    assert result.orientation_mode == "reversed_winding"
+    assert result.surface.original_face_indices.tolist() == [0, 1]
+    assert result.surface.fallback_reason is not None
+
+
+def test_high_heel_combines_an_inset_with_the_support_below() -> None:
+    base = heel_sheet(offset=0.2)
+    outsole = heel_sheet(offset=0.6, upward=False)
+    inset = heel_sheet((-4.5, 3.5), (-1.7, 1.7), offset=0.0)
+    strap_top = heel_sheet((-1.0, 1.0), (-2.0, 2.0), offset=-1.0)
+    strap_bottom = heel_sheet(
+        (-1.0, 1.0), (-2.0, 2.0), offset=-0.8, upward=False
+    )
+
+    result = identify_high_heel_support(
+        combine(base, outsole, inset, strap_top, strap_bottom)
+    )
+
+    assert np.isin([0, 1], result.surface.original_face_indices).all()
+    assert np.isin([4, 5], result.surface.original_face_indices).all()
+    assert not np.isin([2, 3, 6, 7, 8, 9], result.surface.original_face_indices).any()
+    assert result.surface.length_coverage == pytest.approx(1.0)
+
+
+def test_high_heel_rejects_fragmented_or_unsupported_surfaces() -> None:
+    fragmented = combine(
+        heel_sheet((-5.0, -1.0), offset=0.0),
+        heel_sheet((-5.0, -1.0), offset=0.5, upward=False),
+        heel_sheet((1.0, 5.0), offset=1.0),
+        heel_sheet((1.0, 5.0), offset=1.5, upward=False),
+    )
+    with pytest.raises(ValueError, match="high-heel support"):
+        identify_high_heel_support(fragmented)
+
+    with pytest.raises(ValueError, match="underlying_support"):
+        identify_high_heel_support(heel_sheet())
+
+
+def test_high_heel_preserves_a_real_support_hole() -> None:
+    upper = ring_sheet()
+    upper_vertices = upper.vertices.copy()
+    upper_vertices[:, 1] = 0.4 * upper_vertices[:, 0]
+    lower_vertices = upper_vertices.copy()
+    lower_vertices[:, 1] += 0.5
+    support = TriangleMesh(upper_vertices, upper.faces)
+    lower = TriangleMesh(lower_vertices, upper.faces[:, ::-1])
+
+    result = identify_high_heel_support(combine(support, lower))
+    heights, valid = sample_footbed_y(
+        result.surface, np.asarray([[-3.0, 0.0], [0.0, 0.0]])
+    )
+
+    np.testing.assert_array_equal(valid, [True, False])
+    assert heights[0] == pytest.approx(-1.2)
+    assert np.isnan(heights[1])
 
 
 def test_extracts_footbed_faces_when_connected_to_sidewall() -> None:
@@ -469,6 +592,43 @@ def test_golden_set_shoes_preserve_expected_support(shoe_name: str) -> None:
     assert footbed.upward_facing_area_fraction == pytest.approx(1.0)
     normalization = build_shoe_normalization(load_triangle_mesh(path), footbed)
     assert normalization.functional_length > 0.0
+
+
+@pytest.mark.parametrize("shoe_name", tuple(EXPECTED_HIGH_HEEL_SUPPORT))
+def test_golden_set_high_heels_select_reviewed_support(shoe_name: str) -> None:
+    path = evaluation_root() / shoe_name / "reference_mesh.ply"
+    if not path.is_file():
+        pytest.skip(f"evaluation high heel is unavailable: {path}")
+
+    mesh = load_triangle_mesh(path)
+    first = identify_high_heel_support(mesh)
+    second = identify_high_heel_support(mesh)
+    expected = EXPECTED_HIGH_HEEL_SUPPORT[shoe_name]
+
+    np.testing.assert_array_equal(
+        first.surface.original_face_indices,
+        second.surface.original_face_indices,
+    )
+    digest = hashlib.sha256(
+        np.asarray(
+            first.surface.original_face_indices, dtype=np.int64
+        ).tobytes()
+    ).hexdigest()
+    assert digest == expected["digest"]
+    assert len(first.surface.original_face_indices) == expected["face_count"]
+    assert len(first.surface.mesh.vertices) == expected["vertex_count"]
+    assert first.orientation_mode == "canonical_opening_facing"
+    assert first.surface.selection_method == "high_heel_upper_envelope"
+    assert first.surface.central_support_length_coverage >= 0.65
+    assert first.surface.upward_facing_area_fraction == pytest.approx(1.0)
+    assert first.underlying_support_column_fraction >= 0.65
+    assert first.heel_elevation > 0.0
+    assert np.isfinite(first.support_angle_degrees)
+    assert (
+        np.ptp(first.surface.height_grid[first.surface.valid_mask])
+        / mesh.extents[0]
+        > 0.15
+    )
 
 
 @pytest.mark.parametrize("angle_degrees", [-2.983, -2.0, 2.0])

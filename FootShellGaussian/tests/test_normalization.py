@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 from foot_prior.footbed import FootbedSurface, identify_footbed_surface
-from foot_prior.mesh import TriangleMesh, load_triangle_mesh
+from foot_prior.mesh import TriangleMesh, load_triangle_mesh, save_triangle_mesh
 from foot_prior.normalization import (
     EXPECTED_SHOE_COORDINATE_SYSTEM,
     HIGH_HEEL_SHOE_PROFILE,
@@ -158,6 +158,27 @@ def box_mesh(
             [3, 0, 4],
             [3, 4, 7],
         ],
+        dtype=np.int64,
+    )
+    return TriangleMesh(vertices, faces)
+
+
+def high_heel_runner_mesh() -> TriangleMesh:
+    vertices = np.asarray(
+        [
+            [-5.0, -2.0, -2.0],
+            [5.0, 2.0, -2.0],
+            [5.0, 2.0, 2.0],
+            [-5.0, -2.0, 2.0],
+            [-5.0, -1.5, -2.0],
+            [5.0, 2.5, -2.0],
+            [5.0, 2.5, 2.0],
+            [-5.0, -1.5, 2.0],
+        ],
+        dtype=np.float64,
+    )
+    faces = np.asarray(
+        [[0, 1, 2], [0, 2, 3], [4, 6, 5], [4, 7, 6]],
         dtype=np.int64,
     )
     return TriangleMesh(vertices, faces)
@@ -542,11 +563,11 @@ def test_canvas_preparation_runner_and_overwrite_contract(tmp_path: Path) -> Non
     assert unrelated.read_text(encoding="utf-8") == "preserve me\n"
 
 
-def test_high_heel_runner_defers_without_writing_artifacts(
+def test_high_heel_runner_writes_support_review_without_normalization(
     tmp_path: Path,
 ) -> None:
     shoe_mesh = tmp_path / "high_heel.ply"
-    shoe_mesh.write_bytes(b"not loaded because the profile gate runs first")
+    save_triangle_mesh(shoe_mesh, high_heel_runner_mesh())
     canonicalization = tmp_path / "blender_canonicalization.json"
     write_metadata(
         canonicalization,
@@ -569,5 +590,29 @@ def test_high_heel_runner_defers_without_writing_artifacts(
     result = subprocess.run(command, capture_output=True, text=True, check=False)
 
     assert result.returncode == 0, result.stderr
-    assert "[deferred-support]" in result.stdout
-    assert not output.exists()
+    assert "[support-detected]" in result.stdout
+    assert {path.name for path in output.iterdir()} == {
+        "shoe_preparation.json",
+        "footbed_surface.ply",
+        "footbed_overlay.ply",
+    }
+    payload = json.loads((output / "shoe_preparation.json").read_text())
+    assert payload["shoe_profile"] == HIGH_HEEL_SHOE_PROFILE
+    assert (
+        payload["preparation_status"]
+        == "support_detected_normalization_deferred"
+    )
+    assert payload["normalization"] is None
+    assert payload["footbed_selection"]["selection_method"] == (
+        "high_heel_upper_envelope"
+    )
+    assert payload["high_heel_support"]["heel_elevation"] > 0.0
+    assert not (output / "shoe_normalized.ply").exists()
+
+    refused = subprocess.run(command, capture_output=True, text=True, check=False)
+    assert refused.returncode != 0
+    assert "already exist" in refused.stderr
+    replaced = subprocess.run(
+        [*command, "--overwrite"], capture_output=True, text=True, check=False
+    )
+    assert replaced.returncode == 0, replaced.stderr
