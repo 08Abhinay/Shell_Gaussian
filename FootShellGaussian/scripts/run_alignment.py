@@ -1,4 +1,4 @@
-"""Place a neutral SUPR foot in one prepared normalized normal shoe."""
+"""Fit an articulated SUPR foot to one prepared normal-shoe support."""
 
 from __future__ import annotations
 
@@ -9,7 +9,10 @@ from typing import Any
 
 import numpy as np
 
-from foot_prior.alignment import build_initial_placement
+from foot_prior.alignment import (
+    DEFAULT_TOE_ALLOWANCE_MM,
+    build_support_foot_fit,
+)
 from foot_prior.mesh import (
     TriangleMesh,
     combine_colored_meshes,
@@ -23,14 +26,14 @@ from foot_prior.normalization import (
     SHOE_SIDE,
     validate_shoe_frame_metadata,
 )
-from foot_prior.supr_foot import load_neutral_supr_foot
+from foot_prior.supr_foot import load_neutral_supr_foot, load_posable_supr_foot
 
 
 ARTIFACT_NAMES = (
-    "initial_placement.json",
-    "foot_initial.ply",
+    "support_fit.json",
+    "foot_support_fitted.ply",
     "footbed_normalized.ply",
-    "initial_placement_overlay.ply",
+    "support_fit_overlay.ply",
 )
 SHOE_COLOR = np.asarray([150, 150, 150, 255], dtype=np.uint8)
 FOOT_COLOR = np.asarray([45, 105, 220, 255], dtype=np.uint8)
@@ -40,18 +43,20 @@ FOOTBED_COLOR = np.asarray([40, 180, 90, 255], dtype=np.uint8)
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Place a neutral SUPR right foot in a prepared normalized "
-            "normal-profile shoe."
+            "Fit SUPR ankle and midfoot pitch to a prepared normalized "
+            "normal-shoe support."
         )
     )
     parser.add_argument("--preparation-dir", required=True, type=Path)
     parser.add_argument("--supr-model", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
-    parser.add_argument("--foot-length-ratio", type=float, default=0.85)
+    parser.add_argument(
+        "--toe-allowance-mm", type=float, default=DEFAULT_TOE_ALLOWANCE_MM
+    )
     parser.add_argument(
         "--overwrite",
         action="store_true",
-        help="Replace only the four known initial-placement artifacts.",
+        help="Replace only the four known support-fit artifacts.",
     )
     return parser.parse_args()
 
@@ -90,6 +95,7 @@ def _load_prepared_inputs(
     np.ndarray,
     np.ndarray,
     np.ndarray,
+    float,
 ]:
     metadata_path = preparation_dir / "shoe_preparation.json"
     shoe_path = preparation_dir / "shoe_normalized.ply"
@@ -119,7 +125,8 @@ def _load_prepared_inputs(
         )
     if canonical_profile != NORMAL_SHOE_PROFILE:
         raise ValueError(
-            "initial rigid SUPR placement currently accepts shoe_profile='normal' "
+            "articulated SUPR support fitting currently accepts "
+            "shoe_profile='normal' "
             f"only; received {canonical_profile!r}"
         )
 
@@ -171,6 +178,17 @@ def _load_prepared_inputs(
         raise ValueError("footbed face count does not match shoe_preparation.json")
     if int(footbed_selection.get("vertex_count", -1)) != len(footbed.vertices):
         raise ValueError("footbed vertex count does not match shoe_preparation.json")
+    grid_shape = np.asarray(footbed_selection.get("grid_shape"), dtype=np.int64)
+    grid_x_bounds = _array(
+        footbed_selection.get("grid_x_bounds"),
+        (2,),
+        "footbed grid X bounds",
+    )
+    if grid_shape.shape != (2,) or np.any(grid_shape <= 0):
+        raise ValueError("footbed grid_shape must contain two positive dimensions")
+    original_cell_spacing = float(np.ptp(grid_x_bounds) / grid_shape[0])
+    normalized_x_scale = float(np.linalg.norm(shoe_to_normalized[:3, 0]))
+    support_grid_cell_spacing = original_cell_spacing * normalized_x_scale
     return (
         shoe,
         footbed,
@@ -178,6 +196,7 @@ def _load_prepared_inputs(
         shoe_to_normalized,
         normalized_to_shoe,
         centerline_xz,
+        support_grid_cell_spacing,
     )
 
 
@@ -190,7 +209,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     if existing and not args.overwrite:
         formatted = ", ".join(str(path) for path in existing)
         raise FileExistsError(
-            "initial-placement artifacts already exist: "
+            "support-fit artifacts already exist: "
             f"{formatted}; pass --overwrite to replace them"
         )
 
@@ -201,21 +220,23 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         shoe_to_normalized,
         normalized_to_shoe,
         centerline_xz,
+        support_grid_cell_spacing,
     ) = _load_prepared_inputs(preparation_dir)
     normalized_footbed = transform_mesh(original_footbed, shoe_to_normalized)
-    foot = load_neutral_supr_foot(supr_path)
-    placement = build_initial_placement(
-        foot_mesh=foot,
+    neutral_foot = load_neutral_supr_foot(supr_path)
+    posable_foot = load_posable_supr_foot(supr_path, num_betas=10)
+    support_fit = build_support_foot_fit(
+        supr_model=posable_foot,
+        neutral_foot_mesh=neutral_foot,
         normalized_shoe_mesh=normalized_shoe,
         normalized_support_mesh=normalized_footbed,
         normalized_centerline_xz=centerline_xz,
         shoe_to_normalized=shoe_to_normalized,
         normalized_to_shoe=normalized_to_shoe,
-        foot_length_ratio=args.foot_length_ratio,
+        support_grid_cell_spacing=support_grid_cell_spacing,
+        toe_allowance_mm=args.toe_allowance_mm,
     )
-    aligned_foot = TriangleMesh(
-        placement.foot_points_to_normalized_shoe(foot.vertices), foot.faces
-    )
+    aligned_foot = TriangleMesh(support_fit.aligned_vertices, neutral_foot.faces)
     overlay = combine_colored_meshes(
         (normalized_shoe, SHOE_COLOR), (aligned_foot, FOOT_COLOR)
     )
@@ -230,7 +251,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             "supr_model": str(supr_path),
         },
         "source_preparation_schema_version": preparation["schema_version"],
-        **placement.to_dict(),
+        **support_fit.to_dict(),
     }
     payload_json = json.dumps(payload, indent=2, sort_keys=True) + "\n"
 
@@ -239,16 +260,16 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     footbed_colors = np.tile(
         FOOTBED_COLOR, (len(normalized_footbed.vertices), 1)
     )
-    save_triangle_mesh(targets["foot_initial.ply"], aligned_foot, foot_colors)
+    save_triangle_mesh(
+        targets["foot_support_fitted.ply"], aligned_foot, foot_colors
+    )
     save_triangle_mesh(
         targets["footbed_normalized.ply"],
         normalized_footbed,
         footbed_colors,
     )
-    save_triangle_mesh(targets["initial_placement_overlay.ply"], overlay)
-    targets["initial_placement.json"].write_text(
-        payload_json, encoding="utf-8"
-    )
+    save_triangle_mesh(targets["support_fit_overlay.ply"], overlay)
+    targets["support_fit.json"].write_text(payload_json, encoding="utf-8")
     return payload
 
 
@@ -256,21 +277,31 @@ def main() -> None:
     parser_args = parse_args()
     try:
         payload = run(parser_args)
-    except (FileExistsError, FileNotFoundError, TypeError, ValueError) as error:
-        raise SystemExit(f"initial placement failed: {error}") from error
-    contact = payload["plantar_contact"]
-    placement = payload["placement"]
+    except (
+        FileExistsError,
+        FileNotFoundError,
+        RuntimeError,
+        TypeError,
+        ValueError,
+    ) as error:
+        raise SystemExit(f"SUPR support fit failed: {error}") from error
+    contact = payload["support_contact"]
+    supr = payload["supr"]
     assert isinstance(contact, dict)
-    assert isinstance(placement, dict)
+    assert isinstance(supr, dict)
+    region_contact = contact["face_centroids_by_region"]
+    angles = supr["selected_angles_degrees"]
+    assert isinstance(region_contact, dict)
+    assert isinstance(angles, dict)
     print(
-        f"wrote initial-placement artifacts to "
+        f"wrote articulated SUPR support-fit artifacts to "
         f"{parser_args.output_dir.expanduser().resolve()}"
     )
     print(
-        "plantar coverage "
-        f"{contact['covered_sample_count']}/{contact['sample_count']} "
-        f"({float(contact['coverage']):.2%}); "
-        f"length ratio {float(placement['achieved_plantar_length_ratio']):.6f}"
+        f"ankle {float(angles['ankle_pitch']):+.2f} degrees; "
+        f"midfoot {float(angles['midfoot_pitch']):+.2f} degrees; "
+        f"heel RMS {float(region_contact['heel']['rms_gap']):.6f}; "
+        f"forefoot RMS {float(region_contact['forefoot']['rms_gap']):.6f}"
     )
 
 

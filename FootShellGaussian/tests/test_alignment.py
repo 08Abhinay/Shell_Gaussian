@@ -1,4 +1,4 @@
-"""Focused tests for preparation-driven rigid SUPR placement."""
+"""Focused tests for articulated SUPR support fitting."""
 
 from __future__ import annotations
 
@@ -12,11 +12,18 @@ import numpy as np
 import pytest
 
 from foot_prior.alignment import (
-    build_initial_placement,
+    DEFAULT_TOE_ALLOWANCE_MM,
+    REFERENCE_FOOT_LENGTH_MM,
+    identify_supr_contact_regions,
     make_supr_to_shoe_axis_remap,
     transform_points,
 )
-from foot_prior.mesh import TriangleMesh, load_triangle_mesh
+from foot_prior.mesh import load_triangle_mesh
+from foot_prior.supr_foot import (
+    SUPR_ANKLE_PITCH_INDEX,
+    SUPR_MIDFOOT_PITCH_INDEX,
+    load_neutral_supr_foot,
+)
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -28,42 +35,11 @@ PREPARATION_ROOT = Path(
 )
 RUNNER = PROJECT_ROOT / "scripts/run_alignment.py"
 ARTIFACT_NAMES = {
-    "initial_placement.json",
-    "foot_initial.ply",
+    "support_fit.json",
+    "foot_support_fitted.ply",
     "footbed_normalized.ply",
-    "initial_placement_overlay.ply",
+    "support_fit_overlay.ply",
 }
-
-
-def _synthetic_raw_foot() -> TriangleMesh:
-    remapped_vertices = np.asarray(
-        [
-            [0.0, 0.0, -0.1],
-            [1.0, 0.0, -0.1],
-            [1.0, 0.0, 0.1],
-            [0.0, 0.0, 0.1],
-        ],
-        dtype=np.float64,
-    )
-    raw_vertices = transform_points(
-        remapped_vertices, make_supr_to_shoe_axis_remap()
-    )
-    faces = np.asarray([[0, 2, 1], [0, 3, 2]], dtype=np.int64)
-    return TriangleMesh(raw_vertices, faces)
-
-
-def _sloped_support() -> TriangleMesh:
-    vertices = np.asarray(
-        [
-            [-0.1, 0.19, -1.0],
-            [1.0, 0.30, -1.0],
-            [1.0, 0.30, 1.0],
-            [-0.1, 0.19, 1.0],
-        ],
-        dtype=np.float64,
-    )
-    faces = np.asarray([[0, 1, 2], [0, 2, 3]], dtype=np.int64)
-    return TriangleMesh(vertices, faces)
 
 
 def _run_alignment(*arguments: object) -> subprocess.CompletedProcess[str]:
@@ -77,7 +53,7 @@ def _run_alignment(*arguments: object) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_exact_axis_remap_and_point_round_trip() -> None:
+def test_exact_axis_remap_and_contact_region_partition() -> None:
     remap = make_supr_to_shoe_axis_remap()
     basis = np.eye(3, dtype=np.float64)
     expected = np.asarray(
@@ -86,69 +62,33 @@ def test_exact_axis_remap_and_point_round_trip() -> None:
     np.testing.assert_array_equal(transform_points(basis, remap), expected)
     np.testing.assert_allclose(remap @ remap, np.eye(4), atol=0.0, rtol=0.0)
 
-    points = np.asarray([[0.2, -0.4, 0.7], [-1.0, 2.0, 3.0]])
-    np.testing.assert_allclose(
-        transform_points(transform_points(points, remap), np.linalg.inv(remap)),
-        points,
-        atol=1e-12,
-        rtol=0.0,
-    )
+    neutral = load_neutral_supr_foot(SUPR_MODEL)
+    regions = identify_supr_contact_regions(neutral)
+    assert len(regions.plantar_vertex_indices) == 107
+    assert len(regions.plantar_face_indices) == 150
+    assert {name: len(values) for name, values in regions.vertex_regions.items()} == {
+        "heel": 21,
+        "arch": 28,
+        "forefoot": 20,
+        "toes": 38,
+    }
+    assert {name: len(values) for name, values in regions.face_regions.items()} == {
+        "heel": 33,
+        "arch": 47,
+        "forefoot": 33,
+        "toes": 37,
+    }
 
 
-def test_synthetic_placement_anchors_length_centerline_and_contact() -> None:
-    foot = _synthetic_raw_foot()
-    support = _sloped_support()
-    shoe_to_normalized = np.asarray(
-        [
-            [2.0, 0.0, 0.0, 0.3],
-            [0.0, 2.0, 0.0, -0.4],
-            [0.0, 0.0, 2.0, 0.2],
-            [0.0, 0.0, 0.0, 1.0],
-        ]
-    )
-    normalized_to_shoe = np.linalg.inv(shoe_to_normalized)
-    centerline = np.asarray([[0.0, 0.30], [0.85, 0.40], [1.0, 0.42]])
-
-    result = build_initial_placement(
-        foot_mesh=foot,
-        normalized_shoe_mesh=support,
-        normalized_support_mesh=support,
-        normalized_centerline_xz=centerline,
-        shoe_to_normalized=shoe_to_normalized,
-        normalized_to_shoe=normalized_to_shoe,
-        foot_length_ratio=0.85,
-    )
-
-    assert result.achieved_plantar_length_ratio == pytest.approx(0.85)
-    assert result.heel_reference_normalized[0] == pytest.approx(0.0)
-    assert result.lateral_rms_after <= result.lateral_rms_before
-    assert result.plantar_support_coverage == pytest.approx(1.0)
-    assert result.minimum_support_gap == pytest.approx(0.0, abs=1e-12)
-    assert result.maximum_support_gap >= 0.0
-    np.testing.assert_allclose(
-        result.normalized_shoe_to_foot @ result.foot_to_normalized_shoe,
-        np.eye(4),
-        atol=1e-12,
-        rtol=0.0,
-    )
-    np.testing.assert_allclose(
-        result.original_shoe_to_foot @ result.foot_to_original_shoe,
-        np.eye(4),
-        atol=1e-12,
-        rtol=0.0,
-    )
-    round_trip = result.normalized_shoe_points_to_foot(
-        result.foot_points_to_normalized_shoe(foot.vertices)
-    )
-    np.testing.assert_allclose(round_trip, foot.vertices, atol=1e-12, rtol=0.0)
-
-
-def test_runner_uses_saved_preparation_and_preserves_unrelated_outputs(
+def test_runner_uses_saved_support_and_writes_reversible_fit(
     tmp_path: Path,
 ) -> None:
     source = PREPARATION_ROOT / "canvas_shoe"
     if not source.is_dir():
         pytest.skip(f"prepared canvas shoe is unavailable: {source}")
+    torch = pytest.importorskip("torch")
+    if not torch.cuda.is_available():
+        pytest.skip("articulated SUPR test requires CUDA")
 
     preparation = tmp_path / "prepared"
     preparation.mkdir()
@@ -164,7 +104,7 @@ def test_runner_uses_saved_preparation_and_preserves_unrelated_outputs(
     output.mkdir()
     unrelated = output / "keep.txt"
     unrelated.write_text("preserve me", encoding="utf-8")
-    base_arguments = (
+    arguments = (
         "--preparation-dir",
         preparation,
         "--supr-model",
@@ -172,33 +112,62 @@ def test_runner_uses_saved_preparation_and_preserves_unrelated_outputs(
         "--output-dir",
         output,
     )
-    first = _run_alignment(*base_arguments)
-    assert first.returncode == 0, first.stderr
+    completed = _run_alignment(*arguments)
+    assert completed.returncode == 0, completed.stderr
     assert {path.name for path in output.iterdir()} == ARTIFACT_NAMES | {"keep.txt"}
 
-    payload = json.loads((output / "initial_placement.json").read_text())
-    assert payload["shoe_profile"] == "normal"
-    assert payload["placement"]["achieved_plantar_length_ratio"] == pytest.approx(
-        0.85
+    payload = json.loads((output / "support_fit.json").read_text())
+    expected_ratio = REFERENCE_FOOT_LENGTH_MM / (
+        REFERENCE_FOOT_LENGTH_MM + DEFAULT_TOE_ALLOWANCE_MM
     )
-    assert payload["plantar_contact"]["sample_count"] == 107
-    assert payload["plantar_contact"]["covered_sample_count"] == 104
+    assert payload["sizing"]["target_foot_length_ratio"] == pytest.approx(
+        expected_ratio
+    )
+    assert payload["sizing"]["achieved_foot_length_ratio"] == pytest.approx(
+        expected_ratio
+    )
+    assert payload["bounds"]["aligned_foot"][0][0] == pytest.approx(0.0)
+    assert payload["bounds"]["aligned_foot"][1][0] == pytest.approx(expected_ratio)
+    pose = np.asarray(payload["supr"]["pose_parameters_radians"])
+    inactive = np.ones(len(pose), dtype=bool)
+    inactive[[SUPR_ANKLE_PITCH_INDEX, SUPR_MIDFOOT_PITCH_INDEX]] = False
+    np.testing.assert_array_equal(pose[inactive], 0.0)
+
+    contact = payload["support_contact"]["face_centroids_by_region"]
+    assert contact["overall"]["projected_area_coverage"] >= 0.95
+    assert contact["heel"]["projected_area_coverage"] >= 0.95
+    assert contact["forefoot"]["projected_area_coverage"] >= 0.95
+    assert contact["toes"]["projected_area_coverage"] >= 0.90
+    assert min(record["minimum_gap"] for record in contact.values()) == pytest.approx(
+        0.0, abs=1e-10
+    )
+    assert all(record["minimum_gap"] >= -1e-10 for record in contact.values())
+    lateral = payload["lateral_centerline_fit"]
+    assert lateral["rms_after_translation"] <= lateral["rms_before_translation"]
+
+    transforms = payload["transforms"]
     np.testing.assert_allclose(
-        np.asarray(payload["transforms"]["normalized_shoe_to_foot"])
-        @ np.asarray(payload["transforms"]["foot_to_normalized_shoe"]),
+        np.asarray(transforms["normalized_shoe_to_posed_supr"])
+        @ np.asarray(transforms["posed_supr_to_normalized_shoe"]),
         np.eye(4),
         atol=1e-10,
         rtol=0.0,
     )
-    foot = load_triangle_mesh(output / "foot_initial.ply")
+    np.testing.assert_allclose(
+        np.asarray(transforms["original_shoe_to_posed_supr"])
+        @ np.asarray(transforms["posed_supr_to_original_shoe"]),
+        np.eye(4),
+        atol=1e-10,
+        rtol=0.0,
+    )
+    foot = load_triangle_mesh(output / "foot_support_fitted.ply")
     assert foot.vertices.shape == (266, 3)
     assert foot.faces.shape == (515, 3)
+    np.testing.assert_array_equal(foot.faces, load_neutral_supr_foot(SUPR_MODEL).faces)
 
-    refused = _run_alignment(*base_arguments)
+    refused = _run_alignment(*arguments)
     assert refused.returncode != 0
     assert "pass --overwrite" in refused.stderr
-    overwritten = _run_alignment(*base_arguments, "--overwrite")
-    assert overwritten.returncode == 0, overwritten.stderr
     assert unrelated.read_text(encoding="utf-8") == "preserve me"
 
 

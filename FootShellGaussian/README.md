@@ -1,23 +1,29 @@
 # FootShellGaussian
 
-`FootShellGaussian` is a small, deterministic first-stage geometry project for
-preparing a canonical right shoe and placing a neutral right SUPR foot inside
-it. Shoe preparation validates the coordinate frame, detects the interior
-support, and constructs a reversible functional-length normalization. The
-initial foot milestone uses a fixed coordinate remap, uniform length scaling,
-functional-heel anchoring, footbed-centerline lateral placement, saved-footbed
-first contact, and explicit forward and inverse coordinate transforms.
+`FootShellGaussian` is a deterministic geometry project for preparing a
+canonical right shoe and fitting a right SUPR foot to its interior support.
+Shoe preparation validates the coordinate frame, detects the interior support,
+and constructs a reversible functional-length normalization. The current
+normal-shoe fit uses a fixed coordinate remap, uniform length scaling,
+functional-heel anchoring, footbed-centerline lateral placement, and a small
+CUDA search over SUPR ankle and midfoot pitch.
 
-The project intentionally does not include pose fitting, PCA alignment, SDFs,
-CUDA, learned optimization, or shoe reconstruction. The archived prototype is
-available separately at `../GShellFootPriorPrototype/` for reference only.
+The project intentionally does not yet include SUPR shape fitting, toe
+articulation, full shoe-cavity collision fitting, SDFs, learned optimization,
+or shoe reconstruction. The archived prototype is available separately at
+`../GShellFootPriorPrototype/` for reference only.
 
 ## Development setup
 
 ```bash
-python -m pip install -e '.[test]'
+python -m pip install -e ../baselines/SUPR
+python -m pip install -e '.[fitting,test]'
 pytest
 ```
+
+The official SUPR implementation used by articulated fitting creates CUDA
+buffers, so this stage requires a CUDA-capable PyTorch environment. Neutral
+SUPR loading and all earlier shoe-preparation stages remain NumPy-only.
 
 ## Coordinate contract
 
@@ -248,63 +254,71 @@ This command runs Checkpoint 2 followed by Checkpoint 3 for each shoe. A
 failure or incorrect green support overlay is a reason to stop and diagnose
 that shoe; it is not permission to change footbed thresholds.
 
-## Rigid initial SUPR placement for a normal shoe
+## Articulated SUPR support fit for a normal shoe
 
-Initial placement consumes the completed preparation artifacts. It loads the
-normalized shoe, transforms the already-saved original-frame footbed with the
-recorded `shoe_to_normalized` matrix, and never runs footbed detection again.
-Only `shoe_profile="normal"` is accepted in this checkpoint.
+The fit consumes the completed preparation artifacts. It loads the normalized
+shoe, transforms the already-saved original-frame footbed with the recorded
+`shoe_to_normalized` matrix, and never runs footbed detection again. Only
+`shoe_profile="normal"` is accepted in this checkpoint.
 
 ```bash
 python scripts/run_alignment.py \
   --preparation-dir /home/ab5298/Outputs/FootShellGaussian/golden_set_evaluation/shoe_preparation/canvas_shoe \
   --supr-model ../baselines/SUPR/data/supr_male_right_foot.npy \
-  --output-dir /home/ab5298/Outputs/FootShellGaussian/golden_set_evaluation/initial_placement/canvas_shoe
+  --output-dir /home/ab5298/Outputs/FootShellGaussian/golden_set_evaluation/support_fit/canvas_shoe
 ```
 
 The output directory receives exactly these artifacts:
 
 ```text
-initial_placement.json
-foot_initial.ply
+support_fit.json
+foot_support_fitted.ply
 footbed_normalized.ply
-initial_placement_overlay.ply
+support_fit_overlay.ply
 ```
 
 The runner refuses to replace an existing artifact unless `--overwrite` is
 passed. That flag replaces only these four known files and preserves every
 other file in the output directory.
 
-The fixed SUPR axis remap is followed by a uniform scale that makes its plantar
-span 85% of normalized functional shoe length by default. The plantar heel is
-anchored at `X=0`. A single lateral translation fits the plantar-face centroids
-to the saved normalized footbed centerline using projected face area, rather
-than a shoe bounding box. Finally, the foot moves in `+Y/-Y` until the first
-covered plantar point touches the exact saved support without any covered
-plantar point passing through it. Use `--foot-length-ratio` to request a
-different explicit starting ratio.
+The 266-vertex neutral template defines fixed heel, arch, forefoot, and toe
+contact regions. Only SUPR pose entries 3 and 6 are changed: ankle pitch and
+midfoot pitch. Root motion, toe joints, and ten shape values remain zero.
+
+For each pose, the complete heel-to-longest-toe span is scaled to reserve a
+physical toe allowance. The default represents a 250 mm foot with 12.5 mm in
+front, so the foot occupies `250 / 262.5 = 0.95238095` of normalized functional
+length. `--toe-allowance-mm` accepts 10 through 15 mm. The rear-most posed foot
+point is anchored at `X=0`, and the longest toe ends at the resulting ratio.
+
+A single lateral translation fits plantar-face centroids to the saved footbed
+centerline using projected face area. The foot then moves vertically until the
+first covered plantar point touches the exact support without sampled plantar
+penetration. Candidate poses must retain broad support beneath the complete
+plantar area, heel, forefoot, and toes. The arch is measured but is allowed to
+remain naturally elevated.
+
+The deterministic search first checks ankle and midfoot pitch from -20 to +20
+degrees in 2-degree steps. It then searches at 0.25-degree resolution within 2
+degrees of the best coarse result. The score balances the worse of heel and
+forefoot RMS gap. Poses whose scores differ by less than one normalized support
+grid cell are treated as equivalent, and the pose closest to neutral wins.
+Degenerate, reversed, excessively distorted, insufficiently supported, or
+penetrating candidates are rejected.
 
 The gray-shoe/blue-foot overlay is intended for inspection. The transformed
 saved footbed is written separately in green so the overlay does not duplicate
-its triangles. `initial_placement.json` stores mappings from raw SUPR to both
-normalized and original shoe frames, their inverses, the reproducible plantar
-indices, lateral-fit statistics, support coverage, and remaining gaps.
+its triangles. `support_fit.json` stores the complete SUPR pose and zero betas,
+fixed contact indices, search diagnostics, contact gaps, and mappings from the
+posed SUPR frame to normalized and original shoe frames. SUPR articulation is
+non-rigid, so the JSON does not claim that a matrix maps the neutral template
+to the posed foot.
 
-## Verified canvas result and limitations
+## Current limitations
 
-The prepared canvas support contains 207 vertices and 350 faces. With the
-default 0.85 plantar-length ratio, the preparation-driven placement covers 104
-of 107 plantar samples and reaches zero minimum gap at first contact.
-
-Visual inspection confirms heel-to-toe orientation along positive X, upright
-placement, plausible horizontal scale, and no catastrophic intersection in
-this example. Canvas canonicalization records `mirror_width: true` in the
-reviewed right-shoe dataset; no independent medial/lateral landmark is present
-for a stronger handedness assertion.
-
-The selected canvas footbed contains one small rectangular hole in the source
-topology. The implementation reports projection misses rather than repairing
-that hole. It does not pitch or pose the neutral foot, conform it to toe spring,
-optimize cavity clearance, or provide a general collision-free fitting
-guarantee. Those are later fitting checkpoints, not hidden parts of this rigid
-initial placement.
+The selected canvas footbed contains one genuine rectangular source-topology
+hole. The implementation reports missing support there rather than repairing
+it. This checkpoint balances contact against the detected support only. It does
+not yet measure the heel cup, toe wall, sidewalls, or upper, and therefore does
+not claim full cavity containment or a collision-free fit. Shape fitting, toe
+curl, and complete shoe-volume clearance belong to later checkpoints.

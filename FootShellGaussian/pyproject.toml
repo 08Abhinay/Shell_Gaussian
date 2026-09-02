@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "footshellgaussian-foot-prior"
 version = "0.1.0"
-description = "Deterministic neutral SUPR-to-shoe alignment"
+description = "Deterministic SUPR support fitting in prepared shoes"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -15,6 +15,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=8"]
+fitting = ["torch>=1.13"]
 
 [tool.setuptools.packages.find]
 where = ["."]

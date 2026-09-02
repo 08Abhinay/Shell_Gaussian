@@ -22,7 +22,7 @@ normal
   -> detect the interior footbed
   -> calculate reversible functional-length normalization
   -> write footbed review and normalized-shoe artifacts
-  -> rigidly place neutral SUPR using the saved normalized support
+  -> fit SUPR ankle and midfoot pitch against the saved normalized support
 
 high_heel
   -> detect the inclined interior support
@@ -55,8 +55,8 @@ FootShell project:
 FootShell outputs:
 /home/ab5298/Outputs/FootShellGaussian/golden_set_evaluation/shoe_preparation
 
-Initial normal-shoe placements:
-/home/ab5298/Outputs/FootShellGaussian/golden_set_evaluation/initial_placement
+Normal-shoe SUPR support fits:
+/home/ab5298/Outputs/FootShellGaussian/golden_set_evaluation/support_fit
 ```
 
 The manifest and processed dataset paths remain stable as shoes are added. Do
@@ -451,7 +451,7 @@ OVERWRITE=1 scripts/prepare_golden_set_evaluation_shoes.sh \
 `OVERWRITE=1` replaces only the known artifacts for that profile and preserves
 unrelated files in the output directory.
 
-## Step 11: Place neutral SUPR in a prepared normal shoe
+## Step 11: Fit SUPR to the support in a prepared normal shoe
 
 This step uses the three existing preparation artifacts below. It does not
 reload the original shoe and does not detect the footbed again.
@@ -467,31 +467,36 @@ Run one normal shoe:
 ```bash
 cd /storage/Abhinay/Shell_Gaussian/FootShellGaussian
 
+/home/ab5298/anaconda3/envs/shellgaussianenv/bin/python -m pip install -e ../baselines/SUPR
+/home/ab5298/anaconda3/envs/shellgaussianenv/bin/python -m pip install -e '.[fitting]'
+
 /home/ab5298/anaconda3/envs/shellgaussianenv/bin/python \
   scripts/run_alignment.py \
   --preparation-dir /home/ab5298/Outputs/FootShellGaussian/golden_set_evaluation/shoe_preparation/canvas_shoe \
   --supr-model /storage/Abhinay/Shell_Gaussian/baselines/SUPR/data/supr_male_right_foot.npy \
-  --output-dir /home/ab5298/Outputs/FootShellGaussian/golden_set_evaluation/initial_placement/canvas_shoe
+  --output-dir /home/ab5298/Outputs/FootShellGaussian/golden_set_evaluation/support_fit/canvas_shoe
 ```
 
-The default foot plantar length is 85% of normalized functional shoe length.
-The runner anchors its plantar heel at `X=0`, aligns it sideways to the saved
-footbed centerline, and moves it vertically only until first support contact.
-It writes:
+This stage requires CUDA. It tests only ankle and midfoot pitch; all toe joints
+and SUPR shape values remain zero. The default reserves 12.5 mm in front of a
+representative 250 mm foot. The runner anchors the rear foot at `X=0`, aligns it
+sideways to the saved footbed centerline, and selects the near-neutral pose that
+best balances heel and forefoot support contact. It writes:
 
 ```text
-initial_placement.json
-foot_initial.ply
+support_fit.json
+foot_support_fitted.ply
 footbed_normalized.ply
-initial_placement_overlay.ply
+support_fit_overlay.ply
 ```
 
-Inspect `initial_placement_overlay.ply` together with
+Inspect `support_fit_overlay.ply` together with
 `footbed_normalized.ply`. Confirm that the foot is upright, toes point toward
-`+X`, the heel starts near `X=0`, the foot follows the green support laterally,
-and no obvious plantar penetration is visible. Remaining gaps are expected at
-this rigid stage. Pass `--overwrite` only when deliberately regenerating these
-four known artifacts.
+`+X`, the rear begins at `X=0`, the longest toe ends near `X=0.952`, the foot
+follows the green support laterally, and heel and forefoot approach the support
+without obvious plantar penetration. Pass `--overwrite` only when deliberately
+regenerating these four known artifacts. Use `--toe-allowance-mm` only within
+the documented 10 to 15 mm range.
 
 This command rejects `shoe_profile="high_heel"`. High-heel SUPR placement needs
 plantarflexion and remains a later checkpoint.
@@ -510,11 +515,11 @@ plantarflexion and remains a later checkpoint.
 
 ## What comes next
 
-The current normal-shoe endpoint is rigid initial SUPR placement. The next
-major project stage is contact and containment fitting:
+The current normal-shoe endpoint is articulated support fitting. The next
+major project stage is cavity containment fitting:
 
-- Normal shoes: improve heel-and-forefoot contact, then fit the SUPR foot within
-  the shoe cavity without penetration.
+- Normal shoes: evaluate heel-cup, toe-wall, sidewall, and upper clearance, then
+  fit SUPR shape without producing implausible deformation.
 - High heels: add deterministic SUPR plantarflexion using the recorded heel and
   forefoot support measurements, then fit the posed foot against the support.
 
