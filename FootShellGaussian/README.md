@@ -5,8 +5,8 @@ preparing a canonical right shoe and placing a neutral right SUPR foot inside
 it. Shoe preparation validates the coordinate frame, detects the interior
 support, and constructs a reversible functional-length normalization. The
 initial foot milestone uses a fixed coordinate remap, uniform length scaling,
-horizontal bounding-box centering, detected-footbed first contact, and explicit
-forward and inverse coordinate transforms.
+functional-heel anchoring, footbed-centerline lateral placement, saved-footbed
+first contact, and explicit forward and inverse coordinate transforms.
 
 The project intentionally does not include pose fitting, PCA alignment, SDFs,
 CUDA, learned optimization, or shoe reconstruction. The archived prototype is
@@ -32,9 +32,9 @@ runtime mirroring.
 
 The `normal` profile uses the approved normal-shoe detector and functional
 normalization. The `high_heel` profile uses a separate steep-support detector,
-writes review artifacts, and intentionally stops before normalization. A
-missing or unknown profile is an error. The profile changes only the support
-rules and downstream routing; it never changes the canonical shoe geometry.
+then uses the same functional normalization while preserving the incline. A
+missing or unknown profile is an error. The profile selects the support rules;
+it never changes the canonical shoe geometry or normalization mathematics.
 
 Raw SUPR is interpreted as `X = width`, `Y = anatomical height`, and
 `Z = heel-to-toe`. The fixed remap is therefore:
@@ -121,8 +121,10 @@ holes, interpolate missing support, create faces, or modify source geometry.
 
 The detector records rear-heel and forefoot landmarks, heel elevation, and a
 diagnostic support angle for later plantarflexion work. These measurements do
-not normalize the shoe or fit SUPR. The reviewed red stiletto and plateau
-sandal selections are locked by source-face digests in the test suite.
+not fit SUPR. After detection, the selected support is passed to the common
+functional normalizer without flattening its incline. The reviewed red
+stiletto and plateau sandal selections are locked by source-face digests in
+the test suite.
 
 ## Functional-length normalization
 
@@ -148,7 +150,7 @@ python scripts/run_shoe_preparation.py \
   --output-dir /home/ab5298/Outputs/FootShellGaussian/golden_set_evaluation/shoe_preparation/canvas_shoe
 ```
 
-For a `normal` shoe, the preparation output contains:
+For either shoe profile, the preparation output contains:
 
 ```text
 shoe_preparation.json
@@ -163,18 +165,10 @@ axis signs, and an exact inverse transform recorded in the JSON. Pass
 `--overwrite` to replace only these four artifacts; unrelated output files are
 preserved.
 
-For a `high_heel` shoe, the same command writes only:
-
-```text
-shoe_preparation.json
-footbed_surface.ply
-footbed_overlay.ply
-```
-
-Its JSON records
-`preparation_status="support_detected_normalization_deferred"`, the detected
-support and heel measurements, and `normalization=null`. It never creates
-`shoe_normalized.ply` in this checkpoint.
+For a `high_heel`, the JSON additionally records
+`preparation_status="support_detected_and_normalized"` and the detected heel
+support measurements. Its normalized mesh preserves the original support
+angle; normalization does not flatten or otherwise rotate the shoe.
 
 ### Prepare newly canonicalized shoes through Checkpoints 2 and 3
 
@@ -203,10 +197,10 @@ Shoe preparation then performs the following operations in a fixed order:
    frame.
 2. Load the canonical `reference_mesh.ply` without repairing its topology.
 3. Detect the interior support with the rules selected by `shoe_profile`.
-4. For `normal`, build the functional heel, toe, origin, length, and reversible
-   transforms.
-5. For `high_heel`, record heel-support diagnostics and defer normalization.
-6. Write only the artifacts defined for the selected profile.
+4. For either profile, build the functional heel, toe, origin, length, and
+   reversible transforms from the accepted support.
+5. For `high_heel`, also record the inclined-support diagnostics.
+6. Write the four preparation artifacts.
 
 Checkpoint 2 is therefore always calculated before Checkpoint 3. They do not
 need separate commands: `run_shoe_preparation.py` executes them sequentially
@@ -214,9 +208,8 @@ and stops if either calculation fails. It writes artifacts only after all
 calculations succeed.
 
 The reusable batch wrapper visits all 19 reviewed shoes when no shoe names are
-supplied. It detects and normalizes the 17 `normal` shoes. For the two
-`high_heel` shoes it detects support and writes review artifacts without a
-normalized mesh. Explicit names can be supplied to process a subset:
+supplied. It uses the profile-specific detector and normalizes all accepted
+shoes. Explicit names can be supplied to process a subset:
 
 ```bash
 cd /storage/Abhinay/Shell_Gaussian/FootShellGaussian
@@ -226,8 +219,7 @@ scripts/prepare_golden_set_evaluation_shoes.sh \
 ```
 
 By default, existing preparation artifacts are not replaced. Set `OVERWRITE=1`
-only when deliberately regenerating the four normal-shoe artifacts or three
-high-heel artifacts.
+only when deliberately regenerating the four preparation artifacts.
 
 To route all 19 shoes in `tmux` with a persistent log:
 
@@ -249,48 +241,60 @@ tail -f /home/ab5298/Outputs/FootShellGaussian/golden_set_evaluation/logs/shoe-p
 After the job finishes, inspect `footbed_overlay.ply` first. The green geometry
 must be the interior surface on which the foot stands, not the outsole, upper,
 toe panel, strap, heel column, or shaft. For normal shoes, only accept
-`shoe_normalized.ply` after that support is accepted. For high heels, visual
-acceptance applies only to support detection; normalization remains deferred.
+`shoe_normalized.ply` after that support is accepted. For high heels, also
+confirm that the normalized mesh preserves the inclined support shape.
 
 This command runs Checkpoint 2 followed by Checkpoint 3 for each shoe. A
 failure or incorrect green support overlay is a reason to stop and diagnose
 that shoe; it is not permission to change footbed thresholds.
 
-## Run the canvas example
+## Rigid initial SUPR placement for a normal shoe
+
+Initial placement consumes the completed preparation artifacts. It loads the
+normalized shoe, transforms the already-saved original-frame footbed with the
+recorded `shoe_to_normalized` matrix, and never runs footbed detection again.
+Only `shoe_profile="normal"` is accepted in this checkpoint.
 
 ```bash
 python scripts/run_alignment.py \
-  --shoe-mesh /home/ab5298/dataset/datasets/processed/gshell/golden_set_evaluation/canvas_shoe/reference_mesh.ply \
+  --preparation-dir /home/ab5298/Outputs/FootShellGaussian/golden_set_evaluation/shoe_preparation/canvas_shoe \
   --supr-model ../baselines/SUPR/data/supr_male_right_foot.npy \
-  --output-dir /home/ab5298/Outputs/FootShellGaussian/alignment/canvas_shoe
+  --output-dir /home/ab5298/Outputs/FootShellGaussian/golden_set_evaluation/initial_placement/canvas_shoe
 ```
 
 The output directory receives exactly these artifacts:
 
 ```text
-alignment.json
-foot_aligned.ply
-footbed_surface.ply
-alignment_overlay.ply
+initial_placement.json
+foot_initial.ply
+footbed_normalized.ply
+initial_placement_overlay.ply
 ```
 
 The runner refuses to replace an existing artifact unless `--overwrite` is
 passed. That flag replaces only these four known files and preserves every
 other file in the output directory.
 
-The gray-shoe/blue-foot overlay is intended for inspection. The selected
-footbed is saved separately in green so the overlay does not duplicate its
-triangles. Neutral SUPR first contact does not conform the foot to toe spring
-or the full shoe cavity; those remaining gaps are measurements, not fitting
-errors corrected by this milestone.
+The fixed SUPR axis remap is followed by a uniform scale that makes its plantar
+span 85% of normalized functional shoe length by default. The plantar heel is
+anchored at `X=0`. A single lateral translation fits the plantar-face centroids
+to the saved normalized footbed centerline using projected face area, rather
+than a shoe bounding box. Finally, the foot moves in `+Y/-Y` until the first
+covered plantar point touches the exact saved support without any covered
+plantar point passing through it. Use `--foot-length-ratio` to request a
+different explicit starting ratio.
+
+The gray-shoe/blue-foot overlay is intended for inspection. The transformed
+saved footbed is written separately in green so the overlay does not duplicate
+its triangles. `initial_placement.json` stores mappings from raw SUPR to both
+normalized and original shoe frames, their inverses, the reproducible plantar
+indices, lateral-fit statistics, support coverage, and remaining gaps.
 
 ## Verified canvas result and limitations
 
-The checked canvas run selects an interior sheet with 207 vertices and 350
-faces. It covers 94.92% of the shoe length and 86.46% of its width. The initial
-alignment covers 103 of 107 plantar samples (96.26%), reaches a zero minimum
-gap at first contact, and leaves a maximum covered plantar gap of approximately
-0.02137 shoe-frame units.
+The prepared canvas support contains 207 vertices and 350 faces. With the
+default 0.85 plantar-length ratio, the preparation-driven placement covers 104
+of 107 plantar samples and reaches zero minimum gap at first contact.
 
 Visual inspection confirms heel-to-toe orientation along positive X, upright
 placement, plausible horizontal scale, and no catastrophic intersection in
@@ -300,6 +304,7 @@ for a stronger handedness assertion.
 
 The selected canvas footbed contains one small rectangular hole in the source
 topology. The implementation reports projection misses rather than repairing
-that hole. It also does not pose the neutral foot, conform it to toe spring,
+that hole. It does not pitch or pose the neutral foot, conform it to toe spring,
 optimize cavity clearance, or provide a general collision-free fitting
-guarantee.
+guarantee. Those are later fitting checkpoints, not hidden parts of this rigid
+initial placement.

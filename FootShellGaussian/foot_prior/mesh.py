@@ -153,6 +153,64 @@ def transform_mesh(mesh: TriangleMesh, matrix: np.ndarray) -> TriangleMesh:
     return TriangleMesh(vertices, mesh.faces, mesh.vertex_colors)
 
 
+def sample_triangle_mesh_y(
+    mesh: TriangleMesh, points_xz: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Barycentrically interpolate the opening-nearest Y at X/Z queries."""
+
+    points = np.asarray(points_xz, dtype=np.float64)
+    if points.ndim != 2 or points.shape[1:] != (2,):
+        raise ValueError("points_xz must have shape (N, 2)")
+    if not np.isfinite(points).all():
+        raise ValueError("points_xz must contain only finite values")
+
+    triangles = mesh.vertices[mesh.faces]
+    planar = triangles[:, :, (0, 2)]
+    first = planar[:, 0]
+    edge_a = planar[:, 1] - first
+    edge_b = planar[:, 2] - first
+    determinant = edge_a[:, 0] * edge_b[:, 1] - edge_b[:, 0] * edge_a[:, 1]
+    nondegenerate = np.abs(determinant) > np.finfo(np.float64).eps
+    heights = np.full(len(points), np.nan, dtype=np.float64)
+    valid = np.zeros(len(points), dtype=bool)
+    tolerance = 1e-10
+
+    for point_index, point in enumerate(points):
+        relative = point - first
+        weight_a = np.divide(
+            relative[:, 0] * edge_b[:, 1] - edge_b[:, 0] * relative[:, 1],
+            determinant,
+            out=np.zeros_like(determinant),
+            where=nondegenerate,
+        )
+        weight_b = np.divide(
+            edge_a[:, 0] * relative[:, 1] - relative[:, 0] * edge_a[:, 1],
+            determinant,
+            out=np.zeros_like(determinant),
+            where=nondegenerate,
+        )
+        weight_first = 1.0 - weight_a - weight_b
+        inside = (
+            nondegenerate
+            & (weight_first >= -tolerance)
+            & (weight_a >= -tolerance)
+            & (weight_b >= -tolerance)
+            & (weight_first <= 1.0 + tolerance)
+            & (weight_a <= 1.0 + tolerance)
+            & (weight_b <= 1.0 + tolerance)
+        )
+        if not np.any(inside):
+            continue
+        interpolated = (
+            weight_first[inside] * triangles[inside, 0, 1]
+            + weight_a[inside] * triangles[inside, 1, 1]
+            + weight_b[inside] * triangles[inside, 2, 1]
+        )
+        heights[point_index] = float(np.min(interpolated))
+        valid[point_index] = True
+    return heights, valid
+
+
 def combine_colored_meshes(
     *items: tuple[TriangleMesh, Sequence[int]],
 ) -> TriangleMesh:

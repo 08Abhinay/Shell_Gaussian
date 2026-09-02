@@ -22,15 +22,17 @@ normal
   -> detect the interior footbed
   -> calculate reversible functional-length normalization
   -> write footbed review and normalized-shoe artifacts
+  -> rigidly place neutral SUPR using the saved normalized support
 
 high_heel
   -> detect the inclined interior support
   -> calculate heel/forefoot support diagnostics
-  -> write footbed review artifacts
-  -> stop before normalization
+  -> calculate the same reversible functional-length normalization
+  -> preserve the support incline
+  -> write footbed review and normalized-shoe artifacts
 ```
 
-High-heel normalization and high-heel SUPR fitting are not implemented yet.
+High-heel SUPR fitting and plantarflexion are not implemented yet.
 
 ## Active locations
 
@@ -52,6 +54,9 @@ FootShell project:
 
 FootShell outputs:
 /home/ab5298/Outputs/FootShellGaussian/golden_set_evaluation/shoe_preparation
+
+Initial normal-shoe placements:
+/home/ab5298/Outputs/FootShellGaussian/golden_set_evaluation/initial_placement
 ```
 
 The manifest and processed dataset paths remain stable as shoes are added. Do
@@ -408,11 +413,6 @@ Expected files:
 shoe_preparation.json
 footbed_surface.ply
 footbed_overlay.ply
-```
-
-It must not contain:
-
-```text
 shoe_normalized.ply
 ```
 
@@ -421,17 +421,21 @@ The JSON should contain:
 ```json
 {
   "shoe_profile": "high_heel",
-  "preparation_status": "support_detected_normalization_deferred",
-  "normalization": null
+  "preparation_status": "support_detected_and_normalized",
+  "normalization": {
+    "functional_length": "positive finite value"
+  }
 }
 ```
 
 Open `footbed_overlay.ply`. Green must follow the inclined interior support and
 exclude the outsole bottom, heel column, straps, and upper panels.
 
-For an accepted high heel, the current pipeline endpoint is support detection.
-Do not treat it as normalized and do not use the current neutral-foot alignment
-on it.
+Open `shoe_normalized.ply` and confirm that the shoe keeps its steep support
+shape. The functional heel must map to `X=0`, the functional toe to `X=1`, and
+the JSON must contain finite forward and inverse matrices. This normalization
+does not mean that a neutral SUPR foot is ready for the heel; plantarflexion and
+high-heel fitting remain future work.
 
 ## Step 10: Rerun an existing FootShell result
 
@@ -447,6 +451,51 @@ OVERWRITE=1 scripts/prepare_golden_set_evaluation_shoes.sh \
 `OVERWRITE=1` replaces only the known artifacts for that profile and preserves
 unrelated files in the output directory.
 
+## Step 11: Place neutral SUPR in a prepared normal shoe
+
+This step uses the three existing preparation artifacts below. It does not
+reload the original shoe and does not detect the footbed again.
+
+```text
+shoe_normalized.ply
+shoe_preparation.json
+footbed_surface.ply
+```
+
+Run one normal shoe:
+
+```bash
+cd /storage/Abhinay/Shell_Gaussian/FootShellGaussian
+
+/home/ab5298/anaconda3/envs/shellgaussianenv/bin/python \
+  scripts/run_alignment.py \
+  --preparation-dir /home/ab5298/Outputs/FootShellGaussian/golden_set_evaluation/shoe_preparation/canvas_shoe \
+  --supr-model /storage/Abhinay/Shell_Gaussian/baselines/SUPR/data/supr_male_right_foot.npy \
+  --output-dir /home/ab5298/Outputs/FootShellGaussian/golden_set_evaluation/initial_placement/canvas_shoe
+```
+
+The default foot plantar length is 85% of normalized functional shoe length.
+The runner anchors its plantar heel at `X=0`, aligns it sideways to the saved
+footbed centerline, and moves it vertically only until first support contact.
+It writes:
+
+```text
+initial_placement.json
+foot_initial.ply
+footbed_normalized.ply
+initial_placement_overlay.ply
+```
+
+Inspect `initial_placement_overlay.ply` together with
+`footbed_normalized.ply`. Confirm that the foot is upright, toes point toward
+`+X`, the heel starts near `X=0`, the foot follows the green support laterally,
+and no obvious plantar penetration is visible. Remaining gaps are expected at
+this rigid stage. Pass `--overwrite` only when deliberately regenerating these
+four known artifacts.
+
+This command rejects `shoe_profile="high_heel"`. High-heel SUPR placement needs
+plantarflexion and remains a later checkpoint.
+
 ## Failure rules
 
 - If audit orientation is wrong, fix the manifest and rerun the audit.
@@ -461,11 +510,13 @@ unrelated files in the output directory.
 
 ## What comes next
 
-The next major project stage is foot fitting:
+The current normal-shoe endpoint is rigid initial SUPR placement. The next
+major project stage is contact and containment fitting:
 
-- Normal shoes: place and deform the SUPR foot against the accepted support.
-- High heels: first add heel-specific normalization and deterministic SUPR
-  plantarflexion using the recorded heel and forefoot support measurements.
+- Normal shoes: improve heel-and-forefoot contact, then fit the SUPR foot within
+  the shoe cavity without penetration.
+- High heels: add deterministic SUPR plantarflexion using the recorded heel and
+  forefoot support measurements, then fit the posed foot against the support.
 
 When those stages are implemented, append their exact commands, outputs, and
 visual checks to this file.

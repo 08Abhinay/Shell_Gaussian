@@ -12,7 +12,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from foot_prior.footbed import FootbedSurface, identify_footbed_surface
+from foot_prior.footbed import (
+    FootbedSurface,
+    identify_footbed_surface,
+    identify_high_heel_support,
+)
 from foot_prior.mesh import TriangleMesh, load_triangle_mesh, save_triangle_mesh
 from foot_prior.normalization import (
     EXPECTED_SHOE_COORDINATE_SYSTEM,
@@ -48,6 +52,10 @@ NORMAL_SHOES = (
     "sneakers_seen",
     "ww_ii_german_jack_boots",
 )
+HIGH_HEEL_FUNCTIONAL_LENGTHS = {
+    "red_high_heel_shoes": 0.19334191476809792,
+    "plateau_sandal_heels": 0.186445114959497,
+}
 EXPECTED_SUPPORT_FACE_DIGESTS = {
     "aj_12_basketball_sneakers": (
         "73c1a29ce794759a576a72be2ddccd9fc5c15195db7511d889cb32c3383d92bd"
@@ -507,6 +515,49 @@ def test_all_normal_shoes_preserve_support_and_normalize_deterministically() -> 
         )
 
 
+def test_reviewed_high_heels_normalize_without_flattening_support() -> None:
+    root = evaluation_root()
+    if not root.is_dir():
+        pytest.skip(f"external evaluation dataset is unavailable: {root}")
+    for shoe_name, expected_length in HIGH_HEEL_FUNCTIONAL_LENGTHS.items():
+        shoe = load_triangle_mesh(root / shoe_name / "reference_mesh.ply")
+        support = identify_high_heel_support(shoe)
+        normalization = build_shoe_normalization(shoe, support.surface)
+
+        assert normalization.functional_length == pytest.approx(
+            expected_length, abs=1e-14
+        )
+        assert 0.65 <= normalization.outer_length_ratio <= 1.0
+        normalized_landmarks = normalization.shoe_points_to_normalized(
+            np.stack((normalization.heel_landmark, normalization.toe_landmark))
+        )
+        np.testing.assert_allclose(
+            normalized_landmarks[0], [0.0, 0.0, 0.0], atol=1e-12
+        )
+        assert normalized_landmarks[1, 0] == pytest.approx(1.0, abs=1e-12)
+
+        support_landmarks = np.stack(
+            (support.heel_landmark, support.forefoot_landmark)
+        )
+        normalized_support = normalization.shoe_points_to_normalized(
+            support_landmarks
+        )
+        normalized_angle = np.degrees(
+            np.arctan2(
+                normalized_support[1, 1] - normalized_support[0, 1],
+                normalized_support[1, 0] - normalized_support[0, 0],
+            )
+        )
+        assert normalized_angle == pytest.approx(
+            support.support_angle_degrees, abs=1e-12
+        )
+
+        normalized_shoe = normalization.shoe_mesh_to_normalized(shoe)
+        restored = normalization.normalized_mesh_to_shoe(normalized_shoe)
+        np.testing.assert_array_equal(normalized_shoe.faces, shoe.faces)
+        np.testing.assert_allclose(restored.vertices, shoe.vertices, atol=1e-12)
+
+
 def test_canvas_preparation_runner_and_overwrite_contract(tmp_path: Path) -> None:
     scene = evaluation_root() / "canvas_shoe"
     if not scene.is_dir():
@@ -563,7 +614,7 @@ def test_canvas_preparation_runner_and_overwrite_contract(tmp_path: Path) -> Non
     assert unrelated.read_text(encoding="utf-8") == "preserve me\n"
 
 
-def test_high_heel_runner_writes_support_review_without_normalization(
+def test_high_heel_runner_writes_support_review_and_normalization(
     tmp_path: Path,
 ) -> None:
     shoe_mesh = tmp_path / "high_heel.ply"
@@ -590,24 +641,35 @@ def test_high_heel_runner_writes_support_review_without_normalization(
     result = subprocess.run(command, capture_output=True, text=True, check=False)
 
     assert result.returncode == 0, result.stderr
-    assert "[support-detected]" in result.stdout
+    assert "[normalized]" in result.stdout
     assert {path.name for path in output.iterdir()} == {
         "shoe_preparation.json",
         "footbed_surface.ply",
         "footbed_overlay.ply",
+        "shoe_normalized.ply",
     }
     payload = json.loads((output / "shoe_preparation.json").read_text())
     assert payload["shoe_profile"] == HIGH_HEEL_SHOE_PROFILE
     assert (
         payload["preparation_status"]
-        == "support_detected_normalization_deferred"
+        == "support_detected_and_normalized"
     )
-    assert payload["normalization"] is None
+    assert payload["normalization"] is not None
     assert payload["footbed_selection"]["selection_method"] == (
         "high_heel_upper_envelope"
     )
     assert payload["high_heel_support"]["heel_elevation"] > 0.0
-    assert not (output / "shoe_normalized.ply").exists()
+    np.testing.assert_allclose(
+        payload["normalization"]["landmarks"]["heel_normalized"],
+        [0.0, 0.0, 0.0],
+        atol=1e-12,
+    )
+    assert payload["normalization"]["landmarks"]["toe_normalized"][0] == (
+        pytest.approx(1.0, abs=1e-12)
+    )
+    normalized = load_triangle_mesh(output / "shoe_normalized.ply")
+    original = load_triangle_mesh(shoe_mesh)
+    np.testing.assert_array_equal(normalized.faces, original.faces)
 
     refused = subprocess.run(command, capture_output=True, text=True, check=False)
     assert refused.returncode != 0

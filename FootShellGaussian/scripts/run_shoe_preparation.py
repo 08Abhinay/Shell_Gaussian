@@ -28,13 +28,12 @@ from foot_prior.normalization import (
 )
 
 
-NORMAL_ARTIFACT_NAMES = (
+ARTIFACT_NAMES = (
     "shoe_preparation.json",
     "footbed_surface.ply",
     "footbed_overlay.ply",
     "shoe_normalized.ply",
 )
-HIGH_HEEL_ARTIFACT_NAMES = NORMAL_ARTIFACT_NAMES[:-1]
 SHOE_COLOR = np.asarray([150, 150, 150, 255], dtype=np.uint8)
 FOOTBED_COLOR = np.asarray([40, 180, 90, 255], dtype=np.uint8)
 
@@ -43,7 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Detect support in one canonical right shoe and functionally "
-            "normalize normal-profile shoes."
+            "normalize the shoe."
         )
     )
     parser.add_argument("--shoe-mesh", required=True, type=Path)
@@ -62,12 +61,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     canonicalization_path = args.canonicalization.expanduser().resolve(strict=True)
     output_dir = args.output_dir.expanduser().resolve()
     shoe_profile = validate_shoe_frame_metadata(canonicalization_path)
-    artifact_names = (
-        HIGH_HEEL_ARTIFACT_NAMES
-        if shoe_profile == HIGH_HEEL_SHOE_PROFILE
-        else NORMAL_ARTIFACT_NAMES
-    )
-    targets = {name: output_dir / name for name in artifact_names}
+    targets = {name: output_dir / name for name in ARTIFACT_NAMES}
     existing = [path for path in targets.values() if path.exists()]
     if existing and not args.overwrite:
         formatted = ", ".join(str(path) for path in existing)
@@ -81,12 +75,10 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     if shoe_profile == HIGH_HEEL_SHOE_PROFILE:
         high_heel_support = identify_high_heel_support(shoe)
         footbed = high_heel_support.surface
-        normalization = None
-        normalized_shoe = None
     else:
         footbed = identify_footbed_surface(shoe)
-        normalization = build_shoe_normalization(shoe, footbed)
-        normalized_shoe = normalization.shoe_mesh_to_normalized(shoe)
+    normalization = build_shoe_normalization(shoe, footbed)
+    normalized_shoe = normalization.shoe_mesh_to_normalized(shoe)
     overlay = combine_colored_meshes(
         (shoe, SHOE_COLOR), (footbed.mesh, FOOTBED_COLOR)
     )
@@ -104,14 +96,10 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             "axes": SHOE_AXIS_SEMANTICS,
         },
         "footbed_selection": footbed.to_dict(),
-        "normalization": (
-            None if normalization is None else normalization.to_dict()
-        ),
+        "normalization": normalization.to_dict(),
     }
     if high_heel_support is not None:
-        payload["preparation_status"] = (
-            "support_detected_normalization_deferred"
-        )
+        payload["preparation_status"] = "support_detected_and_normalized"
         payload["high_heel_support"] = high_heel_support.to_dict()
 
     payload_json = json.dumps(payload, indent=2, sort_keys=True) + "\n"
@@ -123,8 +111,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         targets["footbed_surface.ply"], footbed.mesh, footbed_colors
     )
     save_triangle_mesh(targets["footbed_overlay.ply"], overlay)
-    if normalized_shoe is not None:
-        save_triangle_mesh(targets["shoe_normalized.ply"], normalized_shoe)
+    save_triangle_mesh(targets["shoe_normalized.ply"], normalized_shoe)
     targets["shoe_preparation.json"].write_text(
         payload_json, encoding="utf-8"
     )
@@ -139,10 +126,9 @@ def main() -> None:
         raise SystemExit(f"shoe preparation failed: {error}") from error
     if payload["shoe_profile"] == HIGH_HEEL_SHOE_PROFILE:
         print(
-            "[support-detected] shoe_profile='high_heel'; "
-            "review artifacts written and normalization deferred"
+            "[normalized] shoe_profile='high_heel'; "
+            "inclined support geometry preserved"
         )
-        return
     normalization = payload["normalization"]
     assert isinstance(normalization, dict)
     print(
