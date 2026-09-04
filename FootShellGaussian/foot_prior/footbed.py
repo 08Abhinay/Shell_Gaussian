@@ -56,6 +56,7 @@ class FootbedSurface:
     selection_method: str = "component_layers"
     fallback_reason: str | None = None
     primary_selected_layer_index: int | None = None
+    completion: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return JSON-compatible selection metrics without the dense grid."""
@@ -87,6 +88,7 @@ class FootbedSurface:
             "primary_selection_rejected": (
                 self.selection_method == "local_height_trace"
             ),
+            "completion": self.completion,
             "upward_facing_area_fraction": self.upward_facing_area_fraction,
             "support_like_area_fraction": self.support_like_area_fraction,
             "area_weighted_median_y": self.area_weighted_median_y,
@@ -581,6 +583,34 @@ def _trace_local_height_surfaces(
         if rank[first_root] == rank[second_root]:
             rank[first_root] += 1
 
+    matches = _local_height_matches(
+        nodes,
+        cell_nodes,
+        grid_shape,
+        maximum_adjacent_height_step,
+    )
+    for _, first, second in matches:
+        union(first, second)
+
+    groups: dict[int, list[int]] = {}
+    for node_index in range(len(nodes)):
+        groups.setdefault(find(node_index), []).append(node_index)
+    surfaces = [
+        np.asarray(sorted(indices), dtype=np.int64)
+        for indices in groups.values()
+    ]
+    surfaces.sort(key=lambda indices: int(indices[0]))
+    return surfaces
+
+
+def _local_height_matches(
+    nodes: list[_LayerNode],
+    cell_nodes: list[list[int]],
+    grid_shape: tuple[int, int],
+    maximum_adjacent_height_step: float,
+) -> list[tuple[float, int, int]]:
+    """Return deterministic mutual closest-height matches between grid cells."""
+
     x_count, z_count = grid_shape
     previous_neighbours = ((-1, -1), (-1, 0), (-1, 1), (0, -1))
     matches: set[tuple[float, int, int]] = set()
@@ -629,18 +659,7 @@ def _trace_local_height_surfaces(
                     first, second = sorted((current_index, other_index))
                     matches.add((float(height_difference), first, second))
 
-    for _, first, second in sorted(matches):
-        union(first, second)
-
-    groups: dict[int, list[int]] = {}
-    for node_index in range(len(nodes)):
-        groups.setdefault(find(node_index), []).append(node_index)
-    surfaces = [
-        np.asarray(sorted(indices), dtype=np.int64)
-        for indices in groups.values()
-    ]
-    surfaces.sort(key=lambda indices: int(indices[0]))
-    return surfaces
+    return sorted(matches)
 
 
 def _evaluate_surface_candidate(
@@ -763,6 +782,271 @@ def _serializable_diagnostics(
         {key: value for key, value in entry.items() if key not in hidden}
         for entry in diagnostics
     )
+
+
+def _completion_metrics(candidate: dict[str, Any]) -> dict[str, Any]:
+    """Return the small set of candidate measurements useful for review."""
+
+    return {
+        "length_coverage": float(candidate["length_coverage"]),
+        "width_coverage": float(candidate["width_coverage"]),
+        "central_support_length_coverage": float(
+            candidate["central_support_length_coverage"]
+        ),
+        "footprint_fill_fraction": float(candidate["footprint_fill_fraction"]),
+        "height_range_ratio": float(candidate["height_range_ratio"]),
+        "upward_facing_area_fraction": float(
+            candidate["upward_facing_area_fraction"]
+        ),
+        "median_y": float(candidate["median_y"]),
+    }
+
+
+def _complete_component_layer(
+    *,
+    base: dict[str, Any],
+    nodes: list[_LayerNode],
+    cell_nodes: list[list[int]],
+    eligible_face_indices: np.ndarray,
+    areas: np.ndarray,
+    normals: np.ndarray,
+    grid: _Grid,
+    shoe_bounds: np.ndarray,
+    shoe_extents: np.ndarray,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Safely add split source patches that continue a valid base footbed."""
+
+    z_count = grid.shape[1]
+    base_node_indices = np.asarray(base["node_indices"], dtype=np.int64)
+    base_faces = np.asarray(base["original_face_indices"], dtype=np.int64)
+    base_cells: dict[int, int] = {}
+    for node_index in base_node_indices:
+        node = nodes[int(node_index)]
+        flat_index = node.x_index * z_count + node.z_index
+        current = base_cells.get(flat_index)
+        if current is None or (node.y, int(node_index)) < (
+            nodes[current].y,
+            current,
+        ):
+            base_cells[flat_index] = int(node_index)
+    base_sample_nodes = set(base_cells.values())
+    diagnostic: dict[str, Any] = {
+        "applied": False,
+        "reason": "not_evaluated",
+        "base_selection_method": str(base["selection_method"]),
+        "base_face_count": int(len(base_faces)),
+        "base_grid_cell_count": int(len(base_cells)),
+        "completed_face_count": int(len(base_faces)),
+        "completed_grid_cell_count": int(len(base_cells)),
+        "added_face_count": 0,
+        "added_grid_cell_count": 0,
+        "added_original_face_indices": [],
+        "trace_candidate_count": 0,
+        "candidate_new_sample_count": 0,
+        "material_underneath": {
+            "required": True,
+            "sample_count": 0,
+            "accepted_sample_count": 0,
+            "fraction": 0.0,
+        },
+        "rejected_new_sample_counts": {
+            "existing_base_cell": 0,
+            "outside_base_footprint": 0,
+            "orientation": 0,
+            "no_underlying_surface": 0,
+            "disconnected": 0,
+        },
+        "base_metrics": _completion_metrics(base),
+        "completed_metrics": None,
+    }
+
+    maximum_step = MAX_LAYER_HEIGHT_STEP_RATIO * float(shoe_extents[0])
+    traced_surfaces = _trace_local_height_surfaces(
+        nodes,
+        cell_nodes,
+        grid.shape,
+        maximum_step,
+        MAX_HEIGHT_RANGE_RATIO * float(shoe_extents[0]),
+    )
+    containing_traces = [
+        trace
+        for trace in traced_surfaces
+        if base_sample_nodes.issubset(set(int(value) for value in trace))
+    ]
+    diagnostic["trace_candidate_count"] = int(len(containing_traces))
+    if not containing_traces:
+        diagnostic["reason"] = "no_smooth_trace_contains_every_base_sample"
+        return base, diagnostic
+
+    trace = min(containing_traces, key=lambda values: int(values[0]))
+    trace_set = set(int(value) for value in trace)
+    extra_nodes = [
+        node_index
+        for node_index in sorted(trace_set.difference(base_sample_nodes))
+        if (
+            nodes[node_index].x_index * z_count + nodes[node_index].z_index
+            not in base_cells
+        )
+    ]
+    diagnostic["rejected_new_sample_counts"]["existing_base_cell"] = int(
+        len(trace_set.difference(base_sample_nodes)) - len(extra_nodes)
+    )
+    diagnostic["candidate_new_sample_count"] = int(len(extra_nodes))
+    if not extra_nodes:
+        diagnostic["reason"] = "smooth_trace_has_no_samples_in_empty_base_cells"
+        return base, diagnostic
+
+    base_is_canonical = bool(
+        base["upward_facing_area_fraction"] >= MIN_ORIENTATION_COHERENCE
+    )
+    height_epsilon = max(
+        np.finfo(np.float64).eps,
+        HEIGHT_COMPARISON_EPSILON_RATIO * float(shoe_extents[0]),
+    )
+    base_z_by_x: dict[int, list[int]] = defaultdict(list)
+    base_x_by_z: dict[int, list[int]] = defaultdict(list)
+    for flat_index in base_cells:
+        x_index, z_index = divmod(flat_index, z_count)
+        base_z_by_x[x_index].append(z_index)
+        base_x_by_z[z_index].append(x_index)
+    safe_nodes: set[int] = set()
+    matching_faces_by_node: dict[int, np.ndarray] = {}
+    underlying_count = 0
+    underlying_evaluated_count = 0
+    for node_index in extra_nodes:
+        node = nodes[node_index]
+        column = base_z_by_x.get(node.x_index, ())
+        row = base_x_by_z.get(node.z_index, ())
+        enclosed_by_base = bool(
+            (column and min(column) < node.z_index < max(column))
+            or (row and min(row) < node.x_index < max(row))
+        )
+        if not enclosed_by_base:
+            diagnostic["rejected_new_sample_counts"][
+                "outside_base_footprint"
+            ] += 1
+            continue
+        relative_faces = np.asarray(node.face_indices, dtype=np.int64)
+        source_faces = eligible_face_indices[relative_faces]
+        if base_is_canonical:
+            matching = normals[source_faces, 1] <= -SUPPORT_NORMAL_ABS_Y_MIN
+        else:
+            matching = normals[source_faces, 1] >= SUPPORT_NORMAL_ABS_Y_MIN
+        node_area = float(areas[source_faces].sum())
+        matching_area = float(areas[source_faces[matching]].sum())
+        if node_area <= 0.0 or matching_area / node_area < MIN_ORIENTATION_COHERENCE:
+            diagnostic["rejected_new_sample_counts"]["orientation"] += 1
+            continue
+
+        flat_index = node.x_index * z_count + node.z_index
+        underlying_evaluated_count += 1
+        has_underlying = any(
+            other_index != node_index
+            and nodes[other_index].y > node.y + height_epsilon
+            for other_index in cell_nodes[flat_index]
+        )
+        if not has_underlying:
+            diagnostic["rejected_new_sample_counts"]["no_underlying_surface"] += 1
+            continue
+        underlying_count += 1
+        safe_nodes.add(node_index)
+        matching_faces_by_node[node_index] = source_faces[matching]
+
+    diagnostic["material_underneath"] = {
+        "required": True,
+        "sample_count": int(underlying_evaluated_count),
+        "accepted_sample_count": int(underlying_count),
+        "fraction": float(
+            underlying_count / underlying_evaluated_count
+            if underlying_evaluated_count
+            else 0.0
+        ),
+    }
+    if not safe_nodes:
+        diagnostic["reason"] = "all_new_samples_failed_orientation_or_underlying_checks"
+        return base, diagnostic
+
+    permitted_nodes = base_sample_nodes.union(safe_nodes)
+    adjacency: dict[int, list[int]] = defaultdict(list)
+    for _, first, second in _local_height_matches(
+        nodes,
+        cell_nodes,
+        grid.shape,
+        maximum_step,
+    ):
+        if first in trace_set and second in trace_set:
+            adjacency[first].append(second)
+            adjacency[second].append(first)
+    reachable = set(base_sample_nodes)
+    frontier = list(sorted(base_sample_nodes))
+    while frontier:
+        current = frontier.pop()
+        for neighbour in adjacency.get(current, ()):
+            if neighbour in permitted_nodes and neighbour not in reachable:
+                reachable.add(neighbour)
+                frontier.append(neighbour)
+    accepted_nodes = sorted(safe_nodes.intersection(reachable))
+    diagnostic["rejected_new_sample_counts"]["disconnected"] = int(
+        len(safe_nodes) - len(accepted_nodes)
+    )
+    if not accepted_nodes:
+        diagnostic["reason"] = "safe_new_samples_are_not_connected_to_the_base"
+        return base, diagnostic
+
+    added_faces = np.unique(
+        np.concatenate([matching_faces_by_node[index] for index in accepted_nodes])
+    )
+    added_faces = np.setdiff1d(added_faces, base_faces, assume_unique=False)
+    if not len(added_faces):
+        diagnostic["reason"] = "safe_new_samples_contribute_no_new_source_faces"
+        return base, diagnostic
+    completed_faces = np.union1d(base_faces, added_faces)
+    completed_nodes = np.union1d(base_node_indices, accepted_nodes)
+    represented_components = {
+        component
+        for node_index in completed_nodes
+        for component in nodes[int(node_index)].face_components
+    }
+    completed = _evaluate_surface_candidate(
+        method="component_layers_with_local_completion",
+        layer_index=int(base["layer_index"]),
+        node_indices=completed_nodes,
+        original_face_indices=completed_faces,
+        source_component_count=len(represented_components),
+        nodes=nodes,
+        areas=areas,
+        normals=normals,
+        grid=grid,
+        shoe_bounds=shoe_bounds,
+        shoe_extents=shoe_extents,
+    )
+    orientation_preserved = bool(
+        completed["upward_facing_area_fraction"] >= MIN_ORIENTATION_COHERENCE
+        if base_is_canonical
+        else completed["upward_facing_area_fraction"]
+        <= 1.0 - MIN_ORIENTATION_COHERENCE
+    )
+    diagnostic["completed_metrics"] = _completion_metrics(completed)
+    if not completed["qualifies"] or not orientation_preserved:
+        diagnostic["reason"] = "completed_surface_failed_existing_footbed_rules"
+        return base, diagnostic
+
+    added_cells = {
+        nodes[index].x_index * z_count + nodes[index].z_index
+        for index in accepted_nodes
+    }
+    diagnostic.update(
+        {
+            "applied": True,
+            "reason": "safe_split_support_pieces_completed_the_base",
+            "completed_face_count": int(len(completed_faces)),
+            "completed_grid_cell_count": int(len(base_cells) + len(added_cells)),
+            "added_face_count": int(len(added_faces)),
+            "added_grid_cell_count": int(len(added_cells)),
+            "added_original_face_indices": added_faces.tolist(),
+        }
+    )
+    return completed, diagnostic
 
 
 def _rasterize_face_subset(
@@ -1415,6 +1699,20 @@ def identify_footbed_surface(shoe_mesh: TriangleMesh) -> FootbedSurface:
             )
         selected = min(qualifying_traces, key=_candidate_sort_key)
 
+    completion: dict[str, Any] | None = None
+    if selected["selection_method"] == "component_layers":
+        selected, completion = _complete_component_layer(
+            base=selected,
+            nodes=nodes,
+            cell_nodes=cell_nodes,
+            eligible_face_indices=eligible_face_indices,
+            areas=areas,
+            normals=normals,
+            grid=grid,
+            shoe_bounds=shoe_bounds,
+            shoe_extents=shoe_extents,
+        )
+
     serializable_diagnostics = _serializable_diagnostics(diagnostics)
     selected_nodes = np.asarray(selected["node_indices"], dtype=np.int64)
     selected_faces = np.asarray(
@@ -1472,6 +1770,7 @@ def identify_footbed_surface(shoe_mesh: TriangleMesh) -> FootbedSurface:
         selection_method=str(selected["selection_method"]),
         fallback_reason=fallback_reason,
         primary_selected_layer_index=int(primary_selected["layer_index"]),
+        completion=completion,
     )
 
 

@@ -41,39 +41,39 @@ NORMAL_SHOES = (
     "ww_ii_german_jack_boots",
 )
 EXPECTED_SUPPORT_FACE_COUNTS = {
-    "aj_12_basketball_sneakers": 2252,
+    "aj_12_basketball_sneakers": 2382,
     "birkenstock_arizona_sandal": 8861,
-    "canvas_shoe": 350,
+    "canvas_shoe": 368,
     "crocs": 974,
-    "crocs_by_speedyart_studio": 11017,
+    "crocs_by_speedyart_studio": 11081,
     "crocs_shoe": 79940,
     "duinn_shoes_womens_hiking_sandal_sport": 4812,
     "leather_boots": 33,
-    "nike_air_jordan": 286,
-    "pb129_shoe_low": 713,
-    "priest_karol_wojtyas_sports_shoes": 2340,
+    "nike_air_jordan": 391,
+    "pb129_shoe_low": 722,
+    "priest_karol_wojtyas_sports_shoes": 2467,
     "sandal_1": 13872,
-    "sandals_0001": 5909,
+    "sandals_0001": 6216,
     "shoes_mockup_asset_vans_skate_old_skool_shoes": 602,
     "sneaker_vibe": 390,
     "sneakers_seen": 240,
-    "ww_ii_german_jack_boots": 94,
+    "ww_ii_german_jack_boots": 110,
 }
 EXPECTED_SUPPORT_FACE_DIGESTS = {
     "aj_12_basketball_sneakers": (
-        "73c1a29ce794759a576a72be2ddccd9fc5c15195db7511d889cb32c3383d92bd"
+        "94916ff34a09b40b0e1d52f2329cb8b15bb78fc5d624572b6fcb8b0f59b6f843"
     ),
     "birkenstock_arizona_sandal": (
         "0a621bfe9df5252527cfbd94cd87a7d0f291a3a78d94e32d203c73a8759dee76"
     ),
     "canvas_shoe": (
-        "85b7229c82defdcf2d7a417a50b914b5ffdbb29c9233bfd3f332444af9e38803"
+        "7fa6bbdad03f0faf152331ef0a72ad3a326fb896db07ae59666e9b3be8e1d17f"
     ),
     "crocs": (
         "a68699182c39d494eef2112a047373b5e92071bdad6b448b4f8708e5be567e8c"
     ),
     "crocs_by_speedyart_studio": (
-        "d4c4d2ed2f2052b93a07c3944d1629dcb84193b188400f9042eaa172d245fe00"
+        "899054712a7459a78dacbaaaa4d993c4044ebc7c46063c67fd28cda993d33884"
     ),
     "crocs_shoe": (
         "10ca8464700abb8fe2c95e5b96d579487b0cbf1b2812cef25c0e13ff13ea65ed"
@@ -85,19 +85,19 @@ EXPECTED_SUPPORT_FACE_DIGESTS = {
         "f1364c7a4761a2d9ab5e5a29a2a98adf02c910d83dfba50a84f731b9d4e18138"
     ),
     "nike_air_jordan": (
-        "98d306f0deb807c355e9e446a3c434c324fae6c22fe10514558d6f3aba159c75"
+        "6555ebd8a2d1f9c6dd87e619888ee0046a398181fbb8db84108525b82b374d99"
     ),
     "pb129_shoe_low": (
-        "e477afecae101e2af221ba8bdd473c3728a5bc86dd2beeca2e24cdb8accb5964"
+        "561e593ab534ea576e57a9ee0882ebe1ed1a95ab5400657c103e0305d3e53385"
     ),
     "priest_karol_wojtyas_sports_shoes": (
-        "7934b15d57d946a5d881ca6b188edb8fc48294c8e4297ff01afc1e20d5c5ec72"
+        "990b9a83d4cdbb9eba237fe936171f782f714f8f7f95ce388c971290ca713eba"
     ),
     "sandal_1": (
         "af1f55fcfdcbc0868be5e05387fb8e53929ad35ce945e8b5c50c80b6b04800b7"
     ),
     "sandals_0001": (
-        "21f4e401c80b42a1d95dfd7dd3615af10aeff66b5151c1495378afec8782e696"
+        "6e72583571fb274c60b30e70bc1d28f86f47c199f9a5896dfe7bcbae4c3ab3a6"
     ),
     "shoes_mockup_asset_vans_skate_old_skool_shoes": (
         "9f3f4052e14cb0e38689e2080fd2d10cf09b52fae5d3eeb3bfe5efed881cd024"
@@ -109,8 +109,18 @@ EXPECTED_SUPPORT_FACE_DIGESTS = {
         "6a08d6bf87e987b8e2f83d135c839c90039d9c81e63f9e09daadf173b9c2bca8"
     ),
     "ww_ii_german_jack_boots": (
-        "9ba2e26fc61cf7a9f9b7cef7ea09cb77637d9d3e2b1f1f3fa4c63be77156d430"
+        "39c282739df65dac7deab28a46816d72c5479db3bb17895d5ba3cdc6c45610df"
     ),
+}
+EXPECTED_COMPLETED_NORMAL_SHOES = {
+    "aj_12_basketball_sneakers",
+    "canvas_shoe",
+    "crocs_by_speedyart_studio",
+    "nike_air_jordan",
+    "pb129_shoe_low",
+    "priest_karol_wojtyas_sports_shoes",
+    "sandals_0001",
+    "ww_ii_german_jack_boots",
 }
 EXPECTED_HIGH_HEEL_SUPPORT = {
     "red_high_heel_shoes": {
@@ -332,6 +342,38 @@ def birkenstock_like_layers(*, reverse_all_faces: bool = False) -> TriangleMesh:
     return TriangleMesh(mesh.vertices, mesh.faces[:, ::-1])
 
 
+def split_footbed(
+    *,
+    include_fill: bool = True,
+    raised_fill: bool = False,
+    ambiguous_fill: bool = False,
+    reverse_all_faces: bool = False,
+) -> TriangleMesh:
+    """Build a qualifying ring plus optional disconnected pieces in its hole."""
+
+    parts = [
+        sheet((-1.0, 1.0), (-0.2, 0.2), (-1.0,) * 4),
+        ring_sheet(),
+    ]
+    if include_fill:
+        fill_y = -0.5 if raised_fill else 0.0
+        left = sheet((-1.0, 0.0), (-0.4, 0.4), (fill_y,) * 4)
+        right = sheet((0.0, 1.0), (-0.4, 0.4), (fill_y,) * 4)
+        parts.extend((left, right))
+        if ambiguous_fill:
+            parts.extend(
+                (
+                    TriangleMesh(left.vertices, left.faces[:, ::-1]),
+                    TriangleMesh(right.vertices, right.faces[:, ::-1]),
+                )
+            )
+    parts.append(sheet((-5.0, 5.0), (-2.0, 2.0), (0.5,) * 4, upward=False))
+    mesh = combine(*parts)
+    if not reverse_all_faces:
+        return mesh
+    return TriangleMesh(mesh.vertices, mesh.faces[:, ::-1])
+
+
 def test_local_height_trace_recovers_split_smooth_support() -> None:
     result = identify_footbed_surface(birkenstock_like_layers())
 
@@ -363,6 +405,74 @@ def test_ambiguous_outsole_case_fails_instead_of_guessing() -> None:
     )
     with pytest.raises(ValueError, match="local-height tracing found no"):
         identify_footbed_surface(ambiguous)
+
+
+def test_completion_adds_disconnected_smooth_support_pieces() -> None:
+    base = identify_footbed_surface(split_footbed(include_fill=False))
+    completed = identify_footbed_surface(split_footbed())
+
+    assert completed.selection_method == "component_layers_with_local_completion"
+    assert completed.completion is not None
+    assert completed.completion["applied"]
+    assert set(base.original_face_indices) < set(completed.original_face_indices)
+    assert completed.completion["added_face_count"] == 4
+    assert completed.completion["material_underneath"]["fraction"] == pytest.approx(
+        1.0
+    )
+    np.testing.assert_allclose(
+        completed.height_grid[base.valid_mask],
+        base.height_grid[base.valid_mask],
+    )
+    _, valid = sample_footbed_y(completed, np.asarray([[0.0, 0.0]]))
+    np.testing.assert_array_equal(valid, [True])
+
+
+def test_completion_preserves_a_real_empty_hole_and_rejects_outsole() -> None:
+    result = identify_footbed_surface(split_footbed(include_fill=False))
+    heights, valid = sample_footbed_y(result, np.asarray([[0.0, 0.0]]))
+
+    assert result.selection_method == "component_layers"
+    assert result.completion is not None
+    assert not result.completion["applied"]
+    assert not np.isin([18, 19], result.original_face_indices).any()
+    np.testing.assert_array_equal(valid, [False])
+    assert np.isnan(heights[0])
+
+
+def test_completion_rejects_a_raised_panel() -> None:
+    result = identify_footbed_surface(split_footbed(raised_fill=True))
+
+    assert result.selection_method == "component_layers"
+    assert result.completion is not None
+    assert not result.completion["applied"]
+    assert not np.isin([18, 19, 20, 21], result.original_face_indices).any()
+
+
+def test_completion_respects_globally_reversed_winding() -> None:
+    result = identify_footbed_surface(split_footbed(reverse_all_faces=True))
+
+    assert result.selection_method == "component_layers_with_local_completion"
+    assert result.completion is not None
+    assert result.completion["applied"]
+    assert np.isin([18, 19, 20, 21], result.original_face_indices).all()
+    assert result.upward_facing_area_fraction == pytest.approx(0.0)
+
+
+def test_ambiguous_completion_leaves_the_valid_base_unchanged() -> None:
+    base = identify_footbed_surface(split_footbed(include_fill=False))
+    ambiguous = identify_footbed_surface(split_footbed(ambiguous_fill=True))
+
+    assert ambiguous.selection_method == "component_layers"
+    assert ambiguous.completion is not None
+    assert not ambiguous.completion["applied"]
+    np.testing.assert_array_equal(
+        ambiguous.original_face_indices,
+        base.original_face_indices,
+    )
+    np.testing.assert_allclose(
+        ambiguous.height_grid[base.valid_mask],
+        base.height_grid[base.valid_mask],
+    )
 
 
 def test_high_heel_accepts_a_smooth_steep_support() -> None:
@@ -484,10 +594,10 @@ def test_known_canvas_component_and_sampling() -> None:
     if not path.is_file():
         pytest.skip(f"external canvas dataset is unavailable: {path}")
     footbed = identify_footbed_surface(load_triangle_mesh(path))
-    assert footbed.original_face_indices[0] == 8090
+    assert footbed.original_face_indices[0] == 8088
     assert footbed.original_face_indices[-1] == 8559
-    assert footbed.mesh.vertices.shape == (207, 3)
-    assert footbed.mesh.faces.shape == (350, 3)
+    assert footbed.mesh.vertices.shape == (233, 3)
+    assert footbed.mesh.faces.shape == (368, 3)
     np.testing.assert_allclose(
         footbed.bounds,
         [
@@ -498,14 +608,14 @@ def test_known_canvas_component_and_sampling() -> None:
     )
     assert footbed.height_grid.shape == (256, 96)
     assert footbed.valid_mask.shape == footbed.height_grid.shape
-    assert np.count_nonzero(footbed.valid_mask) == 15893
+    assert np.count_nonzero(footbed.valid_mask) == 16057
     assert footbed.length_coverage == pytest.approx(0.94921875)
     assert footbed.width_coverage == pytest.approx(0.864583333333331)
     assert footbed.central_support_length_coverage == pytest.approx(0.94921875)
     assert footbed.upward_facing_area_fraction == pytest.approx(1.0)
     assert footbed.support_like_area_fraction == pytest.approx(1.0)
     assert footbed.area_weighted_median_y == pytest.approx(
-        0.028701295455296833, abs=1e-9
+        0.02871313877403736, abs=1e-9
     )
     heights, valid = sample_footbed_y(
         footbed, np.asarray([[0.0, 0.0], [0.2, 0.0]])
@@ -522,18 +632,18 @@ def test_pb129_selects_complete_interior_footbed() -> None:
     footbed = identify_footbed_surface(load_triangle_mesh(path))
     assert footbed.original_face_indices[0] == 2001
     assert footbed.original_face_indices[-1] == 6995
-    assert footbed.mesh.vertices.shape == (400, 3)
-    assert footbed.mesh.faces.shape == (713, 3)
+    assert footbed.mesh.vertices.shape == (415, 3)
+    assert footbed.mesh.faces.shape == (722, 3)
     np.testing.assert_allclose(
         footbed.bounds,
         [
-            [-0.09380015730857849, 0.00014682486653327942, -0.034268610179424286],
-            [0.08243507146835327, 0.02671499364078045, 0.03756712004542351],
+            [-0.09380015730857849, 0.00009592995047569275, -0.034268610179424286],
+            [0.08243507146835327, 0.02671499364078045, 0.03872118145227432],
         ],
         atol=1e-8,
     )
     assert footbed.height_grid.shape == (256, 119)
-    assert np.count_nonzero(footbed.valid_mask) == 14469
+    assert np.count_nonzero(footbed.valid_mask) == 14536
     assert footbed.central_support_length_coverage == pytest.approx(0.81640625)
 
 
@@ -567,6 +677,12 @@ def test_golden_set_shoes_preserve_expected_support(shoe_name: str) -> None:
         np.asarray(footbed.original_face_indices, dtype=np.int64).tobytes()
     ).hexdigest()
     assert digest == EXPECTED_SUPPORT_FACE_DIGESTS[shoe_name]
+
+    if shoe_name in EXPECTED_COMPLETED_NORMAL_SHOES:
+        assert footbed.selection_method == "component_layers_with_local_completion"
+        assert footbed.completion is not None
+        assert footbed.completion["applied"]
+        return
 
     if shoe_name != "birkenstock_arizona_sandal":
         assert footbed.selection_method == "component_layers"
