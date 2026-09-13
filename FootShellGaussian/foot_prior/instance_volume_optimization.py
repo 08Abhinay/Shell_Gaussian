@@ -35,6 +35,7 @@ from .cavity import (
 
 B3_INITIAL_BETA_STEP = 0.05
 B3_MINIMUM_BETA_STEP = 0.001
+B3_BETA_STEP_GROWTH = 2.0
 B3_OPTIMIZER_BLOCKS = 4
 B3_ITERATIONS_PER_BLOCK = 25
 B3_BARRIER_MULTIPLIERS = (1.0, 10.0, 100.0, 100.0)
@@ -47,6 +48,12 @@ B3_FINAL_MINIMUM_DETERMINANT = 0.02
 B3_FINAL_MINIMUM_SINGULAR_VALUE = 0.05
 B3_FINAL_MAXIMUM_SINGULAR_VALUE = 5.0
 B3_FINAL_MAXIMUM_CONDITION_NUMBER = 20.0
+B3_MINIMUM_SINGULAR_GUARD_ACTIVATION = 0.1
+B3_MAXIMUM_SINGULAR_GUARD_ACTIVATION = 4.0
+B3_CONDITION_GUARD_ACTIVATION = 15.0
+B3_QUALITY_GUARD_DISCOVERY_MINIMUM_SINGULAR = 0.2
+B3_QUALITY_GUARD_DISCOVERY_MAXIMUM_SINGULAR = 3.0
+B3_QUALITY_GUARD_DISCOVERY_CONDITION = 7.5
 B3_MAXIMUM_CORRECTION_RESOLUTIONS = 0.5
 B3_COLLISION_ACTIVATION_RESOLUTIONS = 0.25
 B3_COLLISION_MINIMUM_RESOLUTIONS = 1.0e-4
@@ -54,6 +61,7 @@ B3_MINIMUM_TRIANGLE_AREA_RATIO = 0.5
 B3_MAXIMUM_TRIANGLE_AREA_RATIO = 2.0
 B3_EXACT_CORRECTION_RESOLUTIONS = 1.0e-10
 B3_SURFACE_VARIABLE_SCALE_RESOLUTIONS = 0.1
+B3_VOLUME_VARIABLE_SCALE_RESOLUTIONS = 0.1
 B3_INITIAL_REPAIR_RINGS = 2
 B3_MAXIMUM_REPAIR_RINGS = 6
 B3_MAXIMUM_LOCAL_VERTEX_FRACTION = 0.25
@@ -245,6 +253,7 @@ def optimization_configuration() -> dict[str, Any]:
         ],
         "initial_beta_step": B3_INITIAL_BETA_STEP,
         "minimum_beta_step": B3_MINIMUM_BETA_STEP,
+        "accepted_beta_step_growth": B3_BETA_STEP_GROWTH,
         "optimizer_blocks_per_beta": B3_OPTIMIZER_BLOCKS,
         "iterations_per_block": B3_ITERATIONS_PER_BLOCK,
         "robust_seed_bisection_iterations": 14,
@@ -267,6 +276,20 @@ def optimization_configuration() -> dict[str, Any]:
             "final_maximum_condition_number": (
                 B3_FINAL_MAXIMUM_CONDITION_NUMBER
             ),
+            "minimum_guard_activation": (
+                B3_MINIMUM_SINGULAR_GUARD_ACTIVATION
+            ),
+            "maximum_guard_activation": (
+                B3_MAXIMUM_SINGULAR_GUARD_ACTIVATION
+            ),
+            "condition_guard_activation": B3_CONDITION_GUARD_ACTIVATION,
+            "guard_discovery_minimum_singular": (
+                B3_QUALITY_GUARD_DISCOVERY_MINIMUM_SINGULAR
+            ),
+            "guard_discovery_maximum_singular": (
+                B3_QUALITY_GUARD_DISCOVERY_MAXIMUM_SINGULAR
+            ),
+            "guard_discovery_condition": B3_QUALITY_GUARD_DISCOVERY_CONDITION,
         },
         "boundary": {
             "maximum_correction_surface_resolutions": (
@@ -294,6 +317,9 @@ def optimization_configuration() -> dict[str, Any]:
             ),
             "full_surface_fallback": True,
         },
+        "volume_variable_scale_surface_resolutions": (
+            B3_VOLUME_VARIABLE_SCALE_RESOLUTIONS
+        ),
         "per_shoe_tuning": False,
         "randomness": False,
     }
@@ -682,6 +708,92 @@ def _quality_is_robust(quality: _QualityDiagnostics) -> bool:
     )
 
 
+def _quality_limit_diagnostics(
+    quality: _QualityDiagnostics,
+) -> dict[str, Any]:
+    """Identify the cells controlling the deterministic B3 acceptance test."""
+
+    determinant_failures = np.flatnonzero(
+        quality.determinants < B3_FINAL_MINIMUM_DETERMINANT
+    )
+    minimum_singular_failures = np.flatnonzero(
+        quality.singular_values[:, 2] < B3_FINAL_MINIMUM_SINGULAR_VALUE
+    )
+    maximum_singular_failures = np.flatnonzero(
+        quality.singular_values[:, 0] > B3_FINAL_MAXIMUM_SINGULAR_VALUE
+    )
+    condition_failures = np.flatnonzero(
+        quality.condition_numbers > B3_FINAL_MAXIMUM_CONDITION_NUMBER
+    )
+    return {
+        "minimum_jacobian_determinant": float(np.min(quality.determinants)),
+        "minimum_jacobian_determinant_tetrahedron": int(
+            np.argmin(quality.determinants)
+        ),
+        "minimum_singular_value": float(
+            np.min(quality.singular_values[:, 2])
+        ),
+        "minimum_singular_value_tetrahedron": int(
+            np.argmin(quality.singular_values[:, 2])
+        ),
+        "maximum_singular_value": float(
+            np.max(quality.singular_values[:, 0])
+        ),
+        "maximum_singular_value_tetrahedron": int(
+            np.argmax(quality.singular_values[:, 0])
+        ),
+        "maximum_condition_number": float(
+            np.max(quality.condition_numbers)
+        ),
+        "maximum_condition_number_tetrahedron": int(
+            np.argmax(quality.condition_numbers)
+        ),
+        "quality_failure_counts": {
+            "jacobian_determinant": int(len(determinant_failures)),
+            "minimum_singular_value": int(len(minimum_singular_failures)),
+            "maximum_singular_value": int(len(maximum_singular_failures)),
+            "condition_number": int(len(condition_failures)),
+            "union": int(
+                len(
+                    np.unique(
+                        np.concatenate(
+                            (
+                                determinant_failures,
+                                minimum_singular_failures,
+                                maximum_singular_failures,
+                                condition_failures,
+                            )
+                        )
+                    )
+                )
+            ),
+        },
+    }
+
+
+def _quality_guard_tetrahedron_indices(
+    quality: _QualityDiagnostics,
+) -> np.ndarray:
+    """Conservatively select cells that can activate a quality guard."""
+
+    selected = np.flatnonzero(
+        (quality.singular_values[:, 2]
+         < B3_QUALITY_GUARD_DISCOVERY_MINIMUM_SINGULAR)
+        | (quality.singular_values[:, 0]
+           > B3_QUALITY_GUARD_DISCOVERY_MAXIMUM_SINGULAR)
+        | (quality.condition_numbers > B3_QUALITY_GUARD_DISCOVERY_CONDITION)
+    )
+    controlling = np.asarray(
+        (
+            np.argmin(quality.singular_values[:, 2]),
+            np.argmax(quality.singular_values[:, 0]),
+            np.argmax(quality.condition_numbers),
+        ),
+        dtype=np.int64,
+    )
+    return np.unique(np.concatenate((selected, controlling)))
+
+
 def _lower_barrier(
     values: np.ndarray,
     floor: float,
@@ -728,6 +840,87 @@ def _upper_barrier(
         2.0 * one_minus * np.log(y) - one_minus**2 / y
     ) / span
     return float(np.sum(terms) / len(array)), derivative / len(array)
+
+
+def _lower_quality_guard(
+    values: np.ndarray,
+    activation: float,
+    limit: float,
+) -> tuple[float, np.ndarray]:
+    """Return a summed C1 penalty as values approach a lower acceptance limit."""
+
+    array = np.asarray(values, dtype=np.float64)
+    derivative = np.zeros_like(array)
+    active = array < activation
+    if not np.any(active):
+        return 0.0, derivative
+    scale = activation - limit
+    normalized = (activation - array[active]) / scale
+    derivative[active] = -2.0 * normalized / scale
+    return float(np.sum(normalized * normalized)), derivative
+
+
+def _upper_quality_guard(
+    values: np.ndarray,
+    activation: float,
+    limit: float,
+) -> tuple[float, np.ndarray]:
+    """Return a summed C1 penalty as values approach an upper acceptance limit."""
+
+    array = np.asarray(values, dtype=np.float64)
+    derivative = np.zeros_like(array)
+    active = array > activation
+    if not np.any(active):
+        return 0.0, derivative
+    scale = limit - activation
+    normalized = (array[active] - activation) / scale
+    derivative[active] = 2.0 * normalized / scale
+    return float(np.sum(normalized * normalized)), derivative
+
+
+def _quality_guard_deformation_gradient(
+    deformation: np.ndarray,
+) -> tuple[float, np.ndarray]:
+    """Penalize the exact singular-value metrics used by B3 acceptance."""
+
+    matrices = np.asarray(deformation, dtype=np.float64)
+    left, singular_values, right_transpose = np.linalg.svd(
+        matrices, full_matrices=False
+    )
+    maximum = singular_values[:, 0]
+    minimum = singular_values[:, 2]
+    condition = maximum / minimum
+    minimum_energy, minimum_derivative = _lower_quality_guard(
+        minimum,
+        B3_MINIMUM_SINGULAR_GUARD_ACTIVATION,
+        B3_FINAL_MINIMUM_SINGULAR_VALUE,
+    )
+    maximum_energy, maximum_derivative = _upper_quality_guard(
+        maximum,
+        B3_MAXIMUM_SINGULAR_GUARD_ACTIVATION,
+        B3_FINAL_MAXIMUM_SINGULAR_VALUE,
+    )
+    condition_energy, condition_derivative = _upper_quality_guard(
+        condition,
+        B3_CONDITION_GUARD_ACTIVATION,
+        B3_FINAL_MAXIMUM_CONDITION_NUMBER,
+    )
+    maximum_derivative += condition_derivative / minimum
+    minimum_derivative -= condition_derivative * maximum / (minimum * minimum)
+    maximum_gradient = (
+        left[:, :, 0, None] * right_transpose[:, None, 0, :]
+    )
+    minimum_gradient = (
+        left[:, :, 2, None] * right_transpose[:, None, 2, :]
+    )
+    gradient = (
+        maximum_derivative[:, None, None] * maximum_gradient
+        + minimum_derivative[:, None, None] * minimum_gradient
+    )
+    energy = minimum_energy + maximum_energy + condition_energy
+    if not np.isfinite(energy) or not np.isfinite(gradient).all():
+        return math.inf, np.zeros_like(matrices)
+    return energy, gradient
 
 
 def _point_triangle_closest(
@@ -1092,6 +1285,49 @@ def _tetrahedral_energy_gradient(
         distortion_gradient,
         barrier_gradient,
     )
+
+
+def _quality_guard_energy_gradient(
+    system: _InstanceOptimizationSystem,
+    vertices: np.ndarray,
+    tetrahedron_indices: np.ndarray | None = None,
+) -> tuple[float, np.ndarray]:
+    """Return worst-cell quality guard energy and its vertex gradient."""
+
+    selected = (
+        np.arange(len(system.tetrahedra), dtype=np.int64)
+        if tetrahedron_indices is None
+        else np.asarray(tetrahedron_indices, dtype=np.int64)
+    )
+    tetrahedra = system.tetrahedra[selected]
+    points = vertices[tetrahedra]
+    matrices = np.stack(
+        (
+            points[:, 1] - points[:, 0],
+            points[:, 2] - points[:, 0],
+            points[:, 3] - points[:, 0],
+        ),
+        axis=2,
+    )
+    deformation = matrices @ system.canonical_inverse_matrices[selected]
+    energy, deformation_gradient = _quality_guard_deformation_gradient(
+        deformation
+    )
+    if not np.isfinite(energy):
+        return math.inf, np.zeros_like(vertices)
+    matrix_gradient = deformation_gradient @ np.swapaxes(
+        system.canonical_inverse_matrices[selected], 1, 2
+    )
+    gradient = np.zeros_like(vertices)
+    np.add.at(gradient, tetrahedra[:, 1], matrix_gradient[:, :, 0])
+    np.add.at(gradient, tetrahedra[:, 2], matrix_gradient[:, :, 1])
+    np.add.at(gradient, tetrahedra[:, 3], matrix_gradient[:, :, 2])
+    np.add.at(
+        gradient,
+        tetrahedra[:, 0],
+        -np.sum(matrix_gradient, axis=2),
+    )
+    return energy, gradient
 
 
 def _evaluate_objective(
@@ -2024,6 +2260,10 @@ def _untangle_computational_boundary(
         if accepted:
             current = candidate
             beta = trial_beta
+            beta_step = min(
+                B3_INITIAL_BETA_STEP,
+                B3_BETA_STEP_GROWTH * beta_step,
+            )
             continue
         last_failure = str(validation.failure or last_failure)
         additional_faces: set[int] = set()
@@ -2142,6 +2382,7 @@ def _evaluate_volume_objective(
     fixed_vertices: np.ndarray,
     baseline: np.ndarray,
     barrier_multiplier: float,
+    quality_guard_tetrahedron_indices: np.ndarray | None = None,
 ) -> tuple[float, np.ndarray]:
     """Optimize tetrahedral interiors while both boundaries remain fixed."""
 
@@ -2167,11 +2408,20 @@ def _evaluate_volume_objective(
     distortion_energy, determinant_energy, distortion_gradient, determinant_gradient = (
         tetrahedral
     )
-    gradient += B3_DISTORTION_WEIGHT * distortion_gradient + determinant_gradient
+    quality_guard_energy, quality_guard_gradient = _quality_guard_energy_gradient(
+        system, vertices, quality_guard_tetrahedron_indices
+    )
+    if not np.isfinite(quality_guard_energy):
+        return math.inf, np.zeros_like(flat_interior)
+    gradient += (
+        B3_DISTORTION_WEIGHT * distortion_gradient
+        + determinant_gradient
+        + barrier_multiplier * quality_guard_gradient
+    )
     total = (
         B3_FEM_WEIGHT * fem_energy
         + B3_DISTORTION_WEIGHT * distortion_energy
-        + barrier_multiplier * determinant_energy
+        + barrier_multiplier * (determinant_energy + quality_guard_energy)
     )
     interior_gradient = gradient[system.interior_vertex_indices].reshape(-1)
     if not np.isfinite(total) or not np.isfinite(interior_gradient).all():
@@ -2298,11 +2548,15 @@ def _optimize_volume_to_boundary(
         stage_records: list[dict[str, Any]] = []
         stage_improved = False
         for block, multiplier in enumerate(B3_BARRIER_MULTIPLIERS):
+            guard_tetrahedra = _quality_guard_tetrahedron_indices(
+                _deformation_quality(system, candidate)
+            )
             arguments = {
                 "system": system,
                 "fixed_vertices": candidate,
                 "baseline": baseline,
                 "barrier_multiplier": multiplier,
+                "quality_guard_tetrahedron_indices": guard_tetrahedra,
             }
             initial_flat = candidate[system.interior_vertex_indices].reshape(-1)
             initial_value, _ = _evaluate_volume_objective(
@@ -2323,10 +2577,13 @@ def _optimize_volume_to_boundary(
             def normalized_objective(
                 offsets: np.ndarray,
             ) -> tuple[float, np.ndarray]:
-                value, coordinate_gradient = _evaluate_volume_objective(
-                    initial_flat + resolution * offsets, **arguments
+                variable_scale = (
+                    B3_VOLUME_VARIABLE_SCALE_RESOLUTIONS * resolution
                 )
-                return value, resolution * coordinate_gradient
+                value, coordinate_gradient = _evaluate_volume_objective(
+                    initial_flat + variable_scale * offsets, **arguments
+                )
+                return value, variable_scale * coordinate_gradient
 
             optimized = minimize(
                 normalized_objective,
@@ -2343,8 +2600,9 @@ def _optimize_volume_to_boundary(
             )
             total_iterations += int(optimized.nit)
             proposal = candidate.copy()
+            variable_scale = B3_VOLUME_VARIABLE_SCALE_RESOLUTIONS * resolution
             proposal[system.interior_vertex_indices] = (
-                initial_flat + resolution * optimized.x
+                initial_flat + variable_scale * optimized.x
             ).reshape(-1, 3)
             accepted_step = 0.0
             accepted_value = initial_value
@@ -2375,6 +2633,7 @@ def _optimize_volume_to_boundary(
                 {
                     "block": block,
                     "barrier_multiplier": multiplier,
+                    "quality_guard_tetrahedra": int(len(guard_tetrahedra)),
                     "optimizer_iterations": int(optimized.nit),
                     "optimizer_success": bool(optimized.success),
                     "optimizer_message": str(optimized.message),
@@ -2397,8 +2656,7 @@ def _optimize_volume_to_boundary(
             "beta_step": beta_step,
             "accepted": accepted,
             "failure": None if accepted else str(validation.failure or "bounded_distortion"),
-            "minimum_jacobian_determinant": float(np.min(quality.determinants)),
-            "maximum_condition_number": float(np.max(quality.condition_numbers)),
+            **_quality_limit_diagnostics(quality),
             "optimizer_changed_interior": stage_improved,
             "blocks": stage_records,
         }
@@ -2408,6 +2666,10 @@ def _optimize_volume_to_boundary(
         if accepted:
             current = candidate
             beta = trial_beta
+            beta_step = min(
+                B3_INITIAL_BETA_STEP,
+                B3_BETA_STEP_GROWTH * beta_step,
+            )
             continue
         beta_step *= 0.5
         last_failure = str(record["failure"])

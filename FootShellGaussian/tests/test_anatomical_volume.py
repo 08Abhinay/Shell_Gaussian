@@ -43,6 +43,7 @@ from foot_prior.instance_volume_optimization import (
     _grow_surface_repair_region,
     _full_vertices_with_inner,
     _initial_surface_repair_region,
+    _quality_guard_deformation_gradient,
     _triangle_triangle_closest_features,
     build_instance_optimization_system,
     optimization_configuration,
@@ -235,6 +236,32 @@ def test_b3_identity_quality_and_objective_gradient() -> None:
     finite_difference = (plus - minus) / (2.0 * epsilon)
     analytical = float(np.dot(gradient, direction))
     assert analytical == pytest.approx(finite_difference, rel=1.0e-5, abs=1.0e-9)
+
+
+def test_b3_quality_guard_gradient_matches_finite_difference() -> None:
+    deformation = np.asarray(
+        (
+            ((1.6, 0.2, -0.1), (0.0, 0.9, 0.1), (0.0, 0.0, 0.07)),
+            ((4.2, 0.1, 0.0), (0.0, 1.1, 0.2), (0.0, 0.0, 0.4)),
+        ),
+        dtype=np.float64,
+    )
+    value, gradient = _quality_guard_deformation_gradient(deformation)
+    assert np.isfinite(value)
+    assert value > 0.0
+    rng = np.random.default_rng(19)
+    direction = rng.normal(size=deformation.shape)
+    direction /= np.linalg.norm(direction)
+    epsilon = 1.0e-7
+    plus, _ = _quality_guard_deformation_gradient(
+        deformation + epsilon * direction
+    )
+    minus, _ = _quality_guard_deformation_gradient(
+        deformation - epsilon * direction
+    )
+    finite_difference = (plus - minus) / (2.0 * epsilon)
+    analytical = float(np.sum(gradient * direction))
+    assert analytical == pytest.approx(finite_difference, rel=1.0e-6, abs=1.0e-7)
 
 
 def test_b3_triangle_closest_features_are_deterministic() -> None:
