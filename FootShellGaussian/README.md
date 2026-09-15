@@ -726,7 +726,32 @@ instance_anatomical_volume/<shoe>/
 11-A target. `needs_11_b3` means it stopped at the last valid interpolation
 step. B3 reports `final_exact_target`, `final_corrected_target`, or
 `failed_11_b3`. A failed record is diagnostic only and has no final NPZ or VTK.
-The forward and inverse `chi_i`/`Phi_i` operations remain deferred.
+
+Checkpoint 11-C uses each accepted final B3 grid as an exact piecewise-affine
+coordinate map. A canonical coordinate is a tetrahedron ID plus four
+barycentric weights. `canonical_to_instance` evaluates those weights on the
+same tetrahedron in one fitted instance; `instance_to_canonical` finds the
+containing instance tetrahedron and evaluates the same weights in the canonical
+grid. The inverse reports points inside the computational anatomy, outside the
+outer envelope, or affected by numerical ambiguity instead of snapping them to
+a nearby cell. The map also carries the canonical harmonic `r` value and accepts
+posed-SUPR, normalized-shoe, and original-shoe coordinates through the stored
+containment-fit transforms.
+
+Run the deterministic 11-C audit separately from the B3 artifacts:
+
+```bash
+python scripts/run_instance_volume_mapping.py \
+  --anatomical-volume-root /path/to/anatomical_volume \
+  --instance-volume-batch-root /path/to/instance_anatomical_volume/<batch> \
+  --containment-fit-root /path/to/containment_fit \
+  --output-root /path/to/instance_volume_mapping/<batch> \
+  --exclude sneaker_vibe
+```
+
+The runner writes only mapping-validation JSON. Spatial indexes and tetrahedron
+inverse matrices are derived in memory and are not duplicated on disk. Semantic
+surface `(u,v)` coordinates and anatomical fibers remain deferred to 11-D.
 
 Use `--resume` to reuse only complete states whose configuration, digests,
 arrays, and geometry all revalidate. It is mutually exclusive with

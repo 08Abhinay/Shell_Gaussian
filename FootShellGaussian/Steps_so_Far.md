@@ -922,6 +922,27 @@ states after their configuration, digests, arrays, and geometry revalidate.
 ## What comes next
 
 Checkpoint 11-B3 produces the validated instance volumes required by the next
-stage. Checkpoint 11-C will implement the forward and inverse volume mappings.
+stage. Checkpoint 11-C now provides the forward and inverse volume mappings.
 Toe articulation and other localized controls remain optional future
 containment work. High-heel SUPR fitting remains outside the current scope.
+
+## Step 21: Build exact Checkpoint 11-C forward and inverse maps
+
+Checkpoint 11-C treats the final B3 tetrahedra as a piecewise-affine coordinate
+system. The forward map keeps a canonical tetrahedron ID and its four
+barycentric weights and evaluates them on the corresponding fitted-instance
+tetrahedron. The inverse map uses a conservative tetrahedron AABB grid, exact
+barycentric containment, and deterministic shared-face handling to recover the
+same canonical coordinate from a physical point.
+
+Invalid points are not assigned to a nearest cell. They are reported as inside
+the computational anatomy, outside the fixed outer envelope, numerically
+ambiguous, or part of a noninjective overlap. The query result also interpolates
+the canonical harmonic `r` field. Stored containment-fit transforms let the
+same API accept posed-SUPR, normalized-shoe, and original-shoe coordinates.
+
+The validation runner tests fixed interior samples in every tetrahedron, all
+volume vertices, all unique tetrahedron faces, and both shoe coordinate frames.
+It writes a separate deterministic audit tree rather than modifying or
+duplicating the final B3 volume files. Semantic anatomical `(u,v)` fibers remain
+Checkpoint 11-D work.
