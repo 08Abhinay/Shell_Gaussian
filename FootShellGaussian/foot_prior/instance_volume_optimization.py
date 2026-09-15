@@ -33,6 +33,8 @@ from .cavity import (
 )
 
 
+# Fixed Checkpoint 11-B3 policy
+
 B3_INITIAL_BETA_STEP = 0.05
 B3_MINIMUM_BETA_STEP = 0.001
 B3_BETA_STEP_GROWTH = 2.0
@@ -324,6 +326,8 @@ def optimization_configuration() -> dict[str, Any]:
         "randomness": False,
     }
 
+
+# Canonical optimization system and deformation-quality helpers
 
 def _summary(values: np.ndarray) -> dict[str, float]:
     array = np.asarray(values, dtype=np.float64)
@@ -1330,185 +1334,6 @@ def _quality_guard_energy_gradient(
     return energy, gradient
 
 
-def _evaluate_objective(
-    flat_movable: np.ndarray,
-    *,
-    system: _InstanceOptimizationSystem,
-    fixed_vertices: np.ndarray,
-    target_inner: np.ndarray,
-    target_edges: np.ndarray,
-    baseline: np.ndarray,
-    surface_resolution: float,
-    collision_constraints: _CollisionConstraints,
-    barrier_multiplier: float,
-) -> tuple[float, np.ndarray]:
-    """Evaluate the normalized B3 objective and its analytical gradient."""
-
-    vertices = np.asarray(fixed_vertices, dtype=np.float64).copy()
-    movable = np.asarray(flat_movable, dtype=np.float64).reshape(-1, 3)
-    vertices[system.movable_vertex_indices] = movable
-    inner = system.inner_vertex_indices
-    gradient = np.zeros_like(vertices)
-    terms: dict[str, float] = {}
-
-    correction = vertices[inner] - target_inner
-    correction_squared = np.sum(correction * correction, axis=1)
-    cap = B3_MAXIMUM_CORRECTION_RESOLUTIONS * surface_resolution
-    cap_barrier = _upper_barrier(
-        correction_squared,
-        0.25 * cap * cap,
-        cap * cap,
-    )
-    if cap_barrier is None:
-        return math.inf, np.zeros_like(flat_movable)
-    cap_energy, cap_derivative = cap_barrier
-    terms["target"] = float(
-        np.sum(system.surface_area_weights * correction_squared)
-        / surface_resolution**2
-    )
-    gradient[inner] += (
-        2.0
-        * B3_TARGET_WEIGHT
-        * system.surface_area_weights[:, None]
-        * correction
-        / surface_resolution**2
-    )
-    gradient[inner] += (
-        barrier_multiplier * 2.0 * cap_derivative[:, None] * correction
-    )
-
-    edges = system.surface_edges
-    edge_delta = (
-        vertices[edges[:, 1]] - vertices[edges[:, 0]] - target_edges
-    )
-    terms["surface"] = float(
-        np.mean(np.sum(edge_delta * edge_delta, axis=1))
-        / surface_resolution**2
-    )
-    edge_gradient = (
-        2.0
-        * B3_SURFACE_WEIGHT
-        * edge_delta
-        / (len(edges) * surface_resolution**2)
-    )
-    np.add.at(gradient, edges[:, 1], edge_gradient)
-    np.add.at(gradient, edges[:, 0], -edge_gradient)
-
-    baseline_delta = movable - baseline[system.movable_vertex_indices]
-    stiffness_delta = system.stiffness @ baseline_delta
-    terms["fem"] = float(
-        np.sum(baseline_delta * stiffness_delta)
-        / system.canonical_shell_volume
-    )
-    gradient[system.movable_vertex_indices] += (
-        2.0
-        * B3_FEM_WEIGHT
-        * stiffness_delta
-        / system.canonical_shell_volume
-    )
-
-    tetrahedral = _tetrahedral_energy_gradient(
-        system, vertices, barrier_multiplier
-    )
-    if tetrahedral is None:
-        return math.inf, np.zeros_like(flat_movable)
-    (
-        distortion_energy,
-        determinant_energy,
-        distortion_gradient,
-        determinant_gradient,
-    ) = tetrahedral
-    terms["distortion"] = distortion_energy
-    terms["determinant_barrier"] = determinant_energy
-    gradient += (
-        B3_DISTORTION_WEIGHT * distortion_gradient + determinant_gradient
-    )
-
-    normalized = np.abs((vertices[inner] - ENVELOPE_CENTER) / ENVELOPE_RADII)
-    envelope_values = np.sum(normalized**ENVELOPE_POWER, axis=1)
-    envelope_barrier = _upper_barrier(
-        envelope_values, 0.9, 1.0 - 1.0e-10
-    )
-    if envelope_barrier is None:
-        return math.inf, np.zeros_like(flat_movable)
-    envelope_energy, envelope_derivative = envelope_barrier
-    envelope_gradient = (
-        ENVELOPE_POWER
-        * (vertices[inner] - ENVELOPE_CENTER) ** 3
-        / ENVELOPE_RADII**4
-    )
-    gradient[inner] += (
-        barrier_multiplier
-        * envelope_derivative[:, None]
-        * envelope_gradient
-    )
-
-    collision_energy = 0.0
-    if collision_constraints.count:
-        first_points = np.einsum(
-            "ni,nij->nj",
-            collision_constraints.first_weights,
-            vertices[collision_constraints.first_vertex_indices],
-        )
-        second_points = np.einsum(
-            "ni,nij->nj",
-            collision_constraints.second_weights,
-            vertices[collision_constraints.second_vertex_indices],
-        )
-        gaps = np.einsum(
-            "ni,ni->n",
-            collision_constraints.normals,
-            first_points - second_points,
-        )
-        collision_barrier = _lower_barrier(
-            gaps,
-            B3_COLLISION_MINIMUM_RESOLUTIONS * surface_resolution,
-            B3_COLLISION_ACTIVATION_RESOLUTIONS * surface_resolution,
-        )
-        if collision_barrier is None:
-            return math.inf, np.zeros_like(flat_movable)
-        collision_energy, collision_derivative = collision_barrier
-        pair_gradient = (
-            barrier_multiplier
-            * collision_derivative[:, None]
-            * collision_constraints.normals
-        )
-        for corner in range(3):
-            np.add.at(
-                gradient,
-                collision_constraints.first_vertex_indices[:, corner],
-                collision_constraints.first_weights[:, corner, None]
-                * pair_gradient,
-            )
-            np.add.at(
-                gradient,
-                collision_constraints.second_vertex_indices[:, corner],
-                -collision_constraints.second_weights[:, corner, None]
-                * pair_gradient,
-            )
-
-    terms["correction_barrier"] = cap_energy
-    terms["envelope_barrier"] = envelope_energy
-    terms["collision_barrier"] = collision_energy
-    total = (
-        B3_TARGET_WEIGHT * terms["target"]
-        + B3_SURFACE_WEIGHT * terms["surface"]
-        + B3_FEM_WEIGHT * terms["fem"]
-        + B3_DISTORTION_WEIGHT * terms["distortion"]
-        + barrier_multiplier
-        * (
-            terms["determinant_barrier"]
-            + terms["correction_barrier"]
-            + terms["envelope_barrier"]
-            + terms["collision_barrier"]
-        )
-    )
-    movable_gradient = gradient[system.movable_vertex_indices].reshape(-1)
-    if not np.isfinite(total) or not np.isfinite(movable_gradient).all():
-        return math.inf, np.zeros_like(flat_movable)
-    return float(total), movable_gradient
-
-
 def _interpolated_baseline(
     volume: CanonicalAnatomicalVolume,
     full_displacement: np.ndarray,
@@ -1640,6 +1465,8 @@ def _full_vertices_with_inner(
     vertices[system.inner_vertex_indices] = inner_vertices
     return vertices
 
+
+# Computational-surface repair
 
 def _validate_computational_boundary_cheap(
     system: _InstanceOptimizationSystem,
@@ -2374,6 +2201,8 @@ def _solve_smooth_displacement_to_target(
         raise RuntimeError(f"{problem.shoe_name}: corrected FEM solve failed")
     return displacement, residual
 
+
+# Fixed-boundary interior-volume deformation
 
 def _evaluate_volume_objective(
     flat_interior: np.ndarray,

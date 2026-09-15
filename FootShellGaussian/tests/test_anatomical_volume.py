@@ -8,6 +8,7 @@ from pathlib import Path
 import inspect
 import shutil
 import sys
+from typing import Any
 
 import numpy as np
 import pytest
@@ -38,8 +39,8 @@ from foot_prior.instance_volume_optimization import (
     _CollisionConstraints,
     _build_collision_constraints,
     _deformation_quality,
-    _evaluate_objective,
     _evaluate_surface_objective,
+    _evaluate_volume_objective,
     _grow_surface_repair_region,
     _full_vertices_with_inner,
     _initial_surface_repair_region,
@@ -49,9 +50,15 @@ from foot_prior.instance_volume_optimization import (
     optimization_configuration,
 )
 from scripts.run_instance_volume_deformation import (
+    _continuation_payload,
     _load_resumable_continuation,
     _preflight_resume_state,
+    _write_state,
     parse_args as parse_instance_volume_args,
+)
+from scripts.run_instance_volume_batch import (
+    NUMERICAL_THREAD_ENVIRONMENT,
+    parse_args as parse_instance_volume_batch_args,
 )
 
 
@@ -61,15 +68,35 @@ REFERENCE_ROOT = Path(
 VOLUME_ROOT = Path(
     "/home/ab5298/Outputs/FootShellGaussian/golden_set_evaluation/anatomical_volume"
 )
-SANDAL_B3_PILOT = Path(
-    "/home/ab5298/Outputs/FootShellGaussian/golden_set_evaluation/temp/"
-    "checkpoint_11_b3_pilot/sandal_1/instance_volume.npz"
-)
-SANDAL_B3_PILOT_ROOT = SANDAL_B3_PILOT.parent
-FAST_SANDAL_PILOT = Path(
-    "/home/ab5298/Outputs/FootShellGaussian/golden_set_evaluation/temp/"
-    "checkpoint_11_b3_fast_pilot/sandal_1"
-)
+
+
+@pytest.fixture(scope="module")
+def sandal_b2_artifacts(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Any]:
+    """Build one real B2 state without relying on disposable pilot outputs."""
+
+    if not (VOLUME_ROOT / "sandal_1" / "boundary_target.npz").is_file():
+        pytest.skip("saved sandal boundary target absent")
+    problem = load_instance_volume_problem(VOLUME_ROOT, REFERENCE_ROOT, "sandal_1")
+    continuation = continue_instance_volume(problem)
+    assert continuation.status == "needs_11_b3"
+    directory = tmp_path_factory.mktemp("sandal_b2") / "sandal_1"
+    payload = _continuation_payload(
+        problem,
+        continuation,
+        VOLUME_ROOT,
+        REFERENCE_ROOT,
+        directory,
+    )
+    _write_state(
+        directory,
+        payload,
+        continuation.volume_vertices,
+        problem=problem,
+        final_payload=None,
+        final_result=None,
+        overwrite=False,
+    )
+    return directory, continuation
 
 
 def test_orientation_barycentric_mapping_and_harmonic_boundaries() -> None:
@@ -191,7 +218,7 @@ def test_saved_canonical_volume_loads_with_exact_boundary_topology() -> None:
     not (VOLUME_ROOT / "reference" / "canonical_volume.npz").is_file(),
     reason="canonical anatomical volume absent",
 )
-def test_b3_identity_quality_and_objective_gradient() -> None:
+def test_b3_identity_quality_and_volume_objective_gradient() -> None:
     volume = load_canonical_anatomical_volume(VOLUME_ROOT)
     system = build_instance_optimization_system(volume)
     quality = _deformation_quality(system, volume.volume_vertices)
@@ -203,36 +230,21 @@ def test_b3_identity_quality_and_objective_gradient() -> None:
     )
 
     rng = np.random.default_rng(7)
-    movable = volume.volume_vertices[system.movable_vertex_indices].copy()
-    movable += rng.normal(scale=1.0e-6, size=movable.shape)
-    inner = volume.volume_vertices[system.inner_vertex_indices]
-    target_edges = (
-        inner[system.surface_edges[:, 1]] - inner[system.surface_edges[:, 0]]
-    )
-    empty = _CollisionConstraints(
-        np.empty((0, 3), dtype=np.int64),
-        np.empty((0, 3), dtype=np.float64),
-        np.empty((0, 3), dtype=np.int64),
-        np.empty((0, 3), dtype=np.float64),
-        np.empty((0, 3), dtype=np.float64),
-    )
+    interior = volume.volume_vertices[system.interior_vertex_indices].copy()
+    interior += rng.normal(scale=1.0e-6, size=interior.shape)
     arguments = {
         "system": system,
         "fixed_vertices": volume.volume_vertices,
-        "target_inner": inner,
-        "target_edges": target_edges,
         "baseline": volume.volume_vertices,
-        "surface_resolution": 0.013,
-        "collision_constraints": empty,
         "barrier_multiplier": 1.0,
     }
-    flat = movable.reshape(-1)
-    _, gradient = _evaluate_objective(flat, **arguments)
+    flat = interior.reshape(-1)
+    _, gradient = _evaluate_volume_objective(flat, **arguments)
     direction = rng.normal(size=flat.shape)
     direction /= np.linalg.norm(direction)
     epsilon = 3.0e-7
-    plus, _ = _evaluate_objective(flat + epsilon * direction, **arguments)
-    minus, _ = _evaluate_objective(flat - epsilon * direction, **arguments)
+    plus, _ = _evaluate_volume_objective(flat + epsilon * direction, **arguments)
+    minus, _ = _evaluate_volume_objective(flat - epsilon * direction, **arguments)
     finite_difference = (plus - minus) / (2.0 * epsilon)
     analytical = float(np.dot(gradient, direction))
     assert analytical == pytest.approx(finite_difference, rel=1.0e-5, abs=1.0e-9)
@@ -421,23 +433,16 @@ def test_sandal_localized_surface_region_is_deterministic() -> None:
 
 
 @pytest.mark.skipif(
-    not SANDAL_B3_PILOT.is_file(), reason="successful sandal B3 pilot absent"
+    not (VOLUME_ROOT / "sandal_1" / "boundary_target.npz").is_file(),
+    reason="saved sandal boundary target absent",
 )
-def test_accelerated_exact_search_matches_saved_sandal_states() -> None:
+def test_accelerated_exact_search_matches_saved_sandal_target() -> None:
     problem = load_instance_volume_problem(VOLUME_ROOT, REFERENCE_ROOT, "sandal_1")
     target_pairs = _self_intersection_pairs(
         problem.boundary_target.vertices, problem.boundary_target.faces
     )
     np.testing.assert_array_equal(
         target_pairs, problem.boundary_target.intersecting_face_pairs
-    )
-    with np.load(SANDAL_B3_PILOT, allow_pickle=False) as archive:
-        final_vertices = archive["volume_vertices"]
-    final_inner = final_vertices[
-        problem.canonical_volume.computational_inner_vertex_indices
-    ]
-    assert not len(
-        _self_intersection_pairs(final_inner, problem.boundary_target.faces)
     )
 
 
@@ -467,21 +472,21 @@ def test_instance_volume_problem_rejects_mismatched_target_digest(
         load_instance_volume_problem(volume_root, REFERENCE_ROOT, "sandal_1")
 
 
-@pytest.mark.skipif(
-    not (SANDAL_B3_PILOT_ROOT / "continuation_state.npz").is_file(),
-    reason="saved sandal B2 pilot absent",
-)
 def test_explicit_resume_validates_b2_and_retries_failed_b3(
     tmp_path: Path,
+    sandal_b2_artifacts: tuple[Path, Any],
 ) -> None:
     problem = load_instance_volume_problem(VOLUME_ROOT, REFERENCE_ROOT, "sandal_1")
+    source, expected_continuation = sandal_b2_artifacts
     directory = tmp_path / "sandal_1"
     directory.mkdir()
     for name in ("continuation_state.json", "continuation_state.npz"):
-        shutil.copyfile(SANDAL_B3_PILOT_ROOT / name, directory / name)
+        shutil.copyfile(source / name, directory / name)
 
     continuation = _load_resumable_continuation(directory, problem)
-    assert continuation.reached_alpha == pytest.approx(0.76904296875)
+    assert continuation.reached_alpha == pytest.approx(
+        expected_continuation.reached_alpha
+    )
     assert continuation.status == "needs_11_b3"
 
     continuation_payload = json.loads(
@@ -524,32 +529,20 @@ def test_explicit_resume_validates_b2_and_retries_failed_b3(
         _load_resumable_continuation(directory, problem)
 
 
-@pytest.mark.skipif(
-    not (SANDAL_B3_PILOT_ROOT / "continuation_state.json").is_file(),
-    reason="saved sandal B2 pilot absent",
-)
-def test_explicit_resume_rejects_partial_state(tmp_path: Path) -> None:
+def test_explicit_resume_rejects_partial_state(
+    tmp_path: Path,
+    sandal_b2_artifacts: tuple[Path, Any],
+) -> None:
     problem = load_instance_volume_problem(VOLUME_ROOT, REFERENCE_ROOT, "sandal_1")
+    source, _ = sandal_b2_artifacts
     directory = tmp_path / "sandal_1"
     directory.mkdir()
     shutil.copyfile(
-        SANDAL_B3_PILOT_ROOT / "continuation_state.json",
+        source / "continuation_state.json",
         directory / "continuation_state.json",
     )
     with pytest.raises(ValueError, match="partial B2 artifacts"):
         _preflight_resume_state(directory, problem, None)
-
-
-@pytest.mark.skipif(
-    not (FAST_SANDAL_PILOT / "instance_volume.npz").is_file(),
-    reason="accelerated sandal B3 pilot absent",
-)
-def test_explicit_resume_revalidates_completed_b3() -> None:
-    problem = load_instance_volume_problem(VOLUME_ROOT, REFERENCE_ROOT, "sandal_1")
-    system = build_instance_optimization_system(problem.canonical_volume)
-    resumed = _preflight_resume_state(FAST_SANDAL_PILOT, problem, system)
-    assert resumed.continuation is not None
-    assert resumed.final_status == "final_corrected_target"
 
 
 def test_resume_and_overwrite_are_mutually_exclusive(
@@ -572,6 +565,29 @@ def test_resume_and_overwrite_are_mutually_exclusive(
     )
     with pytest.raises(SystemExit):
         parse_instance_volume_args()
+
+
+def test_parallel_batch_requires_positive_jobs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_instance_volume_batch.py",
+            "--anatomical-volume-root",
+            "volume",
+            "--extended-anatomical-surface-root",
+            "surface",
+            "--output-root",
+            "output",
+            "--jobs",
+            "0",
+        ],
+    )
+    with pytest.raises(SystemExit):
+        parse_instance_volume_batch_args()
+    assert set(NUMERICAL_THREAD_ENVIRONMENT.values()) == {"1"}
 
 
 @pytest.mark.skipif(
