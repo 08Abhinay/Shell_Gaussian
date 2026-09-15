@@ -94,6 +94,7 @@ baselines/NeuralUDF/core.*
 *.err
 *.out
 *.aux
+*.toc
 
 # Temporary GitHub CLI files
 gh.tar.gz
