@@ -35,8 +35,8 @@ from .instance_volume_optimization import (
 
 
 CoordinateFrame = Literal[
-    "posed_supr",
     "normalized_shoe",
+    "posed_supr",
     "original_shoe",
 ]
 
@@ -70,16 +70,29 @@ _ANATOMICAL_LABELS = {
     BOUNDARY_ANKLE_TRANSITION,
     BOUNDARY_LOWER_LEG_SKIN,
 }
-_FRAME_TRANSFORMS = {
-    "normalized_shoe": (
-        "normalized_shoe_to_posed_supr",
+_TRANSFORM_PAIRS = {
+    "posed_supr": (
         "posed_supr_to_normalized_shoe",
+        "normalized_shoe_to_posed_supr",
     ),
     "original_shoe": (
-        "original_shoe_to_posed_supr",
-        "posed_supr_to_original_shoe",
+        "shoe_to_normalized",
+        "normalized_to_shoe",
     ),
 }
+_CONTAINMENT_TRANSFORM_NAMES = {
+    "posed_supr_to_normalized_shoe",
+    "normalized_shoe_to_posed_supr",
+    "original_shoe_to_posed_supr",
+    "posed_supr_to_original_shoe",
+    "shoe_to_normalized",
+    "normalized_to_shoe",
+}
+_INVERSE_TRANSFORM_PAIRS = (
+    ("posed_supr_to_normalized_shoe", "normalized_shoe_to_posed_supr"),
+    ("original_shoe_to_posed_supr", "posed_supr_to_original_shoe"),
+    ("shoe_to_normalized", "normalized_to_shoe"),
+)
 
 
 class VolumePointStatus(IntEnum):
@@ -175,79 +188,10 @@ class _TetrahedronSpatialIndex:
             return local
         return np.union1d(local, self.broad_tetrahedron_indices)
 
+class _VolumeLocator:
+    """Shared, unchanged 11-C location and classification implementation."""
 
-@dataclass(frozen=True)
-class InstanceVolumeMap:
-    """Validated exact map for one final Checkpoint 11-B3 volume."""
-
-    shoe_name: str
-    canonical_volume: CanonicalAnatomicalVolume
-    instance_vertices: np.ndarray
-    instance_inverse_matrices: np.ndarray
-    spatial_index: _TetrahedronSpatialIndex
-    boundary_face_labels: np.ndarray
-    inner_triangles: np.ndarray
-    outer_triangles: np.ndarray
-    transforms: dict[str, np.ndarray]
-    spatial_tolerance: float
-    round_trip_tolerance: float
-    instance_status: str
-    instance_volume_json_digest: str
-    instance_volume_vertices_digest: str
-    containment_fit_json_digest: str
-
-    def canonical_to_instance(
-        self,
-        tetrahedron_indices: np.ndarray,
-        barycentric_weights: np.ndarray,
-        *,
-        output_frame: CoordinateFrame = "posed_supr",
-    ) -> np.ndarray:
-        """Evaluate chi_i for exact canonical tetrahedral coordinates."""
-
-        _validate_coordinate_frame(output_frame)
-        points = map_volume_coordinates(
-            tetrahedron_indices,
-            barycentric_weights,
-            self.instance_vertices,
-            self.canonical_volume.tetrahedra,
-        )
-        return self._from_posed_supr(points, output_frame)
-
-    def instance_to_canonical(
-        self,
-        points: np.ndarray,
-        *,
-        input_frame: CoordinateFrame = "posed_supr",
-    ) -> VolumeMappingResult:
-        """Evaluate Phi_i and classify every supplied physical point."""
-
-        _validate_coordinate_frame(input_frame)
-        values = np.asarray(points, dtype=np.float64)
-        if values.ndim != 2 or values.shape[1:] != (3,):
-            raise ValueError("points must have shape (N, 3)")
-
-        posed = np.full(values.shape, np.nan, dtype=np.float64)
-        finite = np.isfinite(values).all(axis=1)
-        if np.any(finite):
-            posed[finite] = self._to_posed_supr(values[finite], input_frame)
-        return self._locate_posed_points(posed, finite)
-
-    def _to_posed_supr(
-        self, points: np.ndarray, frame: CoordinateFrame
-    ) -> np.ndarray:
-        if frame == "posed_supr":
-            return np.asarray(points, dtype=np.float64).copy()
-        return transform_points(points, self.transforms[_FRAME_TRANSFORMS[frame][0]])
-
-    def _from_posed_supr(
-        self, points: np.ndarray, frame: CoordinateFrame
-    ) -> np.ndarray:
-        if frame == "posed_supr":
-            return np.asarray(points, dtype=np.float64).copy()
-        return transform_points(points, self.transforms[_FRAME_TRANSFORMS[frame][1]])
-
-    def _locate_posed_points(
+    def _locate_internal_points(
         self, points: np.ndarray, finite: np.ndarray
     ) -> VolumeMappingResult:
         count = len(points)
@@ -479,6 +423,144 @@ class InstanceVolumeMap:
         return result
 
 
+
+@dataclass(frozen=True)
+class InstanceVolumeMap(_VolumeLocator):
+    """Validated exact map for one final Checkpoint 11-B3 volume."""
+
+    shoe_name: str
+    canonical_volume: CanonicalAnatomicalVolume
+    instance_vertices: np.ndarray
+    instance_inverse_matrices: np.ndarray
+    spatial_index: _TetrahedronSpatialIndex
+    boundary_face_labels: np.ndarray
+    inner_triangles: np.ndarray
+    outer_triangles: np.ndarray
+    transforms: dict[str, np.ndarray]
+    spatial_tolerance: float
+    round_trip_tolerance: float
+    instance_status: str
+    instance_volume_json_digest: str
+    instance_volume_vertices_digest: str
+    containment_fit_json_digest: str
+
+    def canonical_to_instance(
+        self,
+        tetrahedron_indices: np.ndarray,
+        barycentric_weights: np.ndarray,
+        *,
+        output_frame: CoordinateFrame = "normalized_shoe",
+    ) -> np.ndarray:
+        """Evaluate chi_i for exact canonical tetrahedral coordinates."""
+
+        _validate_coordinate_frame(output_frame)
+        points = map_volume_coordinates(
+            tetrahedron_indices,
+            barycentric_weights,
+            self.instance_vertices,
+            self.canonical_volume.tetrahedra,
+        )
+        return self._from_internal_normalized(points, output_frame)
+
+    def instance_to_canonical(
+        self,
+        points: np.ndarray,
+        *,
+        input_frame: CoordinateFrame = "normalized_shoe",
+    ) -> VolumeMappingResult:
+        """Evaluate Phi_i and classify every supplied physical point."""
+
+        _validate_coordinate_frame(input_frame)
+        values = np.asarray(points, dtype=np.float64)
+        if values.ndim != 2 or values.shape[1:] != (3,):
+            raise ValueError("points must have shape (N, 3)")
+
+        normalized = np.full(values.shape, np.nan, dtype=np.float64)
+        finite = np.isfinite(values).all(axis=1)
+        if np.any(finite):
+            normalized[finite] = self._to_internal_normalized(
+                values[finite], input_frame
+            )
+        return self._locate_internal_points(normalized, finite)
+
+    def convert_points(
+        self,
+        points: np.ndarray,
+        *,
+        input_frame: CoordinateFrame,
+        output_frame: CoordinateFrame,
+    ) -> np.ndarray:
+        """Convert physical points between the supported instance frames."""
+
+        _validate_coordinate_frame(input_frame)
+        _validate_coordinate_frame(output_frame)
+        values = np.asarray(points, dtype=np.float64)
+        if values.ndim != 2 or values.shape[1:] != (3,):
+            raise ValueError("points must have shape (N, 3)")
+        if not np.isfinite(values).all():
+            raise ValueError("points must contain only finite values")
+        normalized = self._to_internal_normalized(values, input_frame)
+        return self._from_internal_normalized(normalized, output_frame)
+
+    def _to_internal_normalized(
+        self, points: np.ndarray, frame: CoordinateFrame
+    ) -> np.ndarray:
+        if frame == "normalized_shoe":
+            return np.asarray(points, dtype=np.float64).copy()
+        return transform_points(points, self.transforms[_TRANSFORM_PAIRS[frame][0]])
+
+    def _from_internal_normalized(
+        self, points: np.ndarray, frame: CoordinateFrame
+    ) -> np.ndarray:
+        if frame == "normalized_shoe":
+            return np.asarray(points, dtype=np.float64).copy()
+        return transform_points(points, self.transforms[_TRANSFORM_PAIRS[frame][1]])
+
+
+@dataclass(frozen=True)
+class CanonicalVolumeLocator(_VolumeLocator):
+    """Geometry-only identity locator; no shoe, B3 state, or fitted transforms."""
+
+    canonical_volume: CanonicalAnatomicalVolume
+    instance_vertices: np.ndarray
+    instance_inverse_matrices: np.ndarray
+    spatial_index: _TetrahedronSpatialIndex
+    boundary_face_labels: np.ndarray
+    inner_triangles: np.ndarray
+    outer_triangles: np.ndarray
+    spatial_tolerance: float
+    round_trip_tolerance: float
+
+    @classmethod
+    def build(cls, canonical: CanonicalAnatomicalVolume) -> "CanonicalVolumeLocator":
+        vertices, cells = canonical.volume_vertices, canonical.tetrahedra
+        diagonal = float(np.linalg.norm(np.ptp(vertices, axis=0)))
+        tolerance = MAPPING_SPATIAL_TOLERANCE_RELATIVE * diagonal
+        return cls(
+            canonical,
+            vertices,
+            np.linalg.inv(_tetrahedron_matrices(vertices, cells)),
+            _build_tetrahedron_spatial_index(vertices, cells, tolerance),
+            _tetrahedron_boundary_labels(canonical),
+            vertices[canonical.computational_inner_vertex_indices][
+                canonical.computational_inner_faces
+            ],
+            vertices[
+                canonical.boundary_faces[
+                    canonical.boundary_labels == BOUNDARY_OUTER_ENVELOPE
+                ]
+            ],
+            tolerance,
+            MAPPING_ROUND_TRIP_TOLERANCE_RELATIVE * diagonal,
+        )
+
+    def locate(self, points: np.ndarray) -> VolumeMappingResult:
+        points = np.asarray(points, dtype=np.float64)
+        if points.ndim != 2 or points.shape[1] != 3:
+            raise ValueError("points must have shape (N, 3)")
+        return self._locate_internal_points(points, np.isfinite(points).all(axis=1))
+
+
 def mapping_configuration() -> dict[str, Any]:
     """Return the fixed, shoe-independent Checkpoint 11-C policy."""
 
@@ -502,9 +584,13 @@ def mapping_configuration() -> dict[str, Any]:
         "overlap_policy": "reject_disagreeing_canonical_reconstructions",
         "shared_boundary_policy": "smallest_tetrahedron_id",
         "invalid_point_policy": "classify_without_nearest_tetrahedron_snapping",
+        "internal_frame": "normalized_shoe",
+        "normalized_shoe_policy": "identity",
+        "posed_supr_policy": "explicit_containment_conversion",
+        "original_shoe_policy": "direct_preparation_normalization",
         "coordinate_frames": [
-            "posed_supr",
             "normalized_shoe",
+            "posed_supr",
             "original_shoe",
         ],
     }
@@ -832,31 +918,42 @@ def _generalized_winding_numbers(
 def _load_transforms(payload: Any, shoe_name: str) -> dict[str, np.ndarray]:
     if not isinstance(payload, dict):
         raise ValueError(f"{shoe_name}: containment transforms are missing")
-    names = {
-        name for pair in _FRAME_TRANSFORMS.values() for name in pair
-    }
     result: dict[str, np.ndarray] = {}
-    for name in names:
+    for name in _CONTAINMENT_TRANSFORM_NAMES:
         matrix = np.asarray(payload.get(name), dtype=np.float64)
         if matrix.shape != (4, 4) or not np.isfinite(matrix).all():
             raise ValueError(f"{shoe_name}: transform {name} is invalid")
         result[name] = matrix
-    for to_posed, from_posed in _FRAME_TRANSFORMS.values():
+    for forward, inverse in _INVERSE_TRANSFORM_PAIRS:
         if not (
             np.allclose(
-                result[to_posed] @ result[from_posed],
+                result[forward] @ result[inverse],
                 np.eye(4),
                 atol=1.0e-12,
                 rtol=1.0e-12,
             )
             and np.allclose(
-                result[from_posed] @ result[to_posed],
+                result[inverse] @ result[forward],
                 np.eye(4),
                 atol=1.0e-12,
                 rtol=1.0e-12,
             )
         ):
             raise ValueError(f"{shoe_name}: transform pair is not invertible")
+    if not np.allclose(
+        result["shoe_to_normalized"],
+        result["posed_supr_to_normalized_shoe"]
+        @ result["original_shoe_to_posed_supr"],
+        atol=1.0e-12,
+        rtol=1.0e-12,
+    ) or not np.allclose(
+        result["normalized_to_shoe"],
+        result["posed_supr_to_original_shoe"]
+        @ result["normalized_shoe_to_posed_supr"],
+        atol=1.0e-12,
+        rtol=1.0e-12,
+    ):
+        raise ValueError(f"{shoe_name}: transform chains are inconsistent")
     return result
 
 

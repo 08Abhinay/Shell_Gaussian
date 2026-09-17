@@ -101,6 +101,8 @@ def _map(
         "posed_supr_to_normalized_shoe": identity,
         "original_shoe_to_posed_supr": identity,
         "posed_supr_to_original_shoe": identity,
+        "shoe_to_normalized": identity,
+        "normalized_to_shoe": identity,
     }
     if transforms is not None:
         matrices.update(transforms)
@@ -241,22 +243,49 @@ def test_coordinate_frames_round_trip() -> None:
         ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
     )
     canonical = _canonical_volume(vertices, np.asarray(((0, 1, 2, 3),)))
-    forward = np.eye(4)
-    forward[:3, :3] *= 2.0
-    forward[:3, 3] = (0.2, -0.3, 0.4)
-    inverse = np.linalg.inv(forward)
+    posed_to_normalized = np.eye(4)
+    posed_to_normalized[:3, :3] *= 2.0
+    posed_to_normalized[:3, 3] = (0.2, -0.3, 0.4)
+    normalized_to_posed = np.linalg.inv(posed_to_normalized)
+    original_to_posed = np.eye(4)
+    original_to_posed[:3, 3] = (0.7, 0.1, -0.2)
+    posed_to_original = np.linalg.inv(original_to_posed)
+    original_to_normalized = posed_to_normalized @ original_to_posed
+    normalized_to_original = posed_to_original @ normalized_to_posed
     transforms = {
-        "posed_supr_to_normalized_shoe": forward,
-        "normalized_shoe_to_posed_supr": inverse,
-        "posed_supr_to_original_shoe": forward,
-        "original_shoe_to_posed_supr": inverse,
+        "posed_supr_to_normalized_shoe": posed_to_normalized,
+        "normalized_shoe_to_posed_supr": normalized_to_posed,
+        "posed_supr_to_original_shoe": posed_to_original,
+        "original_shoe_to_posed_supr": original_to_posed,
+        "shoe_to_normalized": original_to_normalized,
+        "normalized_to_shoe": normalized_to_original,
     }
     mapping = _map(canonical, vertices, transforms=transforms)
     weights = np.asarray(((0.1, 0.2, 0.3, 0.4),))
-    for frame in ("normalized_shoe", "original_shoe"):
+    internal = weights @ vertices
+    np.testing.assert_array_equal(
+        mapping.canonical_to_instance(np.asarray((0,)), weights), internal
+    )
+    np.testing.assert_array_equal(
+        mapping.convert_points(
+            internal,
+            input_frame="normalized_shoe",
+            output_frame="normalized_shoe",
+        ),
+        internal,
+    )
+    expected = {
+        "normalized_shoe": internal,
+        "posed_supr": internal @ normalized_to_posed[:3, :3].T
+        + normalized_to_posed[:3, 3],
+        "original_shoe": internal @ normalized_to_original[:3, :3].T
+        + normalized_to_original[:3, 3],
+    }
+    for frame in ("normalized_shoe", "posed_supr", "original_shoe"):
         point = mapping.canonical_to_instance(
             np.asarray((0,)), weights, output_frame=frame
         )
+        np.testing.assert_allclose(point, expected[frame], atol=1.0e-14)
         result = mapping.instance_to_canonical(point, input_frame=frame)
         np.testing.assert_allclose(result.coordinates.barycentric_weights, weights)
     with pytest.raises(ValueError, match="unsupported coordinate frame"):
@@ -366,6 +395,8 @@ def synthetic_artifacts(tmp_path: Path) -> tuple[CanonicalAnatomicalVolume, Path
             "normalized_shoe_to_posed_supr": identity,
             "posed_supr_to_original_shoe": identity,
             "original_shoe_to_posed_supr": identity,
+            "shoe_to_normalized": identity,
+            "normalized_to_shoe": identity,
         },
     }
     (containment_directory / "containment_fit.json").write_text(json.dumps(containment))
@@ -438,4 +469,19 @@ def test_loader_rejects_invalid_transform_pair(
     metadata["transforms"]["original_shoe_to_posed_supr"][0][0] = 2.0
     path.write_text(json.dumps(metadata))
     with pytest.raises(ValueError, match="transform pair is not invertible"):
+        load_instance_volume_map(canonical, instance, containment)
+
+
+def test_loader_rejects_inconsistent_transform_chain(
+    synthetic_artifacts: tuple[CanonicalAnatomicalVolume, Path, Path]
+) -> None:
+    canonical, instance, containment = synthetic_artifacts
+    path = containment / "containment_fit.json"
+    metadata = json.loads(path.read_text())
+    scale = np.eye(4)
+    scale[0, 0] = 2.0
+    metadata["transforms"]["shoe_to_normalized"] = scale.tolist()
+    metadata["transforms"]["normalized_to_shoe"] = np.linalg.inv(scale).tolist()
+    path.write_text(json.dumps(metadata))
+    with pytest.raises(ValueError, match="transform chains are inconsistent"):
         load_instance_volume_map(canonical, instance, containment)
