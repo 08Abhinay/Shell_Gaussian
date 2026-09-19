@@ -750,12 +750,93 @@ python scripts/run_instance_volume_mapping.py \
 ```
 
 The runner writes only mapping-validation JSON. Spatial indexes and tetrahedron
-inverse matrices are derived in memory and are not duplicated on disk. Semantic
-surface `(u,v)` coordinates and anatomical fibers remain deferred to 11-D.
+inverse matrices are derived in memory and are not duplicated on disk. The
+experimental 11-D workflow below uses this exact mapping as its geometric lookup
+layer.
 
 Use `--resume` to reuse only complete states whose configuration, digests,
 arrays, and geometry all revalidate. It is mutually exclusive with
 `--overwrite`; incompatible or partial states require an explicit overwrite.
+
+## Experimental Checkpoint 11-D semantic field and fibers
+
+`foot_prior/anatomical_fibers.py` constructs a separate bounded quadratic
+Bernstein field, `semantic_r`, on the unchanged canonical tetrahedra. It fixes
+the complete closed inner boundary, including the artificially labelled knee
+cap, to zero and the outer envelope to one. Edge coefficients are shared across
+cells; an edge is fixed only when it belongs to an actual boundary triangle.
+The original `harmonic_r`, B3 geometry, and 11-C mapping behavior are unchanged.
+
+```bash
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 PYTHONPATH=. \
+  /home/ab5298/anaconda3/envs/shellgaussianenv/bin/python \
+  scripts/run_anatomical_fibers.py \
+  --anatomical-volume-root /path/to/anatomical_volume \
+  --output-root /path/to/anatomical_fibers
+```
+
+Run the canonical experiment in `tmux`; it does not load or rerun fitted shoes.
+It writes `reference/semantic_field.{json,npz,vtk}`. The VTK contains quadratic
+cells with true midpoint values, old/new scalar fields, and flat/critical-cell
+markers (`critical_cell_class`: 0 none, 1 domain-boundary only, 2 internal or
+unresolved). Visualization midpoint nodes do not modify the canonical mesh.
+
+The scalar audit distinguishes `scalar_candidate`, `needs_field_revision`, and
+`solver_failed`. Finite diagnostic candidates remain available for inspection.
+Input digests and coefficient read-back protect the canonical association.
+
+The solver now follows L-BFGS-B with a bounded, diagonally preconditioned
+projected-gradient polish when necessary. Its step is bounded using the scaled
+stiffness matrix; the energy, coefficient bounds, and `1e-8` projected-residual
+acceptance threshold are unchanged. Both optimizer and polish iteration counts
+are recorded. The original failed pilot remains separate from the new results.
+
+For one local resolution experiment, add
+`--refine-from /path/to/converged/reference` and choose a **new** output root.
+The runner requires a converged, unrefined baseline, seeds from its recorded
+interior/interface stationary cells, expands by one face-adjacency ring, and
+splits each selected scalar cell into four at its centroid. This auxiliary grid
+preserves every original cell face and the complete domain boundary; it does
+not alter the canonical or instance geometry files. The field uses auxiliary
+tetrahedron IDs, not interchangeable canonical IDs in refined cells. Parent IDs
+and stationary-point canonical barycentric coordinates are saved for comparison;
+refined geometry is reconstructed from the recorded parent selection on reload.
+This experiment is not connected to 11-C queries.
+
+The first comparison completed in about 43 seconds per run: tighter convergence
+retained six interior stationary points; subdividing 23 parent cells produced
+11 interior stationary points, all inside the same original six parents. Both
+solves passed the unchanged residual threshold and neither contained flat
+cells. All original 331 zero-field cells have positive centroid values. The
+refined audit additionally counts 400 zero-baseline **child** cells, not 400
+original problem cells. The production experiment retains the unrefined field
+and treats its six stationary cells as explicit query exclusions.
+
+The `fibers` workflow fits one continuous canonical direction field, traces
+forward and backward paths between the computational anatomy and the envelope,
+and composes the resulting surface-origin coordinate with the corrected 11-C
+maps. It can audit multiple shoes concurrently while keeping one numerical
+library thread per process:
+
+```bash
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 PYTHONPATH=. \
+  /home/ab5298/anaconda3/envs/shellgaussianenv/bin/python \
+  scripts/run_anatomical_fibers.py fibers \
+  --anatomical-volume-root /path/to/anatomical_volume \
+  --scalar-field-root /path/to/anatomical_fibers/converged/reference \
+  --extended-anatomical-surface-root /path/to/extended_anatomical_surface \
+  --instance-volume-batch-root /path/to/instance_anatomical_volume/<batch> \
+  --containment-fit-root /path/to/containment_fit \
+  --output-root /path/to/anatomical_fibers/<new-audit> \
+  --jobs 8 --exclude sneaker_vibe
+```
+
+The completed 15-shoe experiment records success, artificial-cap, saddle,
+direction, integration, and 11-C-invalid categories instead of silently forcing
+every shoe point to have a semantic coordinate. Its overall result remains
+`coverage_review_required`: the implementation is complete as an experiment,
+but the measured validity mask still needs scientific review before Section 1.1
+is declared final.
 
 ## Current limitations
 

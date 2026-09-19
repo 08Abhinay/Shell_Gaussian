@@ -49,13 +49,14 @@
 
 \newcommand{\done}{\textcolor{green}{\textbf{Complete}}}
 \newcommand{\nextstage}{\textcolor{orange}{\textbf{Next}}}
+\newcommand{\inaudit}{\textcolor{orange}{\textbf{Implemented; review required}}}
 \newcommand{\notstarted}{\textcolor{graytext}{\textbf{Not started}}}
 \newcommand{\R}{\mathbb{R}}
 
 \title{\textbf{From Support Fit to Exact Shared Anatomical Volume Mapping}\\
 \large Technical Progress Report Aligned with \texttt{representation.pdf}}
 \author{Abhinay Belde}
-\date{September 14, 2026}
+\date{September 17, 2026}
 
 \begin{document}
 \maketitle
@@ -67,7 +68,10 @@
 fold-free tetrahedral volumes connected to one canonical anatomical volume by exact
 forward and inverse piecewise-affine maps. All 15 passed independent B3 geometry
 validation and Checkpoint 11-C round-trip validation. The semantic anatomical fibers
-needed to express the exact coordinate as $(u,v,r)$ remain Checkpoint 11-D.
+needed to express the exact coordinate as $(u,v,r)$ are now implemented experimentally
+in Checkpoint 11-D. The 15-shoe surface-coverage audit completed without an audit failure;
+its explicitly measured exclusions now require scientific acceptance before this semantic
+coordinate is declared final.
 \end{minipage}}
 \end{center}
 
@@ -75,8 +79,9 @@ needed to express the exact coordinate as $(u,v,r)$ remain Checkpoint 11-D.
 \begin{figure}[H]
   \centering
   \includegraphics[width=\textwidth]{01_pipeline.png}
-  \caption{Implemented pipeline since the previously reported support-fit stage. Green
-  stages are complete; orange is the next stage.}
+  \caption{Pipeline since the previously reported support-fit stage. This schematic was
+  generated before the experimental 11-D implementation; the status table and
+  Sec.~\ref{sec:11d} contain the current audit status.}
   \label{fig:pipeline}
 \end{figure}
 
@@ -132,8 +137,10 @@ deformation, and exact barycentric lookup. The exact internal coordinate is curr
 \end{equation}
 
 where $k$ is a canonical tetrahedron ID. This exact coordinate is implemented and
-validated. The remaining 11-D task is to associate it with a semantic surface chart
-$(u,v)$ and an anatomical fiber parameterized by $r$.
+validated. Checkpoint 11-D now associates it with a computational anatomical surface
+origin and an outward fiber parameterized by a separate semantic scalar $\rho$. The
+construction and its 15-shoe footwear-surface coverage audit are implemented; the measured
+validity mask is awaiting review.
 
 \subsection{Status at a glance}
 
@@ -152,7 +159,7 @@ Canonical volume & Build $A$, its fixed envelope, tetrahedra, and harmonic $r$ &
 11-A & Transfer the computational inner-boundary target to every fitted anatomy & Desired instance boundary & \done\\
 11-B & Produce valid instance volumes with fixed topology and no folds & Constructs geometric $\chi_i$ & \done\\
 11-C & Implement exact forward/inverse queries and invalid-point classification & Evaluates $\chi_i,\Phi_i$ & \done\\
-11-D & Associate volume points with semantic $(u,v,r)$ fibers & Completes semantic Sec.~1.1 coordinate & \nextstage\\
+11-D & Associate volume points with semantic $(u,v,r)$ fibers & Completes semantic Sec.~1.1 coordinate & \inaudit\\
 Sec.~1.2 & Learn coverage and material extents in shared coordinates & Structured material field & \notstarted\\
 \bottomrule
 \end{tabularx}
@@ -981,8 +988,10 @@ Finite points outside the tetrahedral shell are classified using the final trian
 boundaries as inside computational anatomy, outside the envelope, or numerically
 ambiguous. The knee truncation remains mappable but is excluded from footwear-support
 queries. Non-finite rows receive an independent status. The API accepts posed-SUPR,
-normalized-shoe, and original-shoe frames; lookup itself always occurs in posed-SUPR
-coordinates using the verified containment-fit transforms.
+normalized-shoe, and original-shoe frames. B3 vertices and lookup are defined internally
+in the \emph{normalized-shoe} frame. Posed-SUPR and original-shoe queries are converted
+explicitly using the six mutually checked containment-fit transforms. This corrected
+frame contract was revalidated for all 15 shoes with schema-version-2 mapping reports.
 
 \begin{figure}[H]
   \centering
@@ -1028,7 +1037,8 @@ The required identities are therefore observed numerically:
 \begin{figure}[H]
   \centering
   \includegraphics[width=\textwidth]{09_document_progress.png}
-  \caption{Current boundary between completed and pending work.}
+  \caption{Boundary between shared-coordinate construction and footwear-field research.
+  Checkpoint 11-D is now implemented experimentally and is at its coverage-review gate.}
   \label{fig:document-progress}
 \end{figure}
 
@@ -1044,33 +1054,256 @@ The following geometric substrate is implemented for 15 shoes:
   \item exact forward $\chi_i$ and inverse $\Phi_i$ queries;
   \item transported harmonic $r$;
   \item explicit rejection/classification outside the mathematical domain.
+  \item an experimental canonical semantic scalar, continuous direction field, and
+  reversible fiber query with explicit exclusion masks.
 \end{itemize}
 
 This establishes the exact computational realization of the map proposed in
 Eq.~\eqref{eq:document-map}. It also provides the shared location system required before
 learning any footwear prior.
 
-\subsection{Checkpoint 11-D: what remains in Section 1.1}
+\subsection{Checkpoint 11-D: semantic scalar, directions, and anatomical fibers}
+\label{sec:11d}
 
-The exact internal address in Eq.~\eqref{eq:exact-coordinate} is not yet the document's
-semantic notation $(u,v,r)$. The harmonic scalar $r$ exists, but a volume point has not
-yet been assigned a unique anatomical surface origin $(u,v)$. Checkpoint 11-D must build
-and validate canonical anatomical fibers
+\subsubsection{What 11-D adds to the exact 11-C address}
+
+Checkpoint 11-C already answers the exact geometric question ``which canonical
+tetrahedron contains this point, and where inside that tetrahedron is it?''  That address
+is Eq.~\eqref{eq:exact-coordinate}. It does not yet answer the anatomical question
+``which point on the foot does this surrounding-space point belong to?''
+
+Checkpoint 11-D supplies that interpretation using one canonical \emph{fiber}: a path
+that begins on the closed computational anatomical boundary and travels outward through
+the surrounding volume to the fixed envelope. A semantic coordinate is stored as
 
 \begin{equation}
-  \gamma_{u,v}(r)\subset A,
-  \qquad
-  \gamma^i_{u,v}(r)=\chi_i(\gamma_{u,v}(r)),
+  (f,\mu_0,\mu_1,\mu_2,\rho),
+  \qquad \sum_{j=0}^{2}\mu_j=1,
+  \label{eq:fiber-coordinate}
 \end{equation}
 
-that start on anatomical skin, move monotonically outward, stay inside the valid domain,
-do not fold/reverse, reach the envelope as intended, and never terminate on the
-computational knee cap. A single flattened global UV map is not required: canonical
-surface face ID plus three barycentric weights can serve as the exact $(u,v)$ chart.
+where $f$ is a computational inner-boundary triangle, $\mu$ identifies the exact start
+point inside that triangle, and $\rho\in[0,1]$ gives outward progress. Thus $(f,\mu)$ is
+the implemented exact surface chart corresponding to the document's $(u,v)$. Each of
+the three computational triangle vertices retains its saved attachment to the
+authoritative anatomical surface, so longitudinal, surface, and component labels can be
+transported as weighted provenance. This does not invent a flattened global UV map.
+
+The artificial knee cap participates in the closed mathematical boundary and is assigned
+$\rho=0$, but it retains its artificial label. A cap-origin fiber is mathematically
+mappable and explicitly excluded from the footwear-support mask; it is never silently
+called anatomical skin.
+
+\subsubsection{Why the original linear harmonic field was insufficient}
+
+The canonical harmonic field stored at vertices is piecewise linear. Inside tetrahedron
+$k$, it is evaluated from the four vertex values $r_{k,a}$ using
+
+\begin{equation}
+  r(q)=\sum_{a=0}^{3}\lambda_a(q)r_{k,a}.
+\end{equation}
+
+This field remains preserved for 11-C. However, 331 valid tetrahedra have all four
+corner values equal to zero. Linear interpolation is then identically zero throughout
+such a cell and supplies no outward direction. The tetrahedra are not flat or broken;
+only this scalar description is flat there.
+
+11-D therefore constructs a separate continuous quadratic field, called
+\texttt{semantic\_r} and denoted $\rho$:
+
+\begin{equation}
+  \rho(q)=\sum_{a=0}^{3}c_a\lambda_a^2
+  +2\sum_{a<b}c_{ab}\lambda_a\lambda_b.
+  \label{eq:quadratic-rho}
+\end{equation}
+
+The coefficients $c_a$ are shared at canonical vertices and $c_{ab}$ are shared on
+unique tetrahedral edges, so neighboring cells agree on their common face. The complete
+closed inner boundary is fixed to zero, the outer envelope to one, and all coefficients
+are bounded in $[0,1]$. The remaining coefficients minimize Dirichlet energy
+
+\begin{equation}
+  \min_c\frac12\int_A\|\nabla\rho\|_2^2\,dV,
+  \qquad 0\le c\le1,
+  \label{eq:rho-energy}
+\end{equation}
+
+using a sparse quadratic finite-element stiffness matrix and bounded L-BFGS-B. The saved
+solution satisfies its independent projected-residual convergence test. It gives
+positive interior values in all 331 formerly zero cells, but an algebraic whole-cell
+audit detects six interior saddle points. At a saddle, $\nabla\rho=0$, so no gradient-led
+fiber can be certified there. Those six cells are retained in the volume but explicitly
+marked unavailable; geometry is not deleted.
+
+\subsubsection{A continuous direction field}
+
+The gradient $g=\nabla\rho$ is affine inside each tetrahedron but can jump at a shared
+face. Tracing that discontinuous gradient directly would make a path's direction change
+abruptly at cell boundaries. Instead, 11-D assigns one vector $v_j\in\mathbb{R}^3$ to
+every canonical volume vertex and linearly interpolates
+
+\begin{equation}
+  V(q)=\sum_{a=0}^{3}\lambda_a(q)v_a.
+\end{equation}
+
+Shared vertex values make $V$ continuous between tetrahedra. In coordinates normalized
+by the canonical bounding-box diagonal, the vectors solve
+
+\begin{equation}
+  \min_V\frac12\int_A\|V-g\|_2^2\,dV
+  +\frac{\ell^2}{2}\int_A\|\nabla V\|_F^2\,dV,
+  \label{eq:direction-energy}
+\end{equation}
+
+where the first term follows the quadratic scalar and the second smooths neighboring
+directions. The fixed smoothing length is one half of the median normalized boundary-edge
+length. Assembly gives the sparse linear system
+
+\begin{equation}
+  (M+\ell^2K)\mathbf v=B,
+\end{equation}
+
+which is solved once by sparse LU for all three vector components. The relative residual
+is $6.32\times10^{-16}$.
+
+The required outward-progress condition is
+
+\begin{equation}
+  \nabla\rho(q)\cdot V(q)>0.
+  \label{eq:outward-progress}
+\end{equation}
+
+Because both factors are affine per cell, their dot product is quadratic. Bernstein
+coefficient bounds followed by deterministic longest-edge subdivision certify this
+condition across complete cells and internal interfaces, not merely at selected sample
+points. The current canonical field contains 59,004 accepted cells and 77 explicit
+exclusions: six original saddle cells, 69 direction-incompatible cells, and two cells
+whose sign remains unresolved at the fixed certification depth.
+
+\subsubsection{Tracing and reversible queries}
+
+Away from an exclusion, fibers follow the normalized direction
+
+\begin{equation}
+  \frac{d\widehat\gamma}{ds}
+  =W(\widehat\gamma)
+  =\frac{V(\widehat\gamma)}{\|V(\widehat\gamma)\|_2}.
+  \label{eq:fiber-ode}
+\end{equation}
+
+Normalization changes only speed, not the geometric path. Equation
+\eqref{eq:outward-progress} implies
+
+\begin{equation}
+  \frac{d\rho}{ds}=\nabla\rho\cdot W>0,
+\end{equation}
+
+so $\rho$ increases along an accepted outward trace. A batched adaptive Bogacki--Shampine
+RK3(2) integrator performs the numerical tracing. Tetrahedral face crossings are handled
+explicitly; a step cannot skip an excluded cell. Shared-face, edge, vertex, boundary,
+weak-direction, non-monotone, integration-limit, and round-trip cases receive separate
+statuses instead of being silently nudged.
+
+For a canonical point $q$, \texttt{canonical\_to\_semantic} traces backward to the inner
+boundary, records $(f,\mu)$, then traces forward through the requested $\rho(q)$ and on
+to the outer envelope. The reconstruction must return to $q$. The inverse operation
+starts at $(f,\mu)$ and traces outward to the requested $\rho$. Instance queries compose
+these operations with the corrected 11-C maps:
+
+\begin{equation}
+  x\xrightarrow{\Phi_i}q
+  \xrightarrow{\text{fiber}}(f,\mu,\rho),
+  \qquad
+  (f,\mu,\rho)\xrightarrow{\text{fiber}}q'
+  \xrightarrow{\chi_i}x'.
+  \label{eq:instance-semantic-composition}
+\end{equation}
+
+The 11-C validity status is preserved separately from the 11-D fiber status. Therefore,
+a shoe point may be geometrically valid in the tetrahedral shell while lacking an
+accepted semantic fiber.
+
+\subsubsection{Fifteen-shoe coverage experiment and current evidence}
+
+The implementation does not pre-store only a small fixed number of fibers. The continuous
+field defines a fiber through every accepted query point. The 64 samples used for
+\texttt{birkenstock\_arizona\_sandal} and \texttt{sandal\_1} were only a launch gate:
+62 and 63 respectively produced complete anatomical fibers, and every accepted origin
+was on foot/ankle rather than universally on the calf.
+
+The full audit samples each real shoe surface by original-coordinate triangle area using
+a deterministic unscrambled Halton sequence. Every shoe receives 4,096 and 16,384 nested
+queries; 65,536 are used only if the principal fractions change by more than 0.2
+percentage points. A separate 4,096-query targeted population concentrates on observed
+failures and saddle-cell neighborhoods without contaminating the global area estimate.
+Up to 640 cases are repeated with tolerances tightened tenfold.
+
+All 15 shoes completed without an audit failure, and every estimate stabilized at 16,384
+samples. Total observed anatomical coverage is 96.08--99.63\%; after conditioning on the
+11-C-valid portion of each shoe, it is 98.43--99.63\%. The dominant semantic loss is the
+conservative direction-incompatible region (0.34--1.49\% of total area). Round-trip loss
+is at most 0.116\%. Neither an original six-saddle-cell encounter nor an artificial-cap
+origin appeared in any global or targeted sample. Several open or fitted shoes contain
+up to 2.97\% sampled material inside the computational anatomy; that is an existing 11-C
+domain classification rather than a fiber failure. All normalized/original frame checks
+passed. Tightening integration tolerances changed at most 15 of 640 selected statuses
+(AJ-12); all other shoes changed at most three.
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{@{}Xrrr@{}}
+\toprule
+\textbf{Completed shoe} & \textbf{Anatomical / total} & \textbf{Anatomical / 11-C valid} & \textbf{Main 11-D loss}\\
+\midrule
+AJ-12 basketball sneakers & 98.96\% & 98.96\% & 0.90\% incompatible\\
+Birkenstock Arizona sandal & 97.37\% & 98.98\% & 0.98\% incompatible\\
+Canvas shoe & 97.88\% & 98.94\% & 1.01\% incompatible\\
+Crocs & 98.46\% & 98.52\% & 1.41\% incompatible\\
+Crocs (SpeedyArt) & 98.55\% & 98.55\% & 1.42\% incompatible\\
+Crocs shoe & 98.52\% & 98.52\% & 1.39\% incompatible\\
+Duinn hiking sandal & 97.30\% & 99.38\% & 0.59\% incompatible\\
+Leather boots & 99.63\% & 99.63\% & 0.34\% incompatible\\
+Nike Air Jordan & 97.78\% & 98.71\% & 1.23\% incompatible\\
+PB129 low shoe & 98.43\% & 98.43\% & 1.49\% incompatible\\
+Priest sports shoe & 96.08\% & 99.03\% & 0.92\% incompatible\\
+Sandal 1 & 99.09\% & 99.09\% & 0.91\% incompatible\\
+Sandals 0001 & 96.20\% & 99.04\% & 0.92\% incompatible\\
+Sneakers Seen & 97.28\% & 99.20\% & 0.76\% incompatible\\
+WWII German jack boots & 99.45\% & 99.48\% & 0.51\% incompatible\\
+\bottomrule
+\end{tabularx}
+\caption{Final deterministic 11-D surface-coverage estimates for all 15 accepted shoes.
+These are sampled area fractions, not claims of exact continuous area.}
+\label{tab:11d-interim}
+\end{table}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.96\textwidth]{/home/ab5298/Outputs/FootShellGaussian/golden_set_evaluation/anatomical_fibers/fiber_audit_framefix_parallel_20260917_205612/aj_12_basketball_sneakers/coverage.png}
+  \caption{Observed 11-D coverage on AJ-12 basketball sneakers. Green samples have an
+  accepted anatomical fiber; red samples are explicit fiber exclusions. The unavailable
+  samples are localized mainly near the toe/forefoot rather than scattered globally.}
+  \label{fig:11d-coverage}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.96\textwidth]{/home/ab5298/Outputs/FootShellGaussian/golden_set_evaluation/anatomical_fibers/fiber_audit_framefix_parallel_20260917_205612/leather_boots/alignment.png}
+  \caption{Normalized leather-boot geometry, final B3 computational anatomy, selected
+  fibers, inner origins, and outer endpoints. The lower-leg shaft is aligned correctly;
+  this shoe currently has 99.63\% observed anatomical coverage.}
+  \label{fig:11d-boot}
+\end{figure}
+
+Checkpoint 11-D is therefore \emph{implemented but under coverage review}. Section 1.1
+can be declared complete for an explicitly masked valid domain after the localized
+exclusions, sampling stability, tolerance sensitivity, and visual evidence reported here
+are accepted. Perfect global fiber coverage is not assumed or fabricated.
 
 \subsection{Section 1.2 and beyond}
 
-Section 1.2 has not started. After 11-D, shoe triangles or material samples can be mapped
+Section 1.2 has not started. After the 11-D coverage audit is accepted, shoe triangles or material samples can be mapped
 through $\Phi_i$ and aggregated in shared anatomical coordinates. The proposed fields are
 
 \begin{equation}
@@ -1098,11 +1331,14 @@ preserving their individual fitted anatomy and shoe coordinate transforms. The f
 volumes have fixed canonical connectivity, no folded cells, no surface intersections,
 bounded distortion, and reversible point lookup.
 
-The correct next step is Checkpoint 11-D: construct one canonical, validated semantic
-fiber system and transport it to every instance through the already validated $\chi_i$.
-Only after that should Section 1.2 convert footwear geometry into anatomical coverage and
-inner/outer material extents. No learning is required or appropriate before this shared
-semantic coordinate is complete.
+Checkpoint 11-D has now constructed one canonical semantic scalar, continuous direction
+field, and reversible fiber-query system, then composed it with the corrected 11-C maps.
+The immediate next step is to review the completed 15-shoe coverage audit. Because the
+measured loss is small, stable, localized, and explicitly classified, the exclusions can
+be frozen as part of the coordinate's declared validity mask if this tradeoff is accepted;
+Section 1.1 can then be considered complete for that domain. Section 1.2 should convert footwear
+geometry into anatomical coverage and inner/outer material extents. No learning is
+required during this final coordinate audit.
 
 \appendix
 \section{Per-shoe B3 and 11-C summary}
