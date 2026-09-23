@@ -13,6 +13,7 @@ reports.
     join         join foot and leg into one surface             (was step 16)
     coordinates  build the shared volumetric coordinate map     (was the boundary target stage..C)
     address      give every footwear point an anatomical address(was the older address stage)
+    material     measure what each shoe does at each place on the foot (new)
 
 The output tree is named the same way, so a directory listing reads as the
 pipeline.
@@ -56,6 +57,9 @@ STAGES: tuple[Stage, ...] = (
     Stage("address", "addresses",
           "give every footwear surface point an anatomical address",
           "the older address stage"),
+    Stage("material", "material",
+          "measure coverage and material extent at every place on the foot",
+          "new"),
 )
 
 ORDER = tuple(stage.key for stage in STAGES)
