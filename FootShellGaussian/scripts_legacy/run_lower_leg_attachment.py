@@ -51,6 +51,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--support-fit-root", required=True, type=Path)
     parser.add_argument("--full-body-supr-model", required=True, type=Path)
     parser.add_argument("--output-root", required=True, type=Path)
+    parser.add_argument(
+        "--warm-start-root", type=Path,
+        help="Optional previous lower-leg fits; use parameters only after matching shoe and footbed geometry.",
+    )
     parser.add_argument("shoe_names", nargs="*")
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
@@ -72,6 +76,45 @@ def _file_digest(path: Path) -> str:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _validated_prior_fit(
+    shoe_name: str,
+    warm_root: Path | None,
+    preparation_root: Path,
+    support_root: Path,
+    full_body_model: Path,
+) -> tuple[tuple[np.ndarray, float, float] | None, Path | None]:
+    if warm_root is None:
+        return None, None
+    path = warm_root / shoe_name / "lower_leg_attachment.json"
+    if not path.is_file():
+        return None, None
+    record = _load_json(path)
+    if (record.get("schema_version") != 2
+            or record.get("stage") != "fitted_foot_natural_lower_leg_collar_fit"
+            or record.get("shoe_name") != shoe_name
+            or record.get("shoe_profile") != "normal"):
+        raise ValueError(f"{shoe_name}: prior lower-leg fit metadata is incompatible")
+    inputs = record.get("inputs", {})
+    old_preparation = Path(inputs.get("shoe_preparation", ""))
+    old_support = Path(inputs.get("support_fit", ""))
+    old_model = Path(inputs.get("full_body_supr_model", ""))
+    for previous, current in (
+        (old_preparation / "shoe_normalized.ply", preparation_root / shoe_name / "shoe_normalized.ply"),
+        (old_support / "footbed_normalized.ply", support_root / shoe_name / "footbed_normalized.ply"),
+    ):
+        if not previous.is_file() or not current.is_file() or _file_digest(previous) != _file_digest(current):
+            raise ValueError(f"{shoe_name}: prior lower-leg fit belongs to another shoe or footbed")
+    if old_model.expanduser().resolve(strict=True) != full_body_model:
+        raise ValueError(f"{shoe_name}: prior lower-leg fit used another body model")
+    selected = record.get("fit", {}).get("selected", {})
+    betas = np.asarray(selected.get("betas"), dtype=np.float64)
+    pitch = float(selected.get("ankle_pitch_degrees", np.nan))
+    roll = float(selected.get("ankle_roll_degrees", np.nan))
+    if betas.shape != (10,) or not np.isfinite(betas).all() or not np.isfinite((pitch, roll)).all():
+        raise ValueError(f"{shoe_name}: prior lower-leg parameters are malformed")
+    return (betas, pitch, roll), path
 
 
 def _mesh_with_colors(
@@ -180,6 +223,10 @@ def run(args: argparse.Namespace) -> list[dict[str, Any]]:
     support_fit_root = args.support_fit_root.expanduser().resolve(strict=True)
     full_body_model = args.full_body_supr_model.expanduser().resolve(strict=True)
     output_root = args.output_root.expanduser().resolve()
+    warm_root = (
+        args.warm_start_root.expanduser().resolve(strict=True)
+        if args.warm_start_root is not None else None
+    )
     reference = load_dense_canonical_supr_reference(anatomical_root)
     canonical = build_extended_canonical_supr_anatomy(reference, full_body_model)
     subdivision = build_supr_mesh_subdivision(
@@ -217,6 +264,9 @@ def run(args: argparse.Namespace) -> list[dict[str, Any]]:
             dense_foot.faces, reference.faces
         ):
             raise ValueError(f"{shoe_name}: fitted dense topology is not canonical")
+        warm_start, warm_path = _validated_prior_fit(
+            shoe_name, warm_root, preparation_root, support_fit_root, full_body_model
+        )
         fit = build_lower_leg_collar_fit(
             shoe,
             footbed,
@@ -227,6 +277,7 @@ def run(args: argparse.Namespace) -> list[dict[str, Any]]:
             reference.ankle_loop,
             correspondence,
             lower_leg_model,
+            warm_start=warm_start,
         )
         attachment = fit.selected.attachment
         colliding_combined_faces = fit.selected.query_face_indices[
@@ -257,6 +308,8 @@ def run(args: argparse.Namespace) -> list[dict[str, Any]]:
                     anatomical_root / shoe_name / "foot_dense.ply"
                 ),
                 "source_anatomical_schema": anatomy_record["schema_version"],
+                "warm_start_fit": str(warm_path) if warm_path is not None else None,
+                "warm_start_fit_sha256": _file_digest(warm_path) if warm_path is not None else None,
             },
         }
         _write_one(

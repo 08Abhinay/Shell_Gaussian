@@ -18,6 +18,7 @@ from foot_prior.normalization import (
     SHOE_SIDE,
     validate_shoe_frame_metadata,
 )
+from foot_prior.support_seating import support_seating_allowance
 
 
 ARTIFACT_NAMES = (
@@ -309,6 +310,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             preparation["normalization"]["centerline"]["normalized_xz"],
             dtype=np.float64,
         ),
+        support_seating_allowance(support_fit),
     )
     foot_colors = analysis.foot_vertex_colors(foot, grid_spacing)
     overlay = _make_overlay(shoe, foot, foot_colors)

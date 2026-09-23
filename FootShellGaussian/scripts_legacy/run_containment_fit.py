@@ -20,6 +20,8 @@ from foot_prior.supr_foot import (
     load_neutral_supr_foot,
     load_posable_supr_foot,
 )
+from foot_prior.alignment import SHOE_FUNCTIONAL_LENGTH_MM
+from foot_prior.support_seating import support_seating_allowance
 from run_cavity_analysis import (
     _load_inputs,
     _load_json,
@@ -186,6 +188,20 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     cavity_record = _validate_cavity_record(
         cavity_dir, preparation_dir, support_fit_dir
     )
+    compression_allowance = support_seating_allowance(support_fit)
+    contact_policy = cavity_record.get("contact_policy", {})
+    recorded_allowance = float(
+        contact_policy.get("support_compression_allowance_mm", 0.0)
+    )
+    if not np.isfinite(recorded_allowance) or not np.isclose(
+        recorded_allowance,
+        compression_allowance * SHOE_FUNCTIONAL_LENGTH_MM,
+        atol=1e-9,
+        rtol=0.0,
+    ):
+        raise ValueError(
+            "cavity analysis and support fit use different seating policies"
+        )
     neutral_foot = load_neutral_supr_foot(supr_path)
     supr_model = load_posable_supr_foot(supr_path, num_betas=10)
     pose, betas = _reproduce_support_fit(
@@ -234,6 +250,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         baseline_fitted_foot=fitted_foot,
         expected_baseline_collision_pairs=stored_pairs,
         expected_baseline_status=cavity_record.get("status"),
+        support_compression_allowance=compression_allowance,
         cavity_subdivision=(
             subdivision if subdivision.levels > 0 else None
         ),

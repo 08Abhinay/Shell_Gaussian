@@ -78,7 +78,7 @@ def _write_fiber_field(directory, field, inputs):
             np.savetxt(stream,field.directions,fmt='%.17g')
             stream.write(f'CELL_DATA {len(c.tetrahedra)}\nSCALARS exclusion int 1\nLOOKUP_TABLE default\n')
             np.savetxt(stream,field.exclusions,fmt='%d')
-        report=dict(schema_version=1,stage='canonical_anatomical_fiber_field',status='coverage_review_required',
+        report=dict(schema_version=2,stage='canonical_anatomical_fiber_field',status='coverage_review_required',
             configuration=fiber_configuration(),inputs=inputs,source_geometry_digest=field.scalar.source_geometry_digest,
             scalar_digest=array_digest(field.scalar.coefficients,field.scalar.unique_edges),
             field_digest=array_digest(field.directions,field.exclusions),diagnostics=field.diagnostics,
@@ -254,7 +254,7 @@ def _audit_shoe(field, instance, mesh, directory, inputs):
     success=np.flatnonzero(combined.footwear_support_mask);failed=np.flatnonzero(~combined.footwear_support_mask)
     def choose(ids,n):return ids[np.linspace(0,len(ids)-1,min(n,len(ids)),dtype=int)] if len(ids) else ids
     sensitivity_ids=np.r_[choose(success,512),choose(failed,128)]
-    tight=_query_chunks(field,instance,points[sensitivity_ids],name,'tolerance-check',.1)
+    tight=_query_chunks(field,instance,points[sensitivity_ids],name,'tolerance-check',.01)
     sensitivity_codes=fiber_category_codes(tight)
     valid=tight.mappable_mask & combined.mappable_mask[sensitivity_ids]
     drift=np.linalg.norm(tight.inner_origins[valid]-combined.inner_origins[sensitivity_ids[valid]],axis=1)
@@ -274,7 +274,7 @@ def _audit_shoe(field, instance, mesh, directory, inputs):
             frame_checks[frame]=dict(count=len(good),maximum_error=float(differences.max()) if np.isfinite(differences).all() else None,
                 passed=bool(np.isfinite(differences).all() and np.max(differences)<=5e-6*field.diagonal))
         else:frame_checks[frame]=dict(count=0,passed=None,maximum_error=None)
-    report=dict(schema_version=1,stage='anatomical_fiber_coverage',shoe_name=name,status='coverage_review_required',
+    report=dict(schema_version=2,stage='anatomical_fiber_coverage',shoe_name=name,status='coverage_review_required',
         sampling_status='sampling_stable' if stable else 'sampling_unresolved',inputs=inputs,
         configuration=dict(**fiber_configuration(),sample_stages=[4096,16384,65536],stability_fraction=.002,
                            targeted_sample_budget=4096,sampling='unscrambled_halton_skip_zero'),
@@ -301,7 +301,11 @@ def _audit_shoe(field, instance, mesh, directory, inputs):
         forward_reasons=combined.forward_reasons,origin_face_indices=combined.coordinates.face_indices,
         origin_barycentric=combined.coordinates.barycentric_weights,semantic_r=combined.coordinates.semantic_r,
         inner_origins=combined.inner_origins,outer_endpoints=combined.outer_endpoints,
-        round_trip_errors=combined.round_trip_errors,integration_steps=combined.integration_steps,
+        round_trip_errors=combined.round_trip_errors,
+        initial_round_trip_errors=combined.initial_round_trip_errors,
+        integration_steps=combined.integration_steps,
+        integration_attempts=combined.integration_attempts,
+        accepted_tolerance_scale=combined.accepted_tolerance_scale,
         targeted_face_indices=target_face_ids,targeted_barycentric=target_weights,targeted_status_codes=target_codes,
         sensitivity_indices=sensitivity_ids,sensitivity_status_codes=sensitivity_codes)
     arrays.update({f'label_weights_{k}':v for k,v in combined.label_weights.items()})
@@ -414,13 +418,13 @@ def _run_fibers(args):
         raise ValueError('scalar baseline failed fiber preflight')
     root.mkdir(parents=True,exist_ok=True)
     (root/'logs').mkdir(exist_ok=True)
-    _json_atomic(root/'fiber_manifest.json',dict(schema_version=1,stage='anatomical_fiber_batch',shoes=names,
+    _json_atomic(root/'fiber_manifest.json',dict(schema_version=2,stage='anatomical_fiber_batch',shoes=names,
         exclusions=sorted(set(args.exclude)|{'sneaker_vibe'}),inputs=inputs,shoe_inputs=shoe_inputs,
         configuration=dict(**fiber_configuration(),jobs=args.jobs),thread_policy={k:os.environ.get(k) for k in
             ['OPENBLAS_NUM_THREADS','OMP_NUM_THREADS','MKL_NUM_THREADS','BLIS_NUM_THREADS','VECLIB_MAXIMUM_THREADS','NUMEXPR_NUM_THREADS']}))
     field=build_anatomical_fiber_field(c,scalar,seeds,regions)
     _write_fiber_field(root/'reference',field,inputs)
-    summary=dict(schema_version=1,status='coverage_review_required',completed=0,failed=0,results={})
+    summary=dict(schema_version=2,status='coverage_review_required',completed=0,failed=0,results={})
     _json_atomic(root/'fiber_summary.json',summary)
     pilots=[n for n in ['birkenstock_arizona_sandal','sandal_1'] if n in names]
     pilot_success=0;pilot_alignment=True;canonical_curves=[];canonical_reasons=[]

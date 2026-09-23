@@ -14,6 +14,14 @@ import time
 from typing import Any
 
 
+# Support both `python -m scripts.run_instance_volume_batch` and direct script
+# execution. The latter otherwise puts only scripts/ on sys.path and makes the
+# sibling `scripts.run_instance_volume_deformation` import fail at preflight.
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
+
+
 NUMERICAL_THREAD_ENVIRONMENT = {
     "OPENBLAS_NUM_THREADS": "1",
     "OMP_NUM_THREADS": "1",
