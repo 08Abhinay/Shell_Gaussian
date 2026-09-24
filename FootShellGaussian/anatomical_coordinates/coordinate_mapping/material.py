@@ -83,15 +83,66 @@ def anatomical_sites(semantics: CanonicalSemantics, tracer: FiberTracer) -> Site
     return Sites(face, barycentric, semantics.inner_face_labels.copy(), point)
 
 
+def subdivide_large(
+    vertices: np.ndarray, faces: np.ndarray, max_radius: float, rounds: int = 8
+) -> tuple[np.ndarray, np.ndarray]:
+    """Split oversized triangles into four, until none is larger than asked.
+
+    The surface is unchanged - a triangle is replaced by four that cover it
+    exactly - so this alters nothing geometric. It exists because the search
+    for which triangles a segment might meet is done by nearest centroid, and
+    a triangle far wider than the search radius can reach the segment while
+    its centroid sits outside it. One boot in this dataset has triangles of
+    90 mm radius against a 10 mm search; its sole was being missed entirely.
+
+    Midpoints are not shared between neighbouring triangles, which leaves
+    T-junctions. That is harmless here: nothing about a segment meeting a
+    triangle depends on the mesh being conforming.
+    """
+
+    vertices = np.asarray(vertices, dtype=np.float64)
+    faces = np.asarray(faces, dtype=np.int64)
+    for _ in range(rounds):
+        corners = vertices[faces]
+        centre = corners.mean(axis=1)
+        radius = np.linalg.norm(corners - centre[:, None, :], axis=-1).max(axis=1)
+        big = radius > max_radius
+        if not big.any():
+            break
+        keep = faces[~big]
+        a, b, c = faces[big, 0], faces[big, 1], faces[big, 2]
+        base = len(vertices)
+        count = len(a)
+        middles = np.concatenate((
+            0.5 * (vertices[a] + vertices[b]),
+            0.5 * (vertices[b] + vertices[c]),
+            0.5 * (vertices[c] + vertices[a]),
+        ))
+        vertices = np.concatenate((vertices, middles))
+        ab = base + np.arange(count)
+        bc = ab + count
+        ca = bc + count
+        faces = np.concatenate((
+            keep,
+            np.stack((a, ab, ca), axis=1),
+            np.stack((ab, b, bc), axis=1),
+            np.stack((ca, bc, c), axis=1),
+            np.stack((ab, bc, ca), axis=1),
+        ))
+    return vertices, faces
+
+
 def crossings(
     curves: np.ndarray,
     canonical_length: np.ndarray,
     vertices: np.ndarray,
     faces: np.ndarray,
-    neighbours: int = 64,
+    neighbours: int = 96,
     chunk: int = 32768,
     merge_tolerance: float = 1.0e-7,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    max_triangle_radius: float = 0.019,
+    stride: int = 1,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
     """Where each fiber meets a surface.
 
     ``curves`` are the fibers in the same frame as the mesh, sampled; entries
@@ -99,22 +150,44 @@ def crossings(
     each sample in canonical space, carried through so a crossing can be
     reported in the coordinate's own units as well as in millimetres.
 
-    Returns three parallel arrays, sorted by site and then by distance: which
-    site the crossing belongs to, its ``r``, and its distance in millimetres.
+    The candidate search is made complete rather than merely generous. After
+    subdivision no triangle is wider than ``max_triangle_radius``, so every
+    triangle a segment could meet has its centroid within
+    ``half the segment + that radius``; the neighbour search is bounded by
+    exactly that distance, and any segment whose candidate list fills up is
+    counted and reported, because that is the only way the search could still
+    have missed something. That count is a conservative bound rather than a
+    fault: raising the width from 96 to 320 on the densest shoe here left
+    every measurement identical to the last decimal, so a full list is not
+    evidence that anything was missed - only that it could have been.
+
+    Returns the crossings - site, r, millimetres - and a report on the search.
     """
 
+    vertices, faces = subdivide_large(vertices, faces, max_triangle_radius)
     triangles = vertices[faces]
-    tree = cKDTree(triangles.mean(axis=1))
+    centre = triangles.mean(axis=1)
+    radius = float(
+        np.linalg.norm(triangles - centre[:, None, :], axis=-1).max()
+    )
+    tree = cKDTree(centre)
     origin = triangles[:, 0]
     edge_a = triangles[:, 1] - triangles[:, 0]
     edge_b = triangles[:, 2] - triangles[:, 0]
+    if stride > 1:
+        curves = curves[:, ::stride]
+        canonical_length = canonical_length[:, ::stride]
 
     start, finish = curves[:, :-1], curves[:, 1:]
     usable = np.isfinite(start).all(-1) & np.isfinite(finish).all(-1)
     site, segment = np.nonzero(usable)
     if site.size == 0:
         empty = np.zeros(0)
-        return np.zeros(0, dtype=np.int64), empty, empty
+        return np.zeros(0, dtype=np.int64), empty, empty, {
+            "triangles_after_subdivision": int(len(triangles)),
+            "max_triangle_radius_mm": radius * MILLIMETRES,
+            "segments": 0, "saturated_segments": 0,
+        }
 
     # Physical distance along each fiber, accumulated in the mesh's own frame.
     lengths = np.linalg.norm(finish - start, axis=-1)
@@ -124,20 +197,32 @@ def crossings(
     )
 
     hit_site, hit_r, hit_mm = [], [], []
+    saturated = 0
+    width = min(neighbours, len(triangles))
     for begin in range(0, len(site), chunk):
         rows = slice(begin, begin + chunk)
         a, b = site[rows], segment[rows]
         head, tail = start[a, b], finish[a, b]
         direction = tail - head
-        _, candidates = tree.query(
-            0.5 * (head + tail), k=min(neighbours, len(triangles)), workers=-1
+        # A triangle can only meet this segment if its centre lies within
+        # half the segment plus the largest triangle radius. Searching exactly
+        # that far makes the candidate list complete, not just plausible.
+        limit = 0.5 * np.linalg.norm(direction, axis=1) + radius
+        span, candidates = tree.query(
+            0.5 * (head + tail), k=width,
+            distance_upper_bound=float(limit.max()), workers=-1,
         )
+        span = np.atleast_2d(np.asarray(span, dtype=np.float64))
         candidates = np.atleast_2d(np.asarray(candidates, dtype=np.int64))
+        reached = candidates < len(triangles)
+        # The list filling up is the one way this could still miss a triangle.
+        saturated += int((reached[:, -1] & (span[:, -1] <= limit)).sum())
+        candidates = np.where(reached, candidates, 0)
 
         spread = np.broadcast_to(direction[:, None, :], (len(a), candidates.shape[1], 3))
         pvec = np.cross(spread, edge_b[candidates])
         determinant = np.einsum("nkj,nkj->nk", edge_a[candidates], pvec)
-        alive = np.abs(determinant) > 1e-16
+        alive = reached & (np.abs(determinant) > 1e-16)
         inverse = np.divide(
             1.0, determinant, out=np.zeros_like(determinant), where=alive
         )
@@ -167,9 +252,15 @@ def crossings(
             (physical[row, column] + fraction * lengths[row, column]) * MILLIMETRES
         )
 
+    report = {
+        "triangles_after_subdivision": int(len(triangles)),
+        "max_triangle_radius_mm": radius * MILLIMETRES,
+        "segments": int(len(site)),
+        "saturated_segments": saturated,
+    }
     if not hit_site:
         empty = np.zeros(0)
-        return np.zeros(0, dtype=np.int64), empty, empty
+        return np.zeros(0, dtype=np.int64), empty, empty, report
     hit_site = np.concatenate(hit_site)
     hit_r = np.concatenate(hit_r)
     hit_mm = np.concatenate(hit_mm)
@@ -184,7 +275,7 @@ def crossings(
         )
         keep = np.concatenate(([True], ~same))
         hit_site, hit_r, hit_mm = hit_site[keep], hit_r[keep], hit_mm[keep]
-    return hit_site, hit_r, hit_mm
+    return hit_site, hit_r, hit_mm, report
 
 
 @dataclass

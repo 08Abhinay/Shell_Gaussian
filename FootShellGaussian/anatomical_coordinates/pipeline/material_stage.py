@@ -30,7 +30,9 @@ def main() -> None:
     parser.add_argument("--steps", type=int, default=4)
     parser.add_argument("--trace-step", type=float, default=0.002)
     parser.add_argument("--fiber-samples", type=int, default=400)
-    parser.add_argument("--neighbours", type=int, default=64)
+    parser.add_argument("--neighbours", type=int, default=96)
+    parser.add_argument("--max-triangle-radius", type=float, default=0.019,
+                        help="subdivide shoe triangles larger than this (5 mm)")
     args = parser.parse_args()
 
     root = args.root
@@ -126,10 +128,15 @@ def main() -> None:
             root / "inputs" / "shoe_preparation" / name / "shoe_normalized.ply"
         )
         carried = carry(index)
-        site, at_r, at_mm = materials.crossings(
+        site, at_r, at_mm, search = materials.crossings(
             carried, canonical_length, shoe.vertices, shoe.faces,
             neighbours=args.neighbours,
+            max_triangle_radius=args.max_triangle_radius,
         )
+        share = search["saturated_segments"] / max(search["segments"], 1)
+        if share > 0.02:
+            print(f"    ! {share*100:.1f}% of segments filled their candidate "
+                  f"list - raise --neighbours and check nothing moves", flush=True)
 
         count = len(sites.face)
         covered = np.zeros(count, dtype=bool)
@@ -195,6 +202,7 @@ def main() -> None:
                 if (penetration > 0).any() else None
             ),
             "penetration_max_mm": float(penetration.max()),
+            "search": search,
         }
         records.append(record)
         (shoe_dir / "material.json").write_text(json.dumps(record, indent=2) + "\n")
