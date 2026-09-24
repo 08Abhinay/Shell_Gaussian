@@ -1,9 +1,14 @@
 # Context Transfer — `anatomical_coordinates`
 
+> **Superseded — start at `docs/state_of_play.md`.**
+> This describes the foot fitter as it stood on 2026-09-21, before the
+> coordinate map, the addresses, the material measurement and the lower-leg
+> search. Keep it for background on how the foot fitting came to be. Where it
+> says `CONTRACT.md`, the file is now `docs/geometry_contract.md`.
+
 **Written for a fresh Claude Code session picking this up cold.**
 Everything below was verified against disk on 2026-09-21 unless marked
-*(recalled)*. Read this file first, then `README.md` (the deliverable report)
-and `CONTRACT.md` (inherited coordinate/semantic conventions).
+*(recalled)*.
 
 ---
 

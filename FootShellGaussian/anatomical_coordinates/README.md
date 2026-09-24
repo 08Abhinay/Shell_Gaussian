@@ -27,6 +27,7 @@ Stages, in order — see `pipeline/stages.py`:
 | `join` | foot and leg as one surface |
 | `coordinates` | the shared volumetric map for each shoe |
 | `address` | an anatomical address for every footwear point |
+| `material` | coverage and material extent at every place on the foot |
 
 ## Layout
 
@@ -42,8 +43,24 @@ evaluate.py        the independent exact judge; never used to optimize
 coordinate_mapping/   the shared volumetric map (see its own docstring)
 pipeline/             the stages and the one runner
 tests/                synthetic geometry with analytic answers
-docs/                 the geometry contract, and the long-form history
+docs/                 start at state_of_play.md
 ```
+
+## Asking it something
+
+Both directions of an address, for any point and any shoe:
+
+```python
+from anatomical_coordinates.coordinate_mapping import AddressBook
+
+address = book.query(points)                  # points  -> (u, v, r)
+points  = book.place(face, barycentric, r)    # (u, v, r) -> points
+```
+
+`(u, v)` is a triangle of the foot surface and a position inside it; `r` is
+outward progress along the fiber through that point. The same address means the
+same anatomical place in every shoe — sent through all 27 it returns to within
+0.006 mm, while the physical points it names sit 35 mm apart.
 
 ## Two things worth knowing
 
@@ -53,6 +70,10 @@ any amount of deformation, so nothing can fold and no limit is needed on how
 different a foot may be from the canonical one. The earlier approach stretched
 a fixed tetrahedral cage and failed when a cell was about to invert, which
 forced feet to be flattened toward the reference until the cage could cope.
+
+**An address means the same place in every shoe.** That claim is checked, not
+assumed: `pipeline/address_check.py` sends one set of addresses through all 27
+shoes and reads them back.
 
 **Fitting is judged by code that does no fitting.** Every result is scored with
 the exact evaluator in `foot_prior`, never with the differentiable loss the
