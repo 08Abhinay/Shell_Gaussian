@@ -268,7 +268,7 @@ def main() -> None:
     )
     parser.add_argument("--restarts", type=int, default=8)
     parser.add_argument("--from", dest="first", default="prepare", choices=ORDER)
-    parser.add_argument("--to", dest="last", default="address", choices=ORDER)
+    parser.add_argument("--to", dest="last", default="material", choices=ORDER)
     parser.add_argument("--samples", type=int, default=16384)
     args = parser.parse_args()
 
@@ -427,6 +427,18 @@ def main() -> None:
                 if inner:
                     drift = max(x["drift_p99_mm"] or 0.0 for x in inner)
                     print(f"    shared across shoes: address drift p99 {drift:.4f} mm")
+
+    # -- material ---------------------------------------------------------
+    if "material" in wanted:
+        stage = BY_KEY["material"]; pipe.begin(stage)
+        # The fibers are canonical, so the first shard to run writes the path
+        # cache and the rest read it.
+        pipe.shard(lambda gpu, shard: [
+            str(GPU_PYTHON), "-m", "anatomical_coordinates.pipeline.material_stage",
+            "--root", str(root), "--shoes", *shard,
+        ], "material")
+        pipe.check("material", lambda n: pipe.dir("material") / n / "material.npz")
+        pipe.end(stage)
 
     done = len(pipe.alive) == len(shoes)
     pipe.save("complete" if done else "partial")
